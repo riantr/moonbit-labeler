@@ -263,24 +263,30 @@ async function showImage(item) {
   els.image.src = fileUrl(item.path);
 }
 
-///| Re-measure the rendered image position relative to the stage and push
-/// the new dimensions into the SVG overlay. Called on image load AND whenever
-/// the image's display rect changes (e.g. window resize, sidebar toggle).
+///| Lock the image-box to the image's natural aspect ratio, so the <img>
+/// and the SVG overlay (both 100% × 100% of the box) are pixel-identical
+/// by construction. Called on image load AND whenever the stage reflows.
 function layoutCanvas() {
   if (!canvasApi) return;
-  // Re-measure on every call — the layout can shift between image load
-  // and first paint (toolbar wrap, sidebar width, etc.).
-  const rect = els.image.getBoundingClientRect();
-  const stage = document.getElementById("stage").getBoundingClientRect();
-  state.imgDisplay = {
-    w: rect.width,
-    h: rect.height,
-    left: rect.left - stage.left,
-    top: rect.top - stage.top,
-  };
-  canvasApi.resize(state.imgNatural, state.imgDisplay);
-  renderAnnotations();
-  hideEmptyHint();
+  if (state.imgNatural.w > 0 && state.imgNatural.h > 0) {
+    const box = document.getElementById("image-box");
+    if (box) {
+      box.style.aspectRatio = `${state.imgNatural.w} / ${state.imgNatural.h}`;
+      box.classList.add("has-image");
+    }
+    // Re-measure for state.imgDisplay (still used by mouse coord conversion).
+    const rect = els.image.getBoundingClientRect();
+    const stage = document.getElementById("stage").getBoundingClientRect();
+    state.imgDisplay = {
+      w: rect.width,
+      h: rect.height,
+      left: rect.left - stage.left,
+      top: rect.top - stage.top,
+    };
+    canvasApi.resize(state.imgNatural, state.imgDisplay);
+    renderAnnotations();
+    hideEmptyHint();
+  }
 }
 
 ///| One observer per app session — re-layouts whenever `els.image` is
@@ -938,7 +944,7 @@ async function invokeLabeler(op, payload) {
 function waitForBridge(attempt = 0) {
   const app = window.__MoonBit__;
   if (app && app.core && app.core.invokeOp) {
-    canvasApi = createCanvas(document.getElementById("stage"));
+    canvasApi = createCanvas(document.getElementById("image-box"));
     bindCanvasEvents(canvasApi);
     installResizeObserver();
     bindEvents();

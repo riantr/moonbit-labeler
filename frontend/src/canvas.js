@@ -158,18 +158,14 @@ export function createCanvas(stage) {
 
   return {
     element: svg,
-    resize(natural, display) {
-      // Natural == SVG viewBox dims. Display == displayed rect of the image,
-      // (left/top are relative to the stage so we can position the SVG to
-      // overlay exactly on top of the <img> — the image is centred in the
-      // stage with `align-items: center`, so without this offset the SVG
-      // would sit at (0,0) and the annotations would be misaligned).
+    resize(natural, _display) {
+      // Natural == SVG viewBox dims (image natural pixel coords). The
+      // SVG's on-screen size/position is locked to its parent `#image-box`
+      // by CSS (width/height 100%, position absolute inset 0), so the
+      // overlay is pixel-identical to the <img> by construction — no
+      // manual left/top nudging required. We just need the viewBox to
+      // match the image's natural pixel grid.
       svg.setAttribute("viewBox", `0 0 ${natural.w} ${natural.h}`);
-      svg.setAttribute("width", String(display.w));
-      svg.setAttribute("height", String(display.h));
-      svg.style.left = `${display.left | 0}px`;
-      svg.style.top = `${display.top | 0}px`;
-      // Re-append so it stays last child of the stage.
       stage.appendChild(svg);
     },
     render(state) {
