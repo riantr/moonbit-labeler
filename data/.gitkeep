@@ -1,0 +1,6 @@
+# This directory holds user data, not committed to the repo.
+# Convention:
+#   Image@<name>/*.jpg | png | bmp | webp | gif
+#   Label@<name>/<basename>.json (one JSON per image, same basename)
+#   CARS example: Image@CARS.Part.01/1800003_0.jpg
+#                  Label@CARS.Part.01/1800003_0.json (note: strip the _0 index)

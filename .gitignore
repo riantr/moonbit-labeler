@@ -1,0 +1,18 @@
+.DS_Store
+_build/
+target/
+.mooncakes/
+.moonagent/
+.proton/
+frontend/dist/
+frontend/node_modules/
+# Sample / dataset images — user data, large, varies per deployment.
+data/Image*/
+data/Label*/
+# But keep a tiny example so the format is documented.
+!data/.gitkeep
+# Eclipse / VS backups
+*.evb
+*.bak
+# Leftover exe at root (the real portable build lives in target/proton-dist/)
+/moonbit-labeler.exe

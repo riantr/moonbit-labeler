@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoonBit Labeler</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="titlebar">
+        <div class="title">
+          <span class="badge">MoonBit Labeler</span>
+          <div class="path-stack">
+            <span class="muted" id="folder-path">未指定文件夹</span>
+            <span class="muted label-path" id="label-path"></span>
+          </div>
+        </div>
+        <form class="folder-form" id="folder-form">
+          <input
+            type="text"
+            id="folder-input"
+            class="folder-input"
+            placeholder="输入图片文件夹路径，例如 D:\images\lithium_cell"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="browse-btn" type="button" class="ghost" title="浏览文件夹">📁</button>
+          <button id="load-btn" type="submit" class="primary">载入</button>
+        </form>
+      </header>
+
+      <main class="workspace">
+        <aside class="sidebar">
+          <div class="sidebar-head">
+            <span>文件列表</span>
+            <span class="muted" id="image-count">0 张</span>
+          </div>
+          <ul id="file-list" class="file-list"></ul>
+          <div class="sidebar-head sidebar-head-classes">
+            <span>类别</span>
+            <span class="muted" id="class-count">0 个</span>
+          </div>
+          <ul id="class-list" class="class-list"></ul>
+        </aside>
+
+        <section class="canvas-wrap">
+          <div class="canvas-toolbar" id="toolbar">
+            <div class="mode-group" role="group" aria-label="工具">
+              <button class="mode-btn active" data-mode="select" title="选择 (V)">▣ 选择</button>
+              <button class="mode-btn" data-mode="rect" title="矩形 (R)">▭ 矩形</button>
+              <button class="mode-btn" data-mode="polygon" title="多边形 (P)">⬡ 多边形</button>
+              <button class="mode-btn" data-mode="keypoint" title="关键点 (K)">· 关键点</button>
+              <button class="mode-btn" data-mode="binding" title="关联 (B)">⌒ 关联</button>
+            </div>
+            <input
+              id="class-input"
+              class="class-input"
+              type="text"
+              placeholder="类别名 (如 hook_tools)"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div class="toolbar-spacer"></div>
+            <button id="undo-btn" class="ghost" title="撤销 (Ctrl+Z)">↶ 撤销</button>
+            <button id="delete-btn" class="ghost danger" title="删除选中 (Delete)" disabled>🗑 删除</button>
+            <span id="dirty-badge" class="dirty-badge"></span>
+            <button id="save-btn" class="primary small" title="立即保存">保存</button>
+          </div>
+          <div class="canvas-stage" id="stage">
+            <div class="empty-hint" id="empty-hint">
+              在上方输入图片文件夹路径，然后按「载入」
+            </div>
+            <img id="image" alt="" hidden />
+          </div>
+        </section>
+      </main>
+
+      <footer class="statusbar">
+        <span id="status-path" class="muted">—</span>
+        <span class="spacer"></span>
+        <span id="status-index" class="muted">0 / 0</span>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

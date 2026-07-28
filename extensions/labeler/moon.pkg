@@ -1,0 +1,9 @@
+import {
+  "moonbitlang/async/fs" @fs,
+  "moonbitlang/async/process" @process,
+  "moonbitlang/core/json" @json,
+  "justjavac/proton/command" @proton_command,
+  "justjavac/proton/extension" @proton_extension,
+}
+
+supported_targets = "native"
