@@ -242,14 +242,7 @@ async function showImage(item) {
   els.image.hidden = false;
   els.image.onload = () => {
     state.imgNatural = { w: els.image.naturalWidth, h: els.image.naturalHeight };
-    requestAnimationFrame(() => {
-      const rect = els.image.getBoundingClientRect();
-      const stage = document.getElementById("stage").getBoundingClientRect();
-      state.imgDisplay = { w: rect.width, h: rect.height, left: rect.left - stage.left, top: rect.top - stage.top };
-      canvasApi.resize(state.imgNatural, state.imgDisplay);
-      renderAnnotations();
-      hideEmptyHint();
-    });
+    requestAnimationFrame(layoutCanvas);
   };
   els.image.onerror = async () => {
     try {
@@ -268,6 +261,39 @@ async function showImage(item) {
     }
   };
   els.image.src = fileUrl(item.path);
+}
+
+///| Re-measure the rendered image position relative to the stage and push
+/// the new dimensions into the SVG overlay. Called on image load AND whenever
+/// the image's display rect changes (e.g. window resize, sidebar toggle).
+function layoutCanvas() {
+  if (!canvasApi) return;
+  // Re-measure on every call — the layout can shift between image load
+  // and first paint (toolbar wrap, sidebar width, etc.).
+  const rect = els.image.getBoundingClientRect();
+  const stage = document.getElementById("stage").getBoundingClientRect();
+  state.imgDisplay = {
+    w: rect.width,
+    h: rect.height,
+    left: rect.left - stage.left,
+    top: rect.top - stage.top,
+  };
+  canvasApi.resize(state.imgNatural, state.imgDisplay);
+  renderAnnotations();
+  hideEmptyHint();
+}
+
+///| One observer per app session — re-layouts whenever `els.image` is
+/// resized by the browser (which happens when the stage reflows).
+let _imageResizeObserver = null;
+
+function installResizeObserver() {
+  if (_imageResizeObserver) return;
+  _imageResizeObserver = new ResizeObserver(() => {
+    // Only react if we actually have a loaded image (i.e. a non-zero bbox).
+    if (state.imgNatural.w > 0) layoutCanvas();
+  });
+  _imageResizeObserver.observe(els.image);
 }
 
 function hideEmptyHint() {
@@ -914,6 +940,7 @@ function waitForBridge(attempt = 0) {
   if (app && app.core && app.core.invokeOp) {
     canvasApi = createCanvas(document.getElementById("stage"));
     bindCanvasEvents(canvasApi);
+    installResizeObserver();
     bindEvents();
     const initial = pickInitialFolder();
     els.folderInput.value = initial;

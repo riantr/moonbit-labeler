@@ -399,18 +399,12 @@ async fn derive_label_dir_for_scan(p : String) -> String {
 }
 
 ///| Map `Image@X/<basename>.ext` -> `Label@X/<basename>.json`.
-/// Mirrors the frontend's `detectLabelFolder` heuristic.
+/// Mirrors the frontend's `detectLabelFolder` heuristic. The basename is
+/// preserved verbatim — `1800003_0.jpg` becomes `1800003_0.json` (the `_0`
+/// is part of the CARS filename, not a separate index suffix).
 fn image_path_to_label_path(image_path : String) -> String {
   let (dir, basename) = split_dir_name(image_path)
   let (stem, _ext) = split_stem_ext(basename)
-
-  // Strip an "_<n>" suffix used in CARS dataset (`1800003_0` -> `1800003`).
-  let underscore = last_index_of(stem, '_')
-  let stem_no_idx = if underscore > 0 {
-    stem[:underscore].to_owned()
-  } else {
-    stem
-  }
 
   let (dir_parent, dir_leaf) = split_dir_name(dir)
   let sep = if dir.contains("\\") { "\\" } else { "/" }
@@ -419,7 +413,7 @@ fn image_path_to_label_path(image_path : String) -> String {
   } else {
     ""
   }
-  let label_basename = stem_no_idx + ".json"
+  let label_basename = stem + ".json"
   if new_leaf == "" {
     // Fallback: keep the dir, just swap the extension.
     if dir == "" {
