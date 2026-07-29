@@ -67,6 +67,7 @@ const els = {
   classCount: $("#class-count"),
   image: $("#image"),
   imageBox: $("#image-box"),
+  imageFrame: $("#image-frame"),
   emptyHint: $("#empty-hint"),
   statusPath: $("#status-path"),
   statusIndex: $("#status-index"),
@@ -302,10 +303,14 @@ function layoutCanvas() {
   if (!canvasApi) return;
   if (state.imgNatural.w > 0 && state.imgNatural.h > 0) {
     const box = els.imageBox;
-    if (box) {
-      box.style.aspectRatio = `${state.imgNatural.w} / ${state.imgNatural.h}`;
-      box.classList.add("has-image");
+    const frame = els.imageFrame;
+    if (frame) {
+      // Lock the inner frame to the image's natural ratio — the CSS
+      // collapses it to the largest rect that fits in the stage while
+      // keeping the ratio. image-box stays full-stage and centers.
+      frame.style.aspectRatio = `${state.imgNatural.w} / ${state.imgNatural.h}`;
     }
+    if (box) box.classList.add("has-image");
     // imgDisplay is still used by mouse -> image coord conversion.
     const rect = els.image.getBoundingClientRect();
     const stage = document.getElementById("stage").getBoundingClientRect();
@@ -931,7 +936,7 @@ async function listImages(folder) {
 function waitForBridge(attempt = 0) {
   const app = window.__MoonBit__;
   if (app?.core?.invokeOp) {
-    canvasApi = createCanvas(els.imageBox);
+    canvasApi = createCanvas(els.imageFrame);
     bindCanvasEvents(canvasApi);
     installResizeObserver();
     bindEvents();
