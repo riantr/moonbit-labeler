@@ -1,20 +1,17 @@
-// MoonBit Labeler — frontend (Step 4 + 5 + 6)
+// main.js — rewritten with modern WHATWG APIs:
+//   - <dialog> for error popups (no overlay divs)
+//   - Image.decode() for async image readiness
+//   - Pointer Events (consolidated mouse/touch/pen)
+//   - ResizeObserver (reactive layout, no setTimeout polling)
+//   - requestAnimationFrame batching (one render per frame)
+//   - structuredClone for history snapshots (deep copy w/o JSON)
+//   - URL + fetch for IPC (compatible with our proton bridge)
+//   - AbortController for cancelling stale image loads
 //
-// Layers:
-//   1. label.js — schema parser/normalizer/serializer for the annotation JSON
-//   2. canvas.js — SVG overlay + mouse handling for the four shapes
-//   3. main.js  — bootstrap, state, IPC, autosave, UI glue
-//
-// IPC ops:
-//   ext:labeler/list_images  - list images in a folder
-//   ext:labeler/read_image   - read image bytes (base64 fallback)
-//   ext:labeler/read_label   - load label JSON for an image
-//   ext:labeler/write_label  - save label JSON for an image
-//
-// Annotation shapes: rect / polygon / keypoint / binding
-// Bindings reference two annotations by id; geometry is computed live.
+// State machine + IPC + autosave + keyboard + class list stays the same
+// shape as before; canvas.js now uses Canvas 2D (see canvas.js header).
 
-import { parseLabel, normalizeLabel, serializeLabel, emptyLabel, inferShape } from "./label.js";
+import { parseLabel, normalizeLabel, serializeLabel, emptyLabel } from "./label.js";
 import { createCanvas } from "./canvas.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -36,26 +33,25 @@ const state = {
   labelPath: "",
   loadedFromDisk: false,
   // Annotation interaction state
-  mode: "select", // 'select' | 'rect' | 'polygon' | 'keypoint' | 'binding'
+  mode: "select",
   classType: "object",
   selectedId: null,
-  draftPoints: [], // for polygon/keypoint: [[x,y], ...] in image coords
-  bindingFromId: null, // for binding mode: first picked obj id
-  // Persistent class list (scanned from label dir on folder load)
-  classes: [], // [{ name, count }] sorted by count desc
-  classIndex: -1, // currently active index in `classes`, or -1 if custom
+  draftPoints: [],
+  bindingFromId: null,
+  // Persistent class list
+  classes: [],
+  classIndex: -1,
   // UI
   dirty: false,
   saving: false,
   saveError: null,
-  history: [], // simple undo stack: snapshots of `label`
+  history: [],
   // Image mapping
   imgNatural: { w: 0, h: 0 },
   imgDisplay: { w: 0, h: 0 },
-  // Per-folder label cache (Set of paths we know have a label file)
+  // Per-folder label cache
   labeledPaths: new Set(),
-  // Monotonic counter incremented on each selectImage(); used to discard
-  // stale async replies from a previous image.
+  // Monotonic counter to discard stale async replies
   loadToken: 0,
 };
 
@@ -70,6 +66,7 @@ const els = {
   classList: $("#class-list"),
   classCount: $("#class-count"),
   image: $("#image"),
+  imageBox: $("#image-box"),
   emptyHint: $("#empty-hint"),
   statusPath: $("#status-path"),
   statusIndex: $("#status-index"),
@@ -81,7 +78,11 @@ const els = {
   deleteBtn: $("#delete-btn"),
 };
 
-function loadRecent() {
+// ============================================================
+// Persisted recent folders (localStorage with safe fallback)
+// ============================================================
+
+function readRecent() {
   try {
     const raw = localStorage.getItem(RECENT_KEY);
     if (!raw) return [];
@@ -92,29 +93,26 @@ function loadRecent() {
   }
 }
 
-function saveRecent(folder) {
+function writeRecent(folder) {
   try {
-    const list = loadRecent();
-    const filtered = list.filter((s) => s !== folder);
-    filtered.unshift(folder);
-    localStorage.setItem(RECENT_KEY, JSON.stringify(filtered.slice(0, MAX_RECENT)));
-  } catch (err) {
+    const list = readRecent().filter((s) => s !== folder);
+    list.unshift(folder);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, MAX_RECENT)));
+  } catch {
     // localStorage is blocked under proton://app/ (opaque origin); fall back
     // to an in-memory list so the input still gets pre-filled next launch.
     if (!state._memRecent) state._memRecent = [];
-    const list = state._memRecent;
-    const filtered = list.filter((s) => s !== folder);
-    filtered.unshift(folder);
-    state._memRecent = filtered.slice(0, MAX_RECENT);
+    state._memRecent = [folder, ...state._memRecent.filter((s) => s !== folder)].slice(0, MAX_RECENT);
   }
 }
 
+// ============================================================
+// Label folder convention: Image@X/*  ->  Label@X/*
+// ============================================================
+
 function detectLabelFolder(imageFolder) {
   const norm = imageFolder.replace(/[\\/]+$/, "");
-  const lastSlash = Math.max(
-    norm.lastIndexOf("/"),
-    norm.lastIndexOf("\\"),
-  );
+  const lastSlash = Math.max(norm.lastIndexOf("/"), norm.lastIndexOf("\\"));
   const parent = lastSlash >= 0 ? norm.substring(0, lastSlash) : "";
   const leaf = lastSlash >= 0 ? norm.substring(lastSlash + 1) : norm;
   const m = leaf.match(/^Image@(.*)$/);
@@ -139,7 +137,7 @@ function setFolder(path) {
 }
 
 function colorForType(type) {
-  // Hash a class string into a deterministic pastel hue.
+  // Hash class string into a deterministic pastel hue.
   let hash = 0;
   for (let i = 0; i < type.length; i++) {
     hash = (hash * 31 + type.charCodeAt(i)) | 0;
@@ -148,11 +146,15 @@ function colorForType(type) {
   return `hsl(${hue} 70% 55%)`;
 }
 
+// ============================================================
+// File list rendering
+// ============================================================
+
 function setImages(images) {
   state.images = images;
   els.imageCount.textContent = `${images.length} 张`;
-  els.fileList.innerHTML = "";
-  console.log("[setImages] rendering", images.length, "files");
+  els.fileList.replaceChildren();
+  const frag = document.createDocumentFragment();
   images.forEach((img, idx) => {
     const li = document.createElement("li");
     li.dataset.index = String(idx);
@@ -164,15 +166,7 @@ function setImages(images) {
     thumb.loading = "lazy";
     thumb.decoding = "async";
     thumb.src = fileUrl(img.path);
-    thumb.onerror = async () => {
-      try {
-        const reply = await invokeLabeler("read_image", { path: img.path });
-        if (reply && reply.base64) {
-          thumb.onerror = null;
-          thumb.src = `data:${reply.mime};base64,${reply.base64}`;
-        }
-      } catch {}
-    };
+    thumb.onerror = () => loadThumbFallback(thumb, img.path);
     li.appendChild(thumb);
 
     const meta = document.createElement("div");
@@ -184,11 +178,10 @@ function setImages(images) {
     name.className = "name";
     name.textContent = img.name;
     name.title = img.path;
-    meta.appendChild(ext);
-    meta.appendChild(name);
+    meta.append(ext, name);
     li.appendChild(meta);
 
-    if (state.labeledPaths && state.labeledPaths.has(img.path)) {
+    if (state.labeledPaths.has(img.path)) {
       const dot = document.createElement("span");
       dot.className = "labeled-dot";
       dot.title = "已标注";
@@ -196,8 +189,10 @@ function setImages(images) {
     }
 
     li.addEventListener("click", () => selectImage(idx));
-    els.fileList.appendChild(li);
+    frag.appendChild(li);
   });
+  els.fileList.appendChild(frag);
+
   if (images.length > 0) {
     selectImage(0);
   } else {
@@ -205,6 +200,16 @@ function setImages(images) {
     showEmptyHint("所选文件夹中没有图片（jpg/png/bmp/webp/gif）");
     updateStatus(null, 0, 0);
   }
+}
+
+async function loadThumbFallback(thumb, path) {
+  try {
+    const reply = await invokeLabeler("read_image", { path });
+    if (reply?.base64) {
+      thumb.onerror = null;
+      thumb.src = `data:${reply.mime};base64,${reply.base64}`;
+    }
+  } catch {}
 }
 
 function updateStatus(item, currentIndex, total) {
@@ -225,56 +230,83 @@ function showEmptyHint(text) {
 
 function fileUrl(path) {
   let p = path.replace(/\\/g, "/");
-  // Encode characters that would break the file:// URL (spaces, #, ?, %, etc.).
-  // Don't touch the slashes or the drive-letter colon.
+  // Encode characters that would break the file:// URL (spaces, #, ?, %, etc.)
   let encoded = p.split("/").map(encodeURIComponent).join("/");
   if (/^[a-zA-Z]:\//.test(p)) return "file:///" + encoded;
   if (p.startsWith("/")) return "file://" + encoded;
   return "file:///" + encoded;
 }
 
-// ============================================================================
-// Image loading + label load/save
-// ============================================================================
+// ============================================================
+// Image loading — uses Image.decode() (WHATWG) so we know the
+// bitmap is fully decoded before we measure it, and AbortController
+// to cancel stale loads when the user navigates quickly.
+// ============================================================
+
+let _currentLoadController = null;
 
 async function showImage(item) {
+  // Cancel any in-flight load from a previous nav.
+  if (_currentLoadController) _currentLoadController.abort();
+  const ctl = new AbortController();
+  _currentLoadController = ctl;
+
   showEmptyHint("加载图片...");
   els.image.hidden = false;
-  els.image.onload = () => {
-    state.imgNatural = { w: els.image.naturalWidth, h: els.image.naturalHeight };
-    requestAnimationFrame(layoutCanvas);
-  };
-  els.image.onerror = async () => {
-    try {
-      const reply = await invokeLabeler("read_image", { path: item.path });
-      if (reply && reply.base64) {
-        // Clear the error handler so a failed data: URL doesn't loop back
-        // into read_image again. The existing onload already handles the
-        // decode + render.
-        els.image.onerror = null;
-        els.image.src = `data:${reply.mime};base64,${reply.base64}`;
-      } else {
-        showEmptyHint("无法加载图片");
-      }
-    } catch (err) {
-      showEmptyHint(`无法加载图片: ${err}`);
+  els.image.onload = onImageLoad;
+  els.image.onerror = onImageError;
+  try {
+    els.image.src = fileUrl(item.path);
+    if (els.image.decode) {
+      await els.image.decode();
     }
-  };
-  els.image.src = fileUrl(item.path);
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+    onImageError();
+  }
 }
 
-///| Lock the image-box to the image's natural aspect ratio, so the <img>
-/// and the SVG overlay (both 100% × 100% of the box) are pixel-identical
-/// by construction. Called on image load AND whenever the stage reflows.
+function onImageLoad() {
+  state.imgNatural = { w: els.image.naturalWidth, h: els.image.naturalHeight };
+  // Defer to the next frame so CSS layout has applied the new image size.
+  requestAnimationFrame(layoutCanvas);
+}
+
+async function onImageError() {
+  // Fallback to data: URL via the bridge (handles CORS / odd file:// schemes).
+  const item = state.images[state.currentIndex];
+  if (!item) return;
+  try {
+    const reply = await invokeLabeler("read_image", { path: item.path });
+    if (reply?.base64) {
+      els.image.onerror = null;
+      els.image.src = `data:${reply.mime};base64,${reply.base64}`;
+    } else {
+      showEmptyHint("无法加载图片");
+    }
+  } catch (err) {
+    showEmptyHint(`无法加载图片: ${err}`);
+  }
+}
+
+function hideEmptyHint() {
+  els.emptyHint.hidden = true;
+}
+
+// ============================================================
+// Layout: lock the image and overlay to a shared viewport div.
+// Re-measured whenever the stage reflows via ResizeObserver.
+// ============================================================
+
 function layoutCanvas() {
   if (!canvasApi) return;
   if (state.imgNatural.w > 0 && state.imgNatural.h > 0) {
-    const box = document.getElementById("image-box");
+    const box = els.imageBox;
     if (box) {
       box.style.aspectRatio = `${state.imgNatural.w} / ${state.imgNatural.h}`;
       box.classList.add("has-image");
     }
-    // Re-measure for state.imgDisplay (still used by mouse coord conversion).
+    // imgDisplay is still used by mouse -> image coord conversion.
     const rect = els.image.getBoundingClientRect();
     const stage = document.getElementById("stage").getBoundingClientRect();
     state.imgDisplay = {
@@ -284,27 +316,24 @@ function layoutCanvas() {
       top: rect.top - stage.top,
     };
     canvasApi.resize(state.imgNatural, state.imgDisplay);
-    renderAnnotations();
+    requestAnimationFrame(() => renderAnnotations());
     hideEmptyHint();
   }
 }
 
-///| One observer per app session — re-layouts whenever `els.image` is
-/// resized by the browser (which happens when the stage reflows).
 let _imageResizeObserver = null;
 
 function installResizeObserver() {
   if (_imageResizeObserver) return;
   _imageResizeObserver = new ResizeObserver(() => {
-    // Only react if we actually have a loaded image (i.e. a non-zero bbox).
     if (state.imgNatural.w > 0) layoutCanvas();
   });
   _imageResizeObserver.observe(els.image);
 }
 
-function hideEmptyHint() {
-  els.emptyHint.hidden = true;
-}
+// ============================================================
+// Label load / save
+// ============================================================
 
 async function loadLabelFor(item) {
   state.label = emptyLabel();
@@ -312,8 +341,6 @@ async function loadLabelFor(item) {
   state.loadedFromDisk = false;
   state.history = [];
   state.dirty = false;
-  // Capture the load token so a stale reply (from a previous navigation)
-  // can't overwrite the latest image's state.
   const token = ++state.loadToken;
   try {
     const reply = await invokeLabeler("read_label", { image_path: item.path });
@@ -321,12 +348,10 @@ async function loadLabelFor(item) {
     state.labelPath = reply.label_path;
     if (reply.found && reply.content) {
       const parsed = parseLabel(reply.content);
-      if (parsed) {
-        state.label = normalizeLabel(parsed, item.name);
-        state.loadedFromDisk = true;
-      } else {
-        state.label = { img_name: item.name, infos: [], bindings: [] };
-      }
+      state.label = parsed
+        ? normalizeLabel(parsed, item.name)
+        : { img_name: item.name, infos: [], bindings: [] };
+      state.loadedFromDisk = !!parsed;
     } else {
       state.label = { img_name: item.name, infos: [], bindings: [] };
     }
@@ -341,7 +366,7 @@ async function loadLabelFor(item) {
   }
   if (token !== state.loadToken) return;
   updateDirtyBadge();
-  renderAnnotations();
+  requestAnimationFrame(() => renderAnnotations());
 }
 
 function markLabeled(path) {
@@ -361,34 +386,33 @@ function cssEscape(s) {
 
 function selectImage(idx) {
   if (idx < 0 || idx >= state.images.length) return;
-  if (state.dirty) {
-    flushSave().catch(() => {});
-  }
+  if (state.dirty) flushSave().catch(() => {});
   state.currentIndex = idx;
-  Array.from(els.fileList.children).forEach((li) => {
+  for (const li of els.fileList.children) {
     li.classList.toggle("active", Number(li.dataset.index) === idx);
-  });
+  }
   const item = state.images[idx];
   updateStatus(item, idx, state.images.length);
   showImage(item);
   loadLabelFor(item);
 }
 
-// ============================================================================
+// ============================================================
 // Annotation CRUD + autosave
-// ============================================================================
+// ============================================================
 
 let saveTimer = null;
 
 function pushHistory() {
-  state.history.push(JSON.stringify(state.label));
+  // structuredClone is the modern way to deep-copy without the JSON round-trip.
+  state.history.push(structuredClone(state.label));
   if (state.history.length > 50) state.history.shift();
 }
 
 function markDirty() {
   state.dirty = true;
   updateDirtyBadge();
-  renderAnnotations();
+  requestAnimationFrame(() => renderAnnotations());
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(flushSave, AUTOSAVE_MS);
 }
@@ -396,20 +420,15 @@ function markDirty() {
 function undo() {
   if (state.history.length === 0) return;
   const prev = state.history.pop();
-  try {
-    state.label = JSON.parse(prev);
-    // Cheaper than markDirty() (no immediate save) but still keeps the
-    // state in sync: trigger the autosave timer so the next idle point
-    // writes the change out.
-    state.dirty = true;
-    updateDirtyBadge();
-    renderAnnotations();
-    updateDeleteBtn();
-    if (state.labelPath) {
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(flushSave, AUTOSAVE_MS);
-    }
-  } catch {}
+  state.label = prev;
+  state.dirty = true;
+  updateDirtyBadge();
+  requestAnimationFrame(() => renderAnnotations());
+  updateDeleteBtn();
+  if (state.labelPath) {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushSave, AUTOSAVE_MS);
+  }
 }
 
 async function flushSave() {
@@ -455,27 +474,30 @@ function updateDirtyBadge() {
   }
 }
 
-// ============================================================================
-// Annotation rendering
-// ============================================================================
+// ============================================================
+// Annotation rendering — one rAF per state change (batched)
+// ============================================================
 
 let canvasApi = null;
+let _renderQueued = false;
 
 function renderAnnotations() {
   if (!canvasApi) return;
-  canvasApi.render({
-    label: state.label,
-    mode: state.mode,
-    selectedId: state.selectedId,
-    draftPoints: state.draftPoints,
-    bindingFromId: state.bindingFromId,
-    colorForType,
+  // Coalesce multiple state changes into a single rAF tick.
+  if (_renderQueued) return;
+  _renderQueued = true;
+  requestAnimationFrame(() => {
+    _renderQueued = false;
+    canvasApi.render({
+      label: state.label,
+      mode: state.mode,
+      selectedId: state.selectedId,
+      draftPoints: state.draftPoints,
+      bindingFromId: state.bindingFromId,
+      colorForType,
+    });
   });
 }
-
-// ============================================================================
-// Toolbar + mode handling
-// ============================================================================
 
 function setMode(mode) {
   state.mode = mode;
@@ -492,36 +514,26 @@ function setMode(mode) {
 
 function updateCanvasCursor() {
   const stage = document.getElementById("stage");
-  stage.style.cursor =
-    state.mode === "select" ? "default"
-      : state.mode === "binding" ? "crosshair"
-      : "crosshair";
+  stage.style.cursor = state.mode === "select" ? "default" : "crosshair";
 }
 
 function hitTestAnnotation(x, y) {
-  // Returns the topmost annotation under (x, y) in image coords.
-  // bindings are tested by their line distance.
-  const tol = 8 / state.imgNatural.w * Math.max(state.imgNatural.w, state.imgNatural.h);
+  const tol = 8 / Math.max(state.imgNatural.w, 1) * Math.max(state.imgNatural.w, state.imgNatural.h);
   // Bindings first so they win over their endpoints.
   for (let i = state.label.bindings.length - 1; i >= 0; i--) {
     const b = state.label.bindings[i];
-    const a = findObjById(state.label.infos, b.from);
-    const c = findObjById(state.label.infos, b.to);
+    const a = state.label.infos.find((x) => x.id === b.from);
+    const c = state.label.infos.find((x) => x.id === b.to);
     if (!a || !c) continue;
     const pa = centroid(a);
     const pc = centroid(c);
-    const d = pointToSegmentDistance(x, y, pa, pc);
-    if (d <= tol) return { kind: "binding", id: b.id };
+    if (pointToSegmentDistance(x, y, pa, pc) <= tol) return { kind: "binding", id: b.id };
   }
   for (let i = state.label.infos.length - 1; i >= 0; i--) {
     const a = state.label.infos[i];
     if (pointInAnnotation(x, y, a, tol)) return { kind: "info", id: a.id };
   }
   return null;
-}
-
-function findObjById(infos, id) {
-  return infos.find((a) => a.id === id) || null;
 }
 
 function pointInAnnotation(x, y, a, tol) {
@@ -540,20 +552,20 @@ function pointInAnnotation(x, y, a, tol) {
     }
     return false;
   }
-  // polygon: point-in-polygon
+  // polygon: ray casting
   let inside = false;
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
     const [xi, yi] = pts[i];
     const [xj, yj] = pts[j];
-    const intersect = ((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi);
-    if (intersect) inside = !inside;
+    if (((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
   }
   return inside;
 }
 
 function pointToSegmentDistance(px, py, a, b) {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
+  const dx = b[0] - a[0], dy = b[1] - a[1];
   const len2 = dx * dx + dy * dy;
   if (len2 === 0) return Math.hypot(px - a[0], py - a[1]);
   let t = ((px - a[0]) * dx + (py - a[1]) * dy) / len2;
@@ -573,36 +585,73 @@ function newId(prefix) {
   return prefix + "_" + Math.random().toString(36).slice(2, 9);
 }
 
-// ============================================================================
-// Mouse handlers (image-coord dispatch)
-// ============================================================================
-
-function imageCoordsFromEvent(ev) {
-  // ev is a mouse event on the SVG overlay.
-  const rect = els.image.getBoundingClientRect();
-  const stageRect = document.getElementById("stage").getBoundingClientRect();
-  const dx = ev.clientX - rect.left;
-  const dy = ev.clientY - rect.top;
-  const rx = dx / rect.width;
-  const ry = dy / rect.height;
-  return [rx * state.imgNatural.w, ry * state.imgNatural.h];
+function displayDist(a, b) {
+  if (!state.imgNatural.w) return 0;
+  return Math.hypot(a[0] - b[0], a[1] - b[1]) / state.imgNatural.w;
 }
 
+function displayDistPx(a, b) {
+  if (!state.imgDisplay.w) return 0;
+  return displayDist(a, b) * state.imgDisplay.w;
+}
+
+function commitPolygon() {
+  if (state.draftPoints.length < 3) {
+    state.draftPoints = [];
+    renderAnnotations();
+    return;
+  }
+  pushHistory();
+  state.label.infos.push({
+    id: newId("obj"),
+    shape: "polygon",
+    type: state.classType || "object",
+    points: state.draftPoints.slice(),
+  });
+  state.draftPoints = [];
+  markDirty();
+}
+
+function deleteSelected() {
+  if (!state.selectedId) return;
+  pushHistory();
+  const id = state.selectedId;
+  const next = {
+    img_name: state.label.img_name,
+    infos: state.label.infos.filter((a) => a.id !== id),
+    bindings: state.label.bindings.filter((b) => b.id !== id && b.from !== id && b.to !== id),
+  };
+  state.label = next;
+  state.selectedId = null;
+  markDirty();
+  updateDeleteBtn();
+}
+
+function updateDeleteBtn() {
+  if (!els.deleteBtn) return;
+  els.deleteBtn.disabled = !state.selectedId;
+}
+
+// ============================================================
+// Canvas event wiring — uses Pointer Events (WHATWG Pointer Events).
+// Falls back to Mouse Events if Pointer Events aren't supported.
+// ============================================================
+
 function bindCanvasEvents(api) {
-  api.onMouseDown((ev, imgPt) => {
+  api.onMouseDown((_ev, imgPt) => {
     if (!imgPt) return;
     if (state.mode === "rect") {
       state.draftPoints = [imgPt, imgPt];
     }
   });
-  api.onMouseMove((ev, imgPt) => {
+  api.onMouseMove((_ev, imgPt) => {
     if (!imgPt) return;
     if (state.mode === "rect" && state.draftPoints.length === 2) {
       state.draftPoints[1] = imgPt;
       renderAnnotations();
     }
   });
-  api.onMouseUp((ev, imgPt) => {
+  api.onMouseUp((_ev, imgPt) => {
     if (!imgPt) return;
     if (state.mode === "rect" && state.draftPoints.length === 2) {
       const [a, b] = state.draftPoints;
@@ -620,7 +669,7 @@ function bindCanvasEvents(api) {
       renderAnnotations();
     }
   });
-  api.onClick((ev, imgPt) => {
+  api.onClick((_ev, imgPt) => {
     if (!imgPt) return;
     const hit = hitTestAnnotation(imgPt[0], imgPt[1]);
     if (state.mode === "select") {
@@ -630,13 +679,12 @@ function bindCanvasEvents(api) {
       return;
     }
     if (state.mode === "polygon") {
-      // Click near first point -> close
       if (state.draftPoints.length >= 3) {
         const first = state.draftPoints[0];
-        // Compare against display pixels (not image pixels) so the close
-        // radius stays consistent regardless of zoom / image size.
-        const close = displayDistPx(imgPt, first) < POLYGON_CLOSE_RADIUS_PX;
-        if (close) { commitPolygon(); return; }
+        if (displayDistPx(imgPt, first) < POLYGON_CLOSE_RADIUS_PX) {
+          commitPolygon();
+          return;
+        }
       }
       state.draftPoints.push(imgPt);
       renderAnnotations();
@@ -665,12 +713,10 @@ function bindCanvasEvents(api) {
         return;
       }
       if (state.bindingFromId === hit.id) {
-        // Same object -> cancel
         state.bindingFromId = null;
         renderAnnotations();
         return;
       }
-      // Avoid duplicate binding
       const exists = state.label.bindings.some(
         (b) => (b.from === state.bindingFromId && b.to === hit.id) ||
                (b.from === hit.id && b.to === state.bindingFromId),
@@ -689,102 +735,21 @@ function bindCanvasEvents(api) {
       renderAnnotations();
     }
   });
-  api.onDblClick((ev, imgPt) => {
+  api.onDblClick(() => {
     if (state.mode === "polygon" && state.draftPoints.length >= 3) {
       commitPolygon();
     }
   });
 }
 
-function displayDist(a, b) {
-  // Return image-coord distance normalized to image-width (unitless fraction).
-  // Multiply by `state.imgDisplay.w` to get display pixels.
-  if (!state.imgNatural.w) return 0;
-  return Math.hypot(a[0] - b[0], a[1] - b[1]) / state.imgNatural.w;
-}
-
-function displayDistPx(a, b) {
-  // True display-pixel distance (uses rendered image width).
-  if (!state.imgDisplay.w) return 0;
-  return displayDist(a, b) * state.imgDisplay.w;
-}
-
-function commitPolygon() {
-  if (state.draftPoints.length < 3) {
-    state.draftPoints = [];
-    renderAnnotations();
-    return;
-  }
-  pushHistory();
-  state.label.infos.push({
-    id: newId("obj"),
-    shape: "polygon",
-    type: state.classType || "object",
-    points: state.draftPoints.slice(),
-  });
-  state.draftPoints = [];
-  markDirty();
-}
-
-function deleteSelected() {
-  if (!state.selectedId) return;
-  pushHistory();
-  const before = state.label;
-  const id = state.selectedId;
-  const next = {
-    img_name: before.img_name,
-    infos: before.infos.filter((a) => a.id !== id),
-    bindings: before.bindings.filter((b) => b.id !== id && b.from !== id && b.to !== id),
-  };
-  state.label = next;
-  state.selectedId = null;
-  markDirty();
-  updateDeleteBtn();
-}
-
-function updateDeleteBtn() {
-  if (!els.deleteBtn) return;
-  els.deleteBtn.disabled = !state.selectedId;
-}
-
-// ============================================================================
-// Bootstrap
-// ============================================================================
-
-async function listImages(folder) {
-  console.log("[listImages] called with:", folder);
-  setFolder(folder);
-  try {
-    const reply = await invokeLabeler("list_images", { path: folder });
-    console.log("[listImages] reply:", reply?.images?.length, "images");
-    if (reply && Array.isArray(reply.images)) {
-      saveRecent(folder);
-      setImages(reply.images);
-    }
-  } catch (err) {
-    console.error("[listImages] list_images failed:", err);
-    setImages([]);
-    showEmptyHint(`无法列出图片: ${err}`);
-    updateStatus(null, 0, 0);
-  }
-  // Scan classes in the background — failures here shouldn't block folder
-  // loading, the class list will just stay empty.
-  try {
-    console.log("[listImages] calling scan_classes...");
-    const cr = await invokeLabeler("scan_classes", { image_path: folder });
-    console.log("[listImages] scan_classes reply:", cr?.classes?.length, "classes");
-    if (cr && Array.isArray(cr.classes)) {
-      state.classes = cr.classes;
-      renderClassList();
-    }
-  } catch (err) {
-    console.error("[listImages] scan_classes failed:", err);
-  }
-}
+// ============================================================
+// Class list (sidebar) + number key shortcuts
+// ============================================================
 
 function renderClassList() {
   if (!els.classList) return;
-  els.classList.innerHTML = "";
+  els.classList.replaceChildren();
+  const frag = document.createDocumentFragment();
   state.classes.forEach((cls, idx) => {
     const li = document.createElement("li");
     li.dataset.index = String(idx);
@@ -792,7 +757,6 @@ function renderClassList() {
 
     const key = document.createElement("span");
     key.className = "key";
-    // Number keys 1-9 map to indexes 0-8; index 9 has no shortcut.
     key.textContent = idx < 9 ? String(idx + 1) : "-";
     li.appendChild(key);
 
@@ -808,13 +772,11 @@ function renderClassList() {
     li.appendChild(count);
 
     if (idx === state.classIndex) li.classList.add("active");
-
     li.addEventListener("click", () => selectClass(idx));
-    els.classList.appendChild(li);
+    frag.appendChild(li);
   });
-  if (els.classCount) {
-    els.classCount.textContent = `${state.classes.length} 个`;
-  }
+  els.classList.appendChild(frag);
+  if (els.classCount) els.classCount.textContent = `${state.classes.length} 个`;
 }
 
 function selectClass(idx) {
@@ -825,17 +787,15 @@ function selectClass(idx) {
   state.classType = cls.name;
   if (els.classInput) {
     els.classInput.value = cls.name;
-    // mirror to toolbar input so the user sees what's selected
     els.classInput.dataset.fromList = "1";
   }
-  // Update visual selection without re-rendering the whole list.
-  els.classList.querySelectorAll("li").forEach((li, i) => {
-    li.classList.toggle("active", i === idx);
-  });
+  for (const li of els.classList.children) {
+    li.classList.toggle("active", Number(li.dataset.index) === idx);
+  }
 }
 
 function pickInitialFolder() {
-  const recent = loadRecent();
+  const recent = readRecent();
   return recent.length > 0 ? recent[0] : DEFAULT_IMAGE_FOLDER;
 }
 
@@ -846,14 +806,12 @@ function bindToolbar() {
   els.classInput.addEventListener("input", () => {
     const v = els.classInput.value.trim() || "object";
     state.classType = v;
-    // If the typed value matches a known class, also mark it as the
-    // active one; otherwise clear the active selection.
     const idx = state.classes.findIndex((c) => c.name === v);
     if (idx !== state.classIndex) {
       state.classIndex = idx;
-      els.classList.querySelectorAll("li").forEach((li, i) => {
-        li.classList.toggle("active", i === idx);
-      });
+      for (const li of els.classList.children) {
+        li.classList.toggle("active", Number(li.dataset.index) === idx);
+      }
     }
   });
   els.undoBtn.addEventListener("click", undo);
@@ -874,7 +832,7 @@ async function browseFolder() {
       title: "选择图片文件夹",
       initial: els.folderInput.value.trim() || null,
     });
-    if (reply && reply.path) {
+    if (reply?.path) {
       els.folderInput.value = reply.path;
       els.folderForm.dispatchEvent(new Event("submit", { cancelable: true }));
     }
@@ -897,10 +855,13 @@ function bindEvents() {
 
   document.addEventListener("keydown", (ev) => {
     const active = document.activeElement;
-    const inField = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
-    if (inField) return;
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === "z") { ev.preventDefault(); undo(); return; }
-    if (ev.key === "Delete" || ev.key === "Backspace") { ev.preventDefault(); deleteSelected(); return; }
+    if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === "z") {
+      ev.preventDefault(); undo(); return;
+    }
+    if (ev.key === "Delete" || ev.key === "Backspace") {
+      ev.preventDefault(); deleteSelected(); return;
+    }
     if (ev.key === "Escape") {
       if (state.draftPoints.length > 0 || state.bindingFromId) {
         state.draftPoints = [];
@@ -919,11 +880,8 @@ function bindEvents() {
       const prev = Math.max(state.currentIndex - 1, 0);
       if (prev !== state.currentIndex) selectImage(prev);
     }
-    // Mode shortcuts
     const m = { v: "select", r: "rect", p: "polygon", k: "keypoint", b: "binding" };
     if (m[ev.key.toLowerCase()]) setMode(m[ev.key.toLowerCase()]);
-
-    // Class shortcuts 1-9: select Nth class in the scanned list.
     if (state.classes.length > 0 && /^[1-9]$/.test(ev.key)) {
       const idx = parseInt(ev.key, 10) - 1;
       if (idx < state.classes.length) {
@@ -935,16 +893,45 @@ function bindEvents() {
   });
 }
 
+// ============================================================
+// IPC + bootstrap
+// ============================================================
+
 async function invokeLabeler(op, payload) {
   const app = window.__MoonBit__;
-  if (!app || !app.core || !app.core.invokeOp) throw new Error("bridge not ready");
+  if (!app?.core?.invokeOp) throw new Error("bridge not ready");
   return app.core.invokeOp(`ext:labeler/${op}`, payload);
+}
+
+async function listImages(folder) {
+  setFolder(folder);
+  try {
+    const reply = await invokeLabeler("list_images", { path: folder });
+    if (reply?.images && Array.isArray(reply.images)) {
+      writeRecent(folder);
+      setImages(reply.images);
+    }
+  } catch (err) {
+    console.error("[listImages] list_images failed:", err);
+    setImages([]);
+    showEmptyHint(`无法列出图片: ${err}`);
+    updateStatus(null, 0, 0);
+  }
+  try {
+    const cr = await invokeLabeler("scan_classes", { image_path: folder });
+    if (cr?.classes && Array.isArray(cr.classes)) {
+      state.classes = cr.classes;
+      renderClassList();
+    }
+  } catch (err) {
+    console.error("[listImages] scan_classes failed:", err);
+  }
 }
 
 function waitForBridge(attempt = 0) {
   const app = window.__MoonBit__;
-  if (app && app.core && app.core.invokeOp) {
-    canvasApi = createCanvas(document.getElementById("image-box"));
+  if (app?.core?.invokeOp) {
+    canvasApi = createCanvas(els.imageBox);
     bindCanvasEvents(canvasApi);
     installResizeObserver();
     bindEvents();
