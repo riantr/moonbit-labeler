@@ -37,7 +37,7 @@ html, body, #app {
 
 #app {
   display: grid;
-  grid-template-rows: 48px 1fr 28px;
+  grid-template-rows: 48px 32px 1fr 28px;
 }
 
 .titlebar {
@@ -126,6 +126,104 @@ button.primary {
   border-color: var(--accent);
 }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ============================================================
+   Menubar — horizontal top-level menu with dropdowns
+   ============================================================ */
+.menubar {
+  display: flex;
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding: 0 4px;
+  height: 32px;
+  gap: 2px;
+  user-select: none;
+}
+.menubar-item {
+  position: relative;
+}
+.menubar-trigger {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  padding: 6px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.menubar-trigger:hover { background: var(--hover); }
+.menubar-item.open > .menubar-trigger,
+.menubar-trigger[aria-expanded="true"] { background: var(--selected); color: var(--accent); }
+
+.menubar-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  min-width: 200px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  display: none;
+  z-index: 1000;
+}
+.menubar-item.open > .menubar-menu { display: block; }
+
+.menubar-menu li[role="menuitem"] {
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.menubar-menu li[role="menuitem"]:hover { background: var(--hover); }
+.menubar-menu li[role="menuitem"].active {
+  background: var(--selected);
+  color: var(--accent);
+  font-weight: 600;
+}
+.menubar-menu .muted-item { color: var(--muted); }
+.menubar-menu .menubar-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 0;
+  padding: 0;
+  cursor: default;
+}
+.menubar-menu .menubar-pad {
+  padding: 8px 14px;
+  font-size: 12px;
+}
+.menubar-menu .menubar-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+}
+.menubar-menu input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.menubar-spacer { flex: 1; }
+.menubar-zoom-readout {
+  font-family: Cascadia Mono, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 12px;
+  min-width: 60px;
+  text-align: right;
+}
+
+/* Cursor feedback when zoom/pan tools are active */
+.canvas-stage.cursor-grab { cursor: grab; }
+.canvas-stage.cursor-grabbing { cursor: grabbing; }
 
 .workspace {
   display: grid;
@@ -392,9 +490,16 @@ button.small { font-size: 12px; padding: 5px 12px; }
   overflow: hidden;
 }
 .canvas-stage img {
-  width: 100%;
-  height: 100%;
+  /* Contain the bitmap in the image-frame without changing the frame's
+     intrinsic size. The frame has a fixed aspect-ratio (set by JS);
+     `object-fit: contain` then renders the bitmap inside it at the
+     largest size that preserves the natural ratio. */
   display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
   user-select: none;
   -webkit-user-drag: none;
 }
@@ -419,20 +524,26 @@ button.small { font-size: 12px; padding: 5px 12px; }
 }
 .image-frame {
   position: relative;
+  /* Without an aspect-ratio, fill the box; with one, lock the ratio. */
   width: 100%;
   height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 /* Once a frame has a ratio, the size collapses to the largest rect that
    fits. Without a ratio (no image yet) it just fills the box — JS sets
-   the ratio the moment the image's natural size is known. */
+   the ratio the moment the image's natural size is known. We disable
+   flex shrinking so the aspect-ratio actually wins against the
+   child <img>'s natural size. */
 .image-frame[style*="aspect-ratio"] {
   width: auto;
   height: auto;
   max-width: 100%;
   max-height: 100%;
+  flex: 0 0 auto;
 }
 .annotation-overlay {
   position: absolute;
@@ -465,3 +576,49 @@ button.small { font-size: 12px; padding: 5px 12px; }
 }
 .statusbar .spacer { flex: 1; }
 .muted { color: var(--muted); }
+
+/* ============================================================
+   Timeline — video mode frame scrubber
+   ============================================================ */
+.timeline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.timeline.hidden { display: none; }
+.timeline-frame-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  color: var(--ink);
+  min-width: 96px;
+  justify-content: center;
+}
+.timeline-frame-info .muted { color: var(--muted); }
+.timeline-slider {
+  flex: 1;
+  min-width: 180px;
+  accent-color: var(--accent);
+}
+.timeline-fps, .timeline-coverage {
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.file-list li.video-item .meta .name { font-weight: 500; }
+.file-list li.video-item::after {
+  content: "▶";
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  color: var(--accent);
+  font-size: 10px;
+  pointer-events: none;
+}

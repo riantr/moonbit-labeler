@@ -30,6 +30,83 @@
         </form>
       </header>
 
+      <nav class="menubar" id="menubar" role="menubar" aria-label="主菜单">
+        <div class="menubar-item" data-menu="file">
+          <button class="menubar-trigger" type="button" aria-haspopup="true" aria-expanded="false">文件</button>
+          <ul class="menubar-menu" role="menu">
+            <li role="menuitem" data-action="open-folder">打开文件夹...</li>
+            <li role="menuitem" data-action="reload">重新载入列表</li>
+            <li class="menubar-sep"></li>
+            <li role="menuitem" data-action="save-now">立即保存 (Ctrl+S)</li>
+            <li role="menuitem" data-action="save-all" class="muted-item">保存整个文件夹...</li>
+            <li class="menubar-sep"></li>
+            <li role="menuitem" data-action="export-voc" class="muted-item">导出为 Pascal VOC XML...</li>
+            <li role="menuitem" data-action="export-yolo" class="muted-item">导出为 YOLO TXT...</li>
+            <li class="menubar-sep"></li>
+            <li role="menuitem" data-action="quit" class="muted-item">退出</li>
+          </ul>
+        </div>
+        <div class="menubar-item" data-menu="annotate">
+          <button class="menubar-trigger" type="button" aria-haspopup="true" aria-expanded="false">标注</button>
+          <ul class="menubar-menu" role="menu">
+            <li role="menuitem" data-action="undo">撤销 (Ctrl+Z)</li>
+            <li role="menuitem" data-action="redo">重做 (Ctrl+Y)</li>
+            <li class="menubar-sep"></li>
+            <li role="menuitem" data-action="delete-selected">删除选中 (Delete)</li>
+            <li role="menuitem" data-action="clear-all" class="muted-item">清空当前图全部标注...</li>
+            <li class="menubar-sep"></li>
+            <li role="menuitem" data-action="mode-select">选择模式 (V)</li>
+            <li role="menuitem" data-action="mode-rect">矩形模式 (R)</li>
+            <li role="menuitem" data-action="mode-polygon">多边形模式 (P)</li>
+            <li role="menuitem" data-action="mode-keypoint">关键点模式 (K)</li>
+            <li role="menuitem" data-action="mode-binding">关联模式 (B)</li>
+          </ul>
+        </div>
+        <div class="menubar-item" data-menu="view">
+          <button class="menubar-trigger" type="button" aria-haspopup="true" aria-expanded="false">视图</button>
+          <ul class="menubar-menu" role="menu">
+            <li role="menuitem" data-action="zoom-in">放大 (Ctrl++)</li>
+            <li role="menuitem" data-action="zoom-out">缩小 (Ctrl+-)</li>
+            <li role="menuitem" data-action="zoom-reset">实际像素 (Ctrl+0)</li>
+            <li role="menuitem" data-action="zoom-fit">适应窗口</li>
+            <li class="menubar-sep"></li>
+            <li role="menuitem" data-action="prev-image">上一张 (←/W)</li>
+            <li role="menuitem" data-action="next-image">下一张 (→/S)</li>
+          </ul>
+        </div>
+        <div class="menubar-item" data-menu="settings">
+          <button class="menubar-trigger" type="button" aria-haspopup="true" aria-expanded="false">设置</button>
+          <ul class="menubar-menu" role="menu">
+            <li class="menubar-pad">
+              <label class="menubar-label">标注层不透明度</label>
+              <input id="opacity-slider" type="range" min="0" max="100" value="80" />
+            </li>
+            <li class="menubar-pad">
+              <label class="menubar-label">多边形闭合半径 <span id="close-px-label">12</span> px</label>
+              <input id="closeradius-slider" type="range" min="6" max="40" value="12" />
+            </li>
+            <li class="menubar-pad">
+              <label class="menubar-label">自动保存间隔 <span id="autosave-label">600</span> ms</label>
+              <input id="autosave-slider" type="range" min="100" max="3000" step="100" value="600" />
+            </li>
+            <li class="menubar-sep"></li>
+            <li role="menuitem" data-action="clear-recent" class="muted-item">清空最近文件夹历史</li>
+          </ul>
+        </div>
+        <div class="menubar-item" data-menu="tools">
+          <button class="menubar-trigger" type="button" aria-haspopup="true" aria-expanded="false">工具</button>
+          <ul class="menubar-menu" role="menu">
+            <li role="menuitem" data-action="rescan-classes">重新扫描类别</li>
+            <li role="menuitem" data-action="add-prefix" class="muted-item">添加前缀...</li>
+            <li role="menuitem" data-action="add-suffix" class="muted-item">添加后缀...</li>
+            <li class="menubar-sep"></li>
+            <li role="menuitem" data-action="open-devtools" class="muted-item">开发者工具</li>
+          </ul>
+        </div>
+        <div class="menubar-spacer"></div>
+        <div class="menubar-zoom-readout" id="zoom-readout">100%</div>
+      </nav>
+
       <main class="workspace">
         <aside class="sidebar">
           <div class="sidebar-head">
@@ -76,6 +153,28 @@
                 <img id="image" alt="" hidden />
               </div>
             </div>
+          </div>
+          <div class="timeline hidden" id="timeline">
+            <button id="frame-prev" class="ghost small" title="上一帧 (←)">◀</button>
+            <button id="frame-next" class="ghost small" title="下一帧 (→)">▶</button>
+            <span class="timeline-frame-info">
+              <span class="timeline-frame-no" id="frame-no">0</span>
+              <span class="muted">/</span>
+              <span class="timeline-frame-total" id="frame-total">0</span>
+            </span>
+            <input
+              id="frame-slider"
+              class="timeline-slider"
+              type="range"
+              min="0"
+              max="0"
+              value="0"
+              step="1"
+            />
+            <span class="timeline-fps muted" id="frame-fps">— fps</span>
+            <div class="toolbar-spacer"></div>
+            <button id="frame-copy-next" class="ghost small" title="复制此帧标注到下一帧">⎘ 复制到下一帧</button>
+            <span class="timeline-coverage muted" id="frame-coverage">已标注 0 帧</span>
           </div>
         </section>
       </main>

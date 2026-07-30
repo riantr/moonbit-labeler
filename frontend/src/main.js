@@ -13,6 +13,7 @@
 
 import { parseLabel, normalizeLabel, serializeLabel, emptyLabel } from "./label.js";
 import { createCanvas } from "./canvas.js";
+import { createVideoController } from "./video.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -20,14 +21,33 @@ const DEFAULT_IMAGE_FOLDER =
   "D:/src/Marvis/MoonBitLabeler/data/Image@CARS.Part.01";
 const RECENT_KEY = "moonbit-labeler/recent-folders";
 const MAX_RECENT = 6;
-const AUTOSAVE_MS = 600;
-const POLYGON_CLOSE_RADIUS_PX = 12;
+const AUTOSAVE_MS_INITIAL = 600;
+const POLYGON_CLOSE_RADIUS_PX_INITIAL = 12;
+// Settings — persisted to localStorage so they survive across launches.
+// Each slider in the menubar drives one of these.
+const SETTINGS_KEY = "moonbit-labeler/settings-v1";
+const settings = {
+  annotationOpacity: 0.8,
+  polygonClosePx: 12,
+  autosaveMs: 600,
+};
+try {
+  const raw = localStorage.getItem(SETTINGS_KEY);
+  if (raw) Object.assign(settings, JSON.parse(raw));
+} catch {}
+function persistSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+}
 
 const state = {
   folder: "",
   labelFolder: "",
   images: [],
+  videos: [],
+  // Active media index. `currentIndex` is into `images` (image mode) or
+  // `videos` (video mode); `mediaKind` switches between them.
   currentIndex: -1,
+  mediaKind: "image", // "image" | "video"
   // Per-image label state
   label: emptyLabel(),
   labelPath: "",
@@ -53,6 +73,13 @@ const state = {
   labeledPaths: new Set(),
   // Monotonic counter to discard stale async replies
   loadToken: 0,
+  // Video mode state — populated by video.js
+  currentVideo: null,      // { name, path, ext, sizeBytes }
+  currentVideoIdx: -1,
+  videoMeta: null,         // { width, height, fps, frameCount, durationMs, codec, ok }
+  currentFrame: 0,
+  frameLabels: new Map(),  // frame -> { img_name, infos, bindings, frames }
+  diskJson: null,          // most recent on-disk JSON for the active video
 };
 
 const els = {
@@ -77,7 +104,28 @@ const els = {
   saveBtn: $("#save-btn"),
   undoBtn: $("#undo-btn"),
   deleteBtn: $("#delete-btn"),
+  // menubar
+  menubar: $("#menubar"),
+  zoomReadout: $("#zoom-readout"),
+  opacitySlider: $("#opacity-slider"),
+  closeRadiusSlider: $("#closeradius-slider"),
+  autosaveSlider: $("#autosave-slider"),
+  closePxLabel: $("#close-px-label"),
+  autosaveLabel: $("#autosave-label"),
+  // timeline (video mode)
+  timeline: $("#timeline"),
+  framePrev: $("#frame-prev"),
+  frameNext: $("#frame-next"),
+  frameSlider: $("#frame-slider"),
+  frameNo: $("#frame-no"),
+  frameTotal: $("#frame-total"),
+  frameFps: $("#frame-fps"),
+  frameCoverage: $("#frame-coverage"),
+  frameCopyNext: $("#frame-copy-next"),
 };
+
+// Expose a few commonly-needed els to modules that don't import main.js.
+state.els = els;
 
 // ============================================================
 // Persisted recent folders (localStorage with safe fallback)
@@ -151,56 +199,108 @@ function colorForType(type) {
 // File list rendering
 // ============================================================
 
-function setImages(images) {
+function setMedia({ images = [], videos = [] } = {}) {
   state.images = images;
-  els.imageCount.textContent = `${images.length} 张`;
+  state.videos = videos;
+  state.currentIndex = -1;
+  state.currentVideoIdx = -1;
+  state.currentVideo = null;
+  state.videoMeta = null;
+  state.currentFrame = 0;
+  state.frameLabels = new Map();
+  state.diskJson = null;
+  setTimelineVisible(false);
+
+  // Merge for the sidebar list. Images go on top, videos below, each
+  // with their own index space. We dispatch click via the `data-kind`
+  // attribute so the right selector is invoked.
+  const total = images.length + videos.length;
+  els.imageCount.textContent =
+    `${images.length} 张 · ${videos.length} 段`;
   els.fileList.replaceChildren();
   const frag = document.createDocumentFragment();
   images.forEach((img, idx) => {
-    const li = document.createElement("li");
-    li.dataset.index = String(idx);
-    li.dataset.path = img.path;
-
-    const thumb = document.createElement("img");
-    thumb.className = "thumb";
-    thumb.alt = "";
-    thumb.loading = "lazy";
-    thumb.decoding = "async";
-    thumb.src = fileUrl(img.path);
-    thumb.onerror = () => loadThumbFallback(thumb, img.path);
-    li.appendChild(thumb);
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const ext = document.createElement("span");
-    ext.className = "ext-tag";
-    ext.textContent = (img.ext || "").replace(".", "") || "?";
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = img.name;
-    name.title = img.path;
-    meta.append(ext, name);
-    li.appendChild(meta);
-
-    if (state.labeledPaths.has(img.path)) {
-      const dot = document.createElement("span");
-      dot.className = "labeled-dot";
-      dot.title = "已标注";
-      li.appendChild(dot);
-    }
-
-    li.addEventListener("click", () => selectImage(idx));
-    frag.appendChild(li);
+    frag.appendChild(renderListItem({
+      kind: "image",
+      index: idx,
+      path: img.path,
+      name: img.name,
+      ext: img.ext,
+      thumb: fileUrl(img.path),
+      onClick: () => selectImage(idx),
+    }));
+  });
+  videos.forEach((vid, idx) => {
+    frag.appendChild(renderListItem({
+      kind: "video",
+      index: idx,
+      path: vid.path,
+      name: vid.name,
+      ext: vid.ext,
+      // We could show a still frame as the thumb later. For now we
+      // draw a generic video placeholder.
+      thumb: null,
+      onClick: () => selectVideo(idx),
+    }));
   });
   els.fileList.appendChild(frag);
 
   if (images.length > 0) {
     selectImage(0);
+  } else if (videos.length > 0) {
+    selectVideo(0);
   } else {
-    state.currentIndex = -1;
-    showEmptyHint("所选文件夹中没有图片（jpg/png/bmp/webp/gif）");
+    showEmptyHint("所选文件夹里没有可标注的图片或视频");
     updateStatus(null, 0, 0);
   }
+}
+
+function renderListItem({ kind, index, path, name, ext, thumb, onClick }) {
+  const li = document.createElement("li");
+  li.dataset.kind = kind;
+  li.dataset.index = String(index);
+  li.dataset.path = path;
+  if (kind === "video") li.classList.add("video-item");
+
+  if (thumb) {
+    const t = document.createElement("img");
+    t.className = "thumb";
+    t.alt = "";
+    t.loading = "lazy";
+    t.decoding = "async";
+    t.src = thumb;
+    t.onerror = () => loadThumbFallback(t, path);
+    li.appendChild(t);
+  } else {
+    // video placeholder
+    const ph = document.createElement("div");
+    ph.className = "thumb";
+    ph.style.cssText = "display:flex;align-items:center;justify-content:center;color:#fff;background:#0f1c19;font-size:22px;";
+    ph.textContent = "▶";
+    li.appendChild(ph);
+  }
+
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const extTag = document.createElement("span");
+  extTag.className = "ext-tag";
+  extTag.textContent = (ext || "").replace(".", "") || "?";
+  const nameEl = document.createElement("span");
+  nameEl.className = "name";
+  nameEl.textContent = name;
+  nameEl.title = path;
+  meta.append(extTag, nameEl);
+  li.appendChild(meta);
+
+  if (state.labeledPaths.has(path)) {
+    const dot = document.createElement("span");
+    dot.className = "labeled-dot";
+    dot.title = "已标注";
+    li.appendChild(dot);
+  }
+
+  li.addEventListener("click", onClick);
+  return li;
 }
 
 async function loadThumbFallback(thumb, path) {
@@ -302,6 +402,17 @@ function hideEmptyHint() {
 function layoutCanvas() {
   if (!canvasApi) return;
   if (state.imgNatural.w > 0 && state.imgNatural.h > 0) {
+    // Switching images resets any pan/zoom the user left behind from
+    // the previous one — much less disorienting than seeing the new
+    // image framed through last image's zoom window.
+    if (els.image.src && els.image.src !== "") {
+      // Only reset when the image actually changes (cheap heuristic —
+      // layoutCanvas is also called on resize).
+    }
+    if (state._currentImgSrc !== els.image.src) {
+      canvasApi.resetView();
+      state._currentImgSrc = els.image.src;
+    }
     const box = els.imageBox;
     const frame = els.imageFrame;
     if (frame) {
@@ -385,6 +496,43 @@ function markLabeled(path) {
   }
 }
 
+function setTimelineVisible(visible) {
+  if (!els.timeline) return;
+  els.timeline.classList.toggle("hidden", !visible);
+}
+
+function updateFrameReadout(frame, total, fps, coverage) {
+  if (els.frameNo) els.frameNo.textContent = String(frame);
+  if (els.frameTotal) els.frameTotal.textContent = String(Math.max(0, total - 1));
+  if (els.frameSlider) {
+    const maxAttr = Math.max(0, total - 1);
+    if (Number(els.frameSlider.max) !== maxAttr) {
+      els.frameSlider.max = String(maxAttr);
+    }
+    if (Number(els.frameSlider.value) !== frame) {
+      els.frameSlider.value = String(frame);
+    }
+  }
+  if (els.frameFps) {
+    if (fps > 0) {
+      els.frameFps.textContent = `${fps.toFixed(2)} fps · ${formatDuration(frame, fps)}`;
+    } else {
+      els.frameFps.textContent = "— fps";
+    }
+  }
+  if (els.frameCoverage && coverage != null) {
+    els.frameCoverage.textContent = `已标注 ${coverage} 帧`;
+  }
+}
+
+function formatDuration(frame, fps) {
+  if (!fps || fps <= 0) return "—";
+  const sec = frame / fps;
+  const m = Math.floor(sec / 60);
+  const s = (sec - m * 60);
+  return `${m.toString().padStart(2, "0")}:${s.toFixed(2).padStart(5, "0")}`;
+}
+
 function cssEscape(s) {
   return String(s).replace(/["\\]/g, "\\$&");
 }
@@ -392,9 +540,19 @@ function cssEscape(s) {
 function selectImage(idx) {
   if (idx < 0 || idx >= state.images.length) return;
   if (state.dirty) flushSave().catch(() => {});
+  state.mediaKind = "image";
+  setTimelineVisible(false);
   state.currentIndex = idx;
+  state.currentVideoIdx = -1;
+  state.currentVideo = null;
+  state.videoMeta = null;
+  state.frameLabels = new Map();
+  state.diskJson = null;
   for (const li of els.fileList.children) {
-    li.classList.toggle("active", Number(li.dataset.index) === idx);
+    li.classList.toggle(
+      "active",
+      li.dataset.kind === "image" && Number(li.dataset.index) === idx,
+    );
   }
   const item = state.images[idx];
   updateStatus(item, idx, state.images.length);
@@ -419,7 +577,7 @@ function markDirty() {
   updateDirtyBadge();
   requestAnimationFrame(() => renderAnnotations());
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(flushSave, AUTOSAVE_MS);
+  saveTimer = setTimeout(flushSave, settings.autosaveMs);
 }
 
 function undo() {
@@ -432,7 +590,7 @@ function undo() {
   updateDeleteBtn();
   if (state.labelPath) {
     if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(flushSave, AUTOSAVE_MS);
+    saveTimer = setTimeout(flushSave, settings.autosaveMs);
   }
 }
 
@@ -440,6 +598,24 @@ async function flushSave() {
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
+  }
+  if (state.mediaKind === "video") {
+    if (!state.dirty || !state.currentVideo || !videoController) return;
+    state.saving = true;
+    updateDirtyBadge();
+    try {
+      await videoController.flushSave();
+      state.dirty = false;
+      state.saveError = null;
+      markLabeled(state.currentVideo.path);
+    } catch (err) {
+      state.saveError = String(err);
+      console.error("[video] write_label failed:", err);
+    } finally {
+      state.saving = false;
+      updateDirtyBadge();
+    }
+    return;
   }
   if (!state.dirty || !state.labelPath) return;
   state.saving = true;
@@ -500,6 +676,7 @@ function renderAnnotations() {
       draftPoints: state.draftPoints,
       bindingFromId: state.bindingFromId,
       colorForType,
+      opacity: settings.annotationOpacity,
     });
   });
 }
@@ -686,7 +863,7 @@ function bindCanvasEvents(api) {
     if (state.mode === "polygon") {
       if (state.draftPoints.length >= 3) {
         const first = state.draftPoints[0];
-        if (displayDistPx(imgPt, first) < POLYGON_CLOSE_RADIUS_PX) {
+        if (displayDistPx(imgPt, first) < settings.polygonClosePx) {
           commitPolygon();
           return;
         }
@@ -823,6 +1000,15 @@ function bindToolbar() {
   els.deleteBtn.addEventListener("click", deleteSelected);
   els.saveBtn.addEventListener("click", () => flushSave());
   if (els.browseBtn) els.browseBtn.addEventListener("click", browseFolder);
+  // timeline (video mode)
+  if (els.framePrev) els.framePrev.addEventListener("click", () => videoController?.stepFrame(-1));
+  if (els.frameNext) els.frameNext.addEventListener("click", () => videoController?.stepFrame(1));
+  if (els.frameSlider) els.frameSlider.addEventListener("input", () => {
+    if (!videoController || !state.currentVideo) return;
+    const v = Number(els.frameSlider.value);
+    if (v !== state.currentFrame) videoController.selectFrame(v);
+  });
+  if (els.frameCopyNext) els.frameCopyNext.addEventListener("click", () => videoController?.copyFrameToNext());
   updateDeleteBtn();
 }
 
@@ -861,8 +1047,20 @@ function bindEvents() {
   document.addEventListener("keydown", (ev) => {
     const active = document.activeElement;
     if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === "z") {
+    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && (ev.key === "z" || ev.key === "Z")) {
       ev.preventDefault(); undo(); return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && (ev.key === "s" || ev.key === "S")) {
+      ev.preventDefault(); flushSave(); return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && (ev.key === "+" || ev.key === "=")) {
+      ev.preventDefault(); canvasApi?.zoomBy(1.25); return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === "-") {
+      ev.preventDefault(); canvasApi?.zoomBy(1 / 1.25); return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === "0") {
+      ev.preventDefault(); canvasApi?.resetView(); return;
     }
     if (ev.key === "Delete" || ev.key === "Backspace") {
       ev.preventDefault(); deleteSelected(); return;
@@ -875,15 +1073,26 @@ function bindEvents() {
         return;
       }
     }
-    if (state.images.length === 0) return;
+    if (state.images.length === 0 && state.videos.length === 0) return;
     if (ev.key === "ArrowDown" || ev.key === "j") {
       ev.preventDefault();
-      const next = Math.min(state.currentIndex + 1, state.images.length - 1);
-      if (next !== state.currentIndex) selectImage(next);
+      if (state.mediaKind === "video" && videoController) {
+        videoController.stepFrame(1);
+      } else {
+        const next = Math.min(state.currentIndex + 1, state.images.length - 1);
+        if (next !== state.currentIndex) selectImage(next);
+      }
     } else if (ev.key === "ArrowUp" || ev.key === "k") {
       ev.preventDefault();
-      const prev = Math.max(state.currentIndex - 1, 0);
-      if (prev !== state.currentIndex) selectImage(prev);
+      if (state.mediaKind === "video" && videoController) {
+        videoController.stepFrame(-1);
+      } else {
+        const prev = Math.max(state.currentIndex - 1, 0);
+        if (prev !== state.currentIndex) selectImage(prev);
+      }
+    } else if (state.mediaKind === "video" && (ev.key === "ArrowLeft" || ev.key === "ArrowRight")) {
+      ev.preventDefault();
+      videoController?.stepFrame(ev.key === "ArrowRight" ? 1 : -1);
     }
     const m = { v: "select", r: "rect", p: "polygon", k: "keypoint", b: "binding" };
     if (m[ev.key.toLowerCase()]) setMode(m[ev.key.toLowerCase()]);
@@ -902,6 +1111,14 @@ function bindEvents() {
 // IPC + bootstrap
 // ============================================================
 
+function setState(patch) {
+  Object.assign(state, patch);
+}
+
+function getState() {
+  return state;
+}
+
 async function invokeLabeler(op, payload) {
   const app = window.__MoonBit__;
   if (!app?.core?.invokeOp) throw new Error("bridge not ready");
@@ -910,17 +1127,33 @@ async function invokeLabeler(op, payload) {
 
 async function listImages(folder) {
   setFolder(folder);
+  let images = [];
+  let videos = [];
   try {
     const reply = await invokeLabeler("list_images", { path: folder });
     if (reply?.images && Array.isArray(reply.images)) {
-      writeRecent(folder);
-      setImages(reply.images);
+      images = reply.images;
     }
   } catch (err) {
     console.error("[listImages] list_images failed:", err);
-    setImages([]);
-    showEmptyHint(`无法列出图片: ${err}`);
+  }
+  try {
+    const reply = await invokeLabeler("list_videos", { path: folder });
+    if (reply?.videos && Array.isArray(reply.videos)) {
+      videos = reply.videos;
+    }
+  } catch (err) {
+    // Video support is opt-in; missing ffmpeg / list_videos shouldn't
+    // block the image workflow.
+    console.warn("[listImages] list_videos failed:", err);
+  }
+  writeRecent(folder);
+  if (images.length === 0 && videos.length === 0) {
+    setMedia({});
+    showEmptyHint("所选文件夹里没有可标注的图片或视频");
     updateStatus(null, 0, 0);
+  } else {
+    setMedia({ images, videos });
   }
   try {
     const cr = await invokeLabeler("scan_classes", { image_path: folder });
@@ -933,6 +1166,212 @@ async function listImages(folder) {
   }
 }
 
+// Video-mode shim: forwarded to the video controller. Initialized in
+// `initVideoController()` below (deferred until the IPC bridge is ready).
+let videoController = null;
+async function selectVideo(idx) {
+  if (!videoController) return;
+  if (state.dirty) await flushSave().catch(() => {});
+  state.mediaKind = "video";
+  await videoController.selectVideo(idx);
+  for (const li of els.fileList.children) {
+    li.classList.toggle(
+      "active",
+      li.dataset.kind === "video" && Number(li.dataset.index) === idx,
+    );
+  }
+}
+
+// ============================================================
+// Menubar wiring (open/close + dispatch actions)
+// ============================================================
+
+function setupMenubar() {
+  if (!els.menubar) return;
+
+  // Click outside closes any open menu.
+  document.addEventListener("click", (ev) => {
+    if (!ev.target.closest(".menubar-item.open")) {
+      for (const item of els.menubar.querySelectorAll(".menubar-item.open")) {
+        item.classList.remove("open");
+        const t = item.querySelector(".menubar-trigger");
+        if (t) t.setAttribute("aria-expanded", "false");
+      }
+    }
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      for (const item of els.menubar.querySelectorAll(".menubar-item.open")) {
+        item.classList.remove("open");
+        const t = item.querySelector(".menubar-trigger");
+        if (t) t.setAttribute("aria-expanded", "false");
+      }
+    }
+  });
+
+  // Click trigger toggles dropdown.
+  for (const trigger of els.menubar.querySelectorAll(".menubar-trigger")) {
+    trigger.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const item = trigger.closest(".menubar-item");
+      const wasOpen = item.classList.contains("open");
+      // close all first
+      for (const other of els.menubar.querySelectorAll(".menubar-item.open")) {
+        other.classList.remove("open");
+        const t = other.querySelector(".menubar-trigger");
+        if (t) t.setAttribute("aria-expanded", "false");
+      }
+      if (!wasOpen) {
+        item.classList.add("open");
+        trigger.setAttribute("aria-expanded", "true");
+      }
+    });
+  }
+
+  // Click any menu item dispatches a "labeler:action" CustomEvent.
+  for (const li of els.menubar.querySelectorAll("li[role='menuitem']")) {
+    li.addEventListener("click", async (ev) => {
+      const action = li.dataset.action;
+      // close dropdown
+      const item = li.closest(".menubar-item");
+      item.classList.remove("open");
+      const t = item.querySelector(".menubar-trigger");
+      if (t) t.setAttribute("aria-expanded", "false");
+      await runMenuAction(action);
+    });
+  }
+
+  // Sliders in the Settings menu:
+  const initSlider = (input, label, key, fmt = (v) => v) => {
+    if (!input) return;
+    input.value = String(settings[key]);
+    if (label) label.textContent = fmt(settings[key]);
+    input.addEventListener("input", () => {
+      const v = Number(input.value);
+      settings[key] = v;
+      persistSettings();
+      if (label) label.textContent = fmt(v);
+      applySettings();
+    });
+  };
+  initSlider(els.opacitySlider, null, "annotationOpacity", (v) => `${Math.round(v * 100)}%`);
+  initSlider(els.closeRadiusSlider, els.closePxLabel, "polygonClosePx");
+  initSlider(els.autosaveSlider, els.autosaveLabel, "autosaveMs");
+
+  applySettings();
+}
+
+function applySettings() {
+  // Opacity -> passed to canvas.render via state.opacity
+  if (canvasApi) {
+    requestAnimationFrame(() => renderAnnotations());
+  }
+}
+
+/** Dispatch table for every menu action. */
+async function runMenuAction(action) {
+  switch (action) {
+    case "open-folder":
+      els.browseBtn?.click();
+      break;
+    case "reload":
+      if (state.folder) listImages(state.folder);
+      break;
+    case "save-now":
+      flushSave();
+      break;
+    case "save-all":
+    case "export-voc":
+    case "export-yolo":
+      flashHint(`"${action}" 还在路上 —— 标记 TODO`, "info");
+      break;
+    case "quit":
+      window.close();
+      break;
+    case "undo":
+      undo(); break;
+    case "redo":
+      // redo stack not implemented yet
+      flashHint("重做 (Ctrl+Y) 还没实现 —— 多步撤销用 Ctrl+Z 即可", "info");
+      break;
+    case "delete-selected":
+      deleteSelected(); break;
+    case "clear-all":
+      flashHint("清空当前图的标注：按 Delete 逐个删", "info");
+      break;
+    case "mode-select": setMode("select"); break;
+    case "mode-rect": setMode("rect"); break;
+    case "mode-polygon": setMode("polygon"); break;
+    case "mode-keypoint": setMode("keypoint"); break;
+    case "mode-binding": setMode("binding"); break;
+    case "zoom-in":   zoomMenu(1.25); break;
+    case "zoom-out":  zoomMenu(1 / 1.25); break;
+    case "zoom-reset": canvasApi?.resetView(); break;
+    case "zoom-fit":   canvasApi?.fitView(); break;
+    case "prev-image":
+      if (state.images.length > 0)
+        selectImage(Math.max(state.currentIndex - 1, 0));
+      break;
+    case "next-image":
+      if (state.images.length > 0)
+        selectImage(Math.min(state.currentIndex + 1, state.images.length - 1));
+      break;
+    case "clear-recent":
+      try { localStorage.removeItem(RECENT_KEY); } catch {}
+      flashHint("最近文件夹历史已清空", "info");
+      break;
+    case "rescan-classes":
+      if (state.folder) {
+        const cr = await invokeLabeler("scan_classes", { image_path: state.folder });
+        if (cr?.classes) { state.classes = cr.classes; renderClassList(); }
+      }
+      break;
+    case "add-prefix":
+    case "add-suffix":
+    case "open-devtools":
+      flashHint(`"${action}" 还在路上 —— 标记 TODO`, "info");
+      break;
+    default:
+      console.warn("unknown menubar action:", action);
+  }
+}
+
+function zoomMenu(factor) {
+  if (!canvasApi) return;
+  // Zoom around screen center for keyboard shortcuts
+  canvasApi.zoomBy(factor);
+}
+
+function flashHint(msg, kind) {
+  // Lightweight one-shot toast near the statusbar.
+  const el = document.createElement("div");
+  el.textContent = msg;
+  el.className = "toast";
+  el.style.cssText = `
+    position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%);
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 8px 16px; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+    font-size: 12px; color: var(--ink);
+    z-index: 9999;
+  `;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2200);
+}
+
+// ============================================================
+// View (zoom/pan) sync — keep the menubar "100%" readout accurate
+// ============================================================
+
+function setupViewSync() {
+  function fmtZoom(z) { return `${Math.round(z * 100)}%`; }
+  document.addEventListener("labeler:viewchange", (ev) => {
+    const v = ev.detail;
+    if (els.zoomReadout && v) els.zoomReadout.textContent = fmtZoom(v.zoom);
+    // Force a redraw at the new view (composite picks up view.pan/zoom)
+    requestAnimationFrame(() => renderAnnotations());
+  });
+}
+
 function waitForBridge(attempt = 0) {
   const app = window.__MoonBit__;
   if (app?.core?.invokeOp) {
@@ -940,6 +1379,9 @@ function waitForBridge(attempt = 0) {
     bindCanvasEvents(canvasApi);
     installResizeObserver();
     bindEvents();
+    setupMenubar();
+    setupViewSync();
+    initVideoController();
     const initial = pickInitialFolder();
     els.folderInput.value = initial;
     listImages(initial);
@@ -950,6 +1392,43 @@ function waitForBridge(attempt = 0) {
     return;
   }
   setTimeout(() => waitForBridge(attempt + 1), 50);
+}
+
+function initVideoController() {
+  // Synchronous import: video.js has no main.js dependencies (deps are
+  // passed in). We must initialize before the first listImages result
+  // arrives, because the first list response can immediately select
+  // the first video when there are no images.
+  videoController = createVideoController({
+    invokeLabeler,
+    getState,
+    setState,
+    renderAnnotations,
+    showEmptyHint,
+    flashHint,
+    setTimelineVisible,
+    updateFrameReadout,
+    markLabeled,
+    onFrameLoaded, // rebind layout for video frames
+  });
+  window.__videoController = videoController;
+}
+
+///| Hook for video mode: re-apply the image-frame aspect ratio and
+/// notify the canvas overlay when a freshly-decoded frame is ready.
+/// Mirrors `onImageLoad` but takes dimensions from the caller since
+/// the <img> onload may fire after we've moved on.
+function onFrameLoaded(natural) {
+  if (!natural || !natural.w || !natural.h) return;
+  const frame = els.imageFrame;
+  if (frame) {
+    frame.style.aspectRatio = `${natural.w} / ${natural.h}`;
+  }
+  if (els.imageBox) els.imageBox.classList.add("has-image");
+  state.imgNatural = natural;
+  // Defer to the next frame so CSS reflow has applied. This matches
+  // what onImageLoad does for image-mode.
+  requestAnimationFrame(layoutCanvas);
 }
 
 waitForBridge();

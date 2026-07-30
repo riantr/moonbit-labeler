@@ -1,8 +1,9 @@
 // Label JSON schema helpers for MoonBit Labeler.
 //
-// On-disk schema (current):
+// On-disk schema (image + video, same shape):
 //   {
-//     "img_name": "<image basename>",
+//     "img_name": "<image or video basename>",
+//     "frames":   [<frame numbers>],   // image mode: [] or omitted
 //     "infos": [
 //       { "id": "obj_xxx", "shape": "polygon"|"rect"|"keypoint",
 //         "type": "<class string>",
@@ -15,14 +16,12 @@
 //     ]
 //   }
 //
-// Backwards compatibility:
-//   - Old shape: { img_name, infos: [{ points, type }] } (no id/shape/bindings).
-//     - We auto-assign ids.
-//     - shape is inferred from the point count (>=3 -> polygon, 2 -> rect).
-//     - bindings default to [].
+// Video mode: `frames` lists the frame numbers that this annotation file
+// applies to. Empty `frames` = image mode (applies to all frames / single
+// image). See docs/VIDEO_LABELING.md for the full design.
 
 export function emptyLabel() {
-  return { img_name: "", infos: [], bindings: [] };
+  return { img_name: "", infos: [], bindings: [], frames: [] };
 }
 
 export function parseLabel(text) {
@@ -76,6 +75,32 @@ function randomId(prefix) {
   return prefix + "_" + Math.random().toString(36).slice(2, 9);
 }
 
+///| Parse and clamp the `frames` field. Accepts either an Array of numbers
+/// (modern) or a string (legacy "1,2,3"). Returns [] when missing / invalid.
+function normalizeFrames(raw) {
+  if (Array.isArray(raw)) {
+    const out = [];
+    const seen = new Set();
+    for (const v of raw) {
+      const n = Number(v);
+      if (Number.isInteger(n) && n >= 0 && !seen.has(n)) {
+        seen.add(n);
+        out.push(n);
+      }
+    }
+    out.sort((a, b) => a - b);
+    return out;
+  }
+  if (typeof raw === "string" && raw.length() > 0) {
+    // Legacy: comma-separated string of frame numbers
+    return raw
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isInteger(n) && n >= 0);
+  }
+  return [];
+}
+
 export function normalizeLabel(parsed, fallbackImgName) {
   const imgName = parsed.img_name || fallbackImgName || "";
   const infos = Array.isArray(parsed.infos) ? parsed.infos : [];
@@ -109,12 +134,19 @@ export function normalizeLabel(parsed, fallbackImgName) {
     b.from !== b.to,
   );
 
-  return { img_name: imgName, infos: normInfos, bindings: normBindings };
+  return {
+    img_name: imgName,
+    infos: normInfos,
+    bindings: normBindings,
+    frames: normalizeFrames(parsed.frames),
+  };
 }
 
 ///| Serialize the in-memory label back to the on-disk schema.
 /// Always writes the modern shape (`id`, `shape`, `points` as nested array,
-/// `bindings`) so the next read is a no-op migration.
+/// `bindings`) so the next read is a no-op migration. `frames` is included
+/// only when non-empty (image mode omits it to keep files identical to
+/// pre-video versions).
 export function serializeLabel(label) {
   const out = {
     img_name: label.img_name || "",
@@ -131,5 +163,9 @@ export function serializeLabel(label) {
       type: b.type,
     })),
   };
+  const frames = Array.isArray(label.frames) ? label.frames : [];
+  if (frames.length > 0) {
+    out.frames = frames.slice().sort((a, b) => a - b);
+  }
   return JSON.stringify(out);
 }

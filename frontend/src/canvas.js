@@ -1,68 +1,74 @@
-// canvas.js — Canvas 2D overlay with two-layer compositing.
+// canvas.js — Canvas 2D overlay with two-layer compositing + pan/zoom transform.
 //
 // Why Canvas 2D instead of SVG?
-//   - The old SVG implementation called `clearChildren()` on every render
-//     and re-created dozens of <path>/<text> nodes. With CARS images
-//     carrying 30+ annotations this thrashes the DOM and is the main
-//     source of the lag observed while drawing / dragging.
-//   - Canvas 2D gives us hardware-accelerated raster output (Chromium
-//     uses GPU compositing for 2D canvas) and we only pay the per-pixel
-//     cost on the static layer once per image load.
+//   - The old SVG implementation called `clearChildren()` on every render and
+//     re-created dozens of <path>/<text> nodes. With CARS images carrying
+//     30+ annotations this thrashes the DOM and is the main source of the
+//     lag observed while drawing / dragging.
+//   - Canvas 2D gives us hardware-accelerated raster output (Chromium uses
+//     GPU compositing for 2D canvas) and we only pay the per-pixel cost on
+//     the static layer once per image load.
 //
-// Two layers, each an OffscreenCanvas-style backing store that we render
-// to a <canvas> at display time:
-//   - static layer: the saved annotations (infos + bindings). Painted
-//     only when the underlying label changes (load / undo / new shape
-//     committed / delete).
-//   - dynamic layer: draft polygon in progress, hover hint, selection
-//     ring, the binding "first-pick" indicator. Painted every frame
-//     during interaction, then composited on top of the static layer.
+// Two layers, each as an offscreen canvas, composited into a single visible
+// <canvas> at display time. Coordinates inside draw calls are image-natural
+// pixels; the view transform (pan + zoom) is applied via ctx.setTransform
+// on the composite layer.
 //
-// Both layers share the same backing bitmap; the dynamic layer is
-// cleared with clearRect and redrawn cheaply. We use the same drawing
-// primitives in both, so they always look identical.
+// View transform:
+//   - identity  : drawImage resamples natural -> display exactly
+//   - zoomed    : visible canvas shows a zoomed+panned subset of the image,
+//                 static/dynamic layers paint the FULL natural bitmap and
+//                 the transform crops+zooms them on composite.
 //
-// All coordinates are in image natural pixels; we apply a single
-// ctx.setTransform(sx, 0, 0, sy, 0, 0) per draw so callers can pass
-// natural coords and ignore display size.
+// Public API:
+//   createCanvas(container) -> {
+//     element, resize(natural, display),
+//     render(state), getView(), setView(view), resetView(),
+//     fitView(), setZoom(z, centerNatural?), zoomBy(factor, screenPt?),
+//     panBy(dx, dy),
+//     onMouseDown/Move/Up/Click/DblClick(fn)
+//   }
 //
-// Public API matches the previous createCanvas(stage) shape so main.js
-// needs minimal changes:
-//   { element, resize(natural, display), render(state),
-//     onMouseDown/Move/Up/Click/DblClick(fn) }
+// Mouse interactions wired by main.js:
+//   - left click / drag : shape drawing / hit-testing (existing)
+//   - middle button     : pan (always)
+//   - right button      : pan (always)
+//   - space + left drag : pan (always)
+//   - ctrl + wheel      : zoom (around mouse)
+//   - wheel             : scroll page OR pan (browser default prevented)
 
 export function createCanvas(container) {
-  // Use a single full-size canvas, but expose two offscreen "layers" as
-  // ImageBitmaps that we composite. This is closer to the C# Graphics
-  // model (Bitmap backbuffer) and gives us the cleanest perf: one
-  // drawImage per layer to the visible canvas.
+  // ---------- DOM ----------
   const canvas = document.createElement("canvas");
   canvas.classList.add("annotation-overlay");
-  // canvas takes the size of its CSS-sized parent (image-box).
-  canvas.style.position = "absolute";
-  canvas.style.left = "0";
-  canvas.style.top = "0";
-  canvas.style.width = "100%";
-  canvas.style.height = "100%";
-  canvas.style.pointerEvents = "auto";
+  Object.assign(canvas.style, {
+    position: "absolute",
+    left: "0",
+    top: "0",
+    width: "100%",
+    height: "100%",
+    pointerEvents: "auto",
+    touchAction: "none", // we'll handle wheel/pinch ourselves
+  });
 
   const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
 
-  // Offscreen buffers (one per layer). The backing bitmaps are in image
-  // natural pixel space; we rescale on composite. This keeps draw code
-  // in natural coords and avoids floating-point drift on every redraw.
   const layerStatic = document.createElement("canvas");
   const layerDynamic = document.createElement("canvas");
   const staticCtx = layerStatic.getContext("2d", { alpha: true });
   const dynamicCtx = layerDynamic.getContext("2d", { alpha: true });
 
-  // Transform: image natural (w, h) -> on-screen CSS pixels (dw, dh).
-  // Recomputed on every resize().
+  // ---------- state ----------
   let natural = { w: 0, h: 0 };
   let display = { w: 0, h: 0, dpr: window.devicePixelRatio || 1 };
+  /** View transform. pan is in display pixels (CSS), zoom multiplies scale. */
+  let view = { pan: { x: 0, y: 0 }, zoom: 1 };
+
+  // Min/max zoom — clamp at sensible values.
+  const ZOOM_MIN = 0.05;
+  const ZOOM_MAX = 32;
 
   function applyDpr(c, w, h) {
-    // Use device-pixel backing for crisp rendering on HiDPI.
     const dpr = display.dpr;
     if (c.canvas.width !== Math.round(w * dpr) ||
         c.canvas.height !== Math.round(h * dpr)) {
@@ -71,57 +77,162 @@ export function createCanvas(container) {
     }
   }
 
+  // ---------- coordinate mapping ----------
+  /** display pixels (CSS) relative to image-frame -> image-natural pixels */
+  function toNatural(screenX, screenY) {
+    // screen = (natural * zoom) + pan  =>  natural = (screen - pan) / zoom
+    return [
+      (screenX - view.pan.x) / view.zoom,
+      (screenY - view.pan.y) / view.zoom,
+    ];
+  }
+  /** image-natural -> display pixels (CSS) relative to image-frame */
+  function toScreen(nx, ny) {
+    return [nx * view.zoom + view.pan.x, ny * view.zoom + view.pan.y];
+  }
+
+  // ---------- event forwarding ----------
   const handlers = {
     mousedown: null, mousemove: null, mouseup: null,
-    click: null, dblclick: null,
+    click: null, dblclick: null, wheel: null,
   };
 
-  // Map a mouse event to image natural coords.
-  // canvas fills image-box 100%; rect.left/top is the canvas's viewport
-  // position (== image-box's position), so we just divide.
   function mouseToImg(ev) {
     if (display.w === 0) return null;
     const rect = canvas.getBoundingClientRect();
     if (rect.width === 0) return null;
-    const rx = (ev.clientX - rect.left) / rect.width;
-    const ry = (ev.clientY - rect.top) / rect.height;
-    return [rx * natural.w, ry * natural.h];
+    return toNatural(ev.clientX - rect.left, ev.clientY - rect.top);
   }
+
+  // ---------- pan/zoom drag state ----------
+  // We swallow mousedown for pan buttons (middle/right) and Space+Left and
+  // panning — the shape-drawing logic only sees left-button without space.
+  let _panActive = false;
+  let _panStartX = 0;
+  let _panStartY = 0;
+  let _panStartViewPan = { x: 0, y: 0 };
+  let _spaceDown = false;
 
   function bindEvents() {
     canvas.addEventListener("mousedown", (ev) => {
+      const isMiddle = ev.button === 1;
+      const isRight = ev.button === 2;
+      const wantsPan = isMiddle || isRight || (_spaceDown && ev.button === 0);
+      if (wantsPan) {
+        _panActive = true;
+        _panStartX = ev.clientX;
+        _panStartY = ev.clientY;
+        _panStartViewPan = { x: view.pan.x, y: view.pan.y };
+        const stage = document.getElementById("stage");
+        stage?.classList.add("cursor-grabbing");
+        ev.preventDefault();
+        return;
+      }
       if (handlers.mousedown) handlers.mousedown(ev, mouseToImg(ev));
     });
     canvas.addEventListener("mousemove", (ev) => {
+      if (_panActive) {
+        const dx = ev.clientX - _panStartX;
+        const dy = ev.clientY - _panStartY;
+        view = {
+          pan: {
+            x: _panStartViewPan.x + dx,
+            y: _panStartViewPan.y + dy,
+          },
+          zoom: view.zoom,
+        };
+        document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+        return;
+      }
       if (handlers.mousemove) handlers.mousemove(ev, mouseToImg(ev));
     });
     canvas.addEventListener("mouseup", (ev) => {
+      if (_panActive) {
+        _panActive = false;
+        const stage = document.getElementById("stage");
+        stage?.classList.remove("cursor-grabbing");
+        return;
+      }
       if (handlers.mouseup) handlers.mouseup(ev, mouseToImg(ev));
     });
     canvas.addEventListener("click", (ev) => {
+      if (_panActive) return;
       if (handlers.click) handlers.click(ev, mouseToImg(ev));
     });
     canvas.addEventListener("dblclick", (ev) => {
       if (handlers.dblclick) handlers.dblclick(ev, mouseToImg(ev));
     });
+    canvas.addEventListener("wheel", (ev) => {
+      ev.preventDefault();
+      if (ev.ctrlKey) {
+        // Zoom around mouse position
+        const rect = canvas.getBoundingClientRect();
+        const sx = ev.clientX - rect.left;
+        const sy = ev.clientY - rect.top;
+        const factor = Math.exp(-ev.deltaY * 0.0015);
+        const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, view.zoom * factor));
+        zoomAtScreenPoint(newZoom, sx, sy);
+      } else {
+        // Pan with scroll
+        view = {
+          pan: {
+            x: view.pan.x - ev.deltaX,
+            y: view.pan.y - ev.deltaY,
+          },
+          zoom: view.zoom,
+        };
+      }
+      document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+      if (handlers.wheel) handlers.wheel(ev, mouseToImg(ev));
+    }, { passive: false });
+    // Suppress browser context menu on right-click so we can use it for pan.
+    canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
   }
+
+  /** Zoom to `z` keeping the natural point currently under (sx, sy) in place. */
+  function zoomAtScreenPoint(z, sx, sy) {
+    const nx = (sx - view.pan.x) / view.zoom;
+    const ny = (sy - view.pan.y) / view.zoom;
+    view = {
+      pan: {
+        x: sx - nx * z,
+        y: sy - ny * z,
+      },
+      zoom: z,
+    };
+  }
+
+  // track Space hold for "pan mode"
+  window.addEventListener("keydown", (ev) => {
+    if (ev.code === "Space" && !ev.repeat) {
+      const tag = ev.target?.tagName;
+      if (tag !== "INPUT" && tag !== "TEXTAREA") {
+        _spaceDown = true;
+        const stage = document.getElementById("stage");
+        stage?.classList.add("cursor-grab");
+      }
+    }
+  });
+  window.addEventListener("keyup", (ev) => {
+    if (ev.code === "Space") {
+      _spaceDown = false;
+      const stage = document.getElementById("stage");
+      stage?.classList.remove("cursor-grab");
+    }
+  });
+
   bindEvents();
 
-  // ============================================================
-  // Drawing primitives — all in IMAGE NATURAL coords.
-  // The caller calls setTransform so that natural -> bitmap.
-  // ============================================================
-
+  // ---------- drawing primitives — all in IMAGE NATURAL coords ----------
+  // Note: these ignore view transform on purpose. The composite layer
+  // applies the transform via drawImage resampling.
   function fillPolyPath(c, points) {
     if (points.length < 2) return;
     c.beginPath();
     c.moveTo(points[0][0], points[0][1]);
-    for (let i = 1; i < points.length; i++) {
-      c.lineTo(points[i][0], points[i][1]);
-    }
+    for (let i = 1; i < points.length; i++) c.lineTo(points[i][0], points[i][1]);
     c.closePath();
   }
-
   function drawPolygonShape(c, points, color, fillOpacity, isSelected) {
     if (points.length < 2) return;
     fillPolyPath(c, points);
@@ -133,7 +244,6 @@ export function createCanvas(container) {
     c.strokeStyle = color;
     c.lineJoin = "round";
     c.stroke();
-    // vertex dots (skip for very dense polygons to keep it cheap)
     if (points.length <= 30) {
       c.fillStyle = color;
       c.strokeStyle = "rgba(255,255,255,0.9)";
@@ -146,7 +256,6 @@ export function createCanvas(container) {
       }
     }
   }
-
   function drawRectShape(c, points, color, fillOpacity, isSelected) {
     if (points.length < 2) return;
     const x1 = Math.min(points[0][0], points[1][0]);
@@ -161,7 +270,6 @@ export function createCanvas(container) {
     c.strokeStyle = color;
     c.strokeRect(x1, y1, w, h);
   }
-
   function drawKeypointShape(c, points, color, isSelected) {
     for (const [x, y] of points) {
       c.beginPath();
@@ -173,7 +281,6 @@ export function createCanvas(container) {
       c.stroke();
     }
   }
-
   function drawBindingShape(c, a, b, isSelected) {
     if (!a || !b) return;
     const pa = centroid(a);
@@ -187,7 +294,6 @@ export function createCanvas(container) {
     c.stroke();
     c.setLineDash([]);
   }
-
   function drawDraftPolygon(c, points, color) {
     if (points.length === 0) return;
     if (points.length >= 3) {
@@ -215,7 +321,6 @@ export function createCanvas(container) {
       c.stroke();
     }
   }
-
   function drawDraftRect(c, points, color) {
     if (points.length < 2) return;
     const x1 = Math.min(points[0][0], points[1][0]);
@@ -232,7 +337,6 @@ export function createCanvas(container) {
     c.strokeRect(x1, y1, w, h);
     c.setLineDash([]);
   }
-
   function drawLabelText(c, cx, cy, text, color) {
     c.font = "12px system-ui, sans-serif";
     c.textAlign = "center";
@@ -243,7 +347,6 @@ export function createCanvas(container) {
     c.fillStyle = color;
     c.fillText(text, cx, cy - 8);
   }
-
   function centroid(a) {
     const pts = a.points || [];
     if (pts.length === 0) return [0, 0];
@@ -252,10 +355,7 @@ export function createCanvas(container) {
     return [sx / pts.length, sy / pts.length];
   }
 
-  // ============================================================
-  // Layer paint
-  // ============================================================
-
+  // ---------- paint ----------
   function paintStatic(state) {
     if (natural.w === 0) return;
     applyDpr(staticCtx, natural.w, natural.h);
@@ -282,17 +382,14 @@ export function createCanvas(container) {
       }
     }
   }
-
   function paintDynamic(state) {
     if (natural.w === 0) return;
     applyDpr(dynamicCtx, natural.w, natural.h);
     dynamicCtx.setTransform(display.dpr, 0, 0, display.dpr, 0, 0);
     dynamicCtx.clearRect(0, 0, natural.w, natural.h);
-    const { mode, draftPoints, bindingFromId, selectedId, label, colorForType } = state;
-
-    // binding first-pick indicator
+    const { mode, draftPoints, bindingFromId } = state;
     if (bindingFromId) {
-      const a = label.infos.find((x) => x.id === bindingFromId);
+      const a = state.label.infos.find((x) => x.id === bindingFromId);
       if (a) {
         const [cx, cy] = centroid(a);
         dynamicCtx.beginPath();
@@ -302,33 +399,88 @@ export function createCanvas(container) {
         dynamicCtx.stroke();
       }
     }
-
     if (mode === "rect" && draftPoints.length === 2) {
-      drawDraftRect(dynamicCtx, draftPoints, colorForType("draft"));
+      drawDraftRect(dynamicCtx, draftPoints, state.colorForType?.("draft") || "#fbbf24");
     } else if (mode === "polygon" && draftPoints.length > 0) {
-      drawDraftPolygon(dynamicCtx, draftPoints, colorForType("draft"));
+      drawDraftPolygon(dynamicCtx, draftPoints, state.colorForType?.("draft") || "#fbbf24");
     }
   }
-
   function composite() {
     if (natural.w === 0) return;
+    const op = stateRef && stateRef.opacity != null ? stateRef.opacity : 1;
     applyDpr(ctx, display.w, display.h);
     ctx.setTransform(display.dpr, 0, 0, display.dpr, 0, 0);
+    ctx.globalAlpha = op;
     ctx.clearRect(0, 0, display.w, display.h);
-    // drawImage resamples from natural->display in one cheap GPU op.
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(layerStatic, 0, 0, display.w, display.h);
-    ctx.drawImage(layerDynamic, 0, 0, display.w, display.h);
+    // drawImage with viewport: source = full natural bitmap (after view),
+    // destination = display canvas. When view.zoom == 1 and view.pan == (0,0)
+    // this resamples natural -> display rect in one cheap GPU op.
+    ctx.drawImage(layerStatic, 0, 0, natural.w, natural.h,
+      view.pan.x, view.pan.y, natural.w * view.zoom, natural.h * view.zoom);
+    ctx.drawImage(layerDynamic, 0, 0, natural.w, natural.h,
+      view.pan.x, view.pan.y, natural.w * view.zoom, natural.h * view.zoom);
+    ctx.globalAlpha = 1;
   }
 
-  // ============================================================
-  // Public API
-  // ============================================================
+  // We accept external opacity from main.js (settings slider)
+  // via a setter on the returned object. For simplicity we use a tiny
+  // options bag passed to render().
+  let _opacity = 1;
+
+  function getView() {
+    return { pan: { ...view.pan }, zoom: view.zoom };
+  }
+  function setView(v) {
+    view = { pan: { ...v.pan }, zoom: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v.zoom)) };
+    document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+  }
+  function resetView() { setView({ pan: { x: 0, y: 0 }, zoom: 1 }); }
+  function fitView() {
+    if (display.w === 0 || display.h === 0 || natural.w === 0) return;
+    const z = Math.min(display.w / natural.w, display.h / natural.h);
+    const dw = natural.w * z;
+    const dh = natural.h * z;
+    setView({
+      pan: { x: (display.w - dw) / 2, y: (display.h - dh) / 2 },
+      zoom: z,
+    });
+  }
+  function setZoom(z, centerNatural) {
+    const newZ = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+    if (centerNatural) {
+      const [sx, sy] = toScreen(centerNatural[0], centerNatural[1]);
+      zoomAtScreenPoint(newZ, sx, sy);
+    } else {
+      // Zoom around viewport center
+      zoomAtScreenPoint(newZ, display.w / 2, display.h / 2);
+    }
+    document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+  }
+  function zoomBy(factor, screenPt) {
+    const newZ = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, view.zoom * factor));
+    if (screenPt) {
+      zoomAtScreenPoint(newZ, screenPt[0], screenPt[1]);
+    } else {
+      zoomAtScreenPoint(newZ, display.w / 2, display.h / 2);
+    }
+    document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+  }
+  function panBy(dx, dy) {
+    view = {
+      pan: { x: view.pan.x + dx, y: view.pan.y + dy },
+      zoom: view.zoom,
+    };
+    document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+  }
+
+  // helper so paintStatic/Dynamic read opacity — close over _opacity
+  const stateRef = { get opacity() { return _opacity; } };
+
+  container.appendChild(canvas);
 
   let _lastStaticKey = null;
-  // Cheap deep-equal key: when this changes we repaint the static layer,
-  // otherwise we only repaint the dynamic layer (cheap, no allocations).
   function staticKey(label) {
     if (!label) return null;
     return [
@@ -340,10 +492,10 @@ export function createCanvas(container) {
     ].join("|");
   }
 
-  container.appendChild(canvas);
-
   return {
     element: canvas,
+    get natural() { return natural; },
+    get view() { return view; },
     resize(newNatural, newDisplay) {
       natural = newNatural;
       display = {
@@ -351,12 +503,13 @@ export function createCanvas(container) {
         h: newDisplay.h,
         dpr: window.devicePixelRatio || 1,
       };
-      // Invalidate static cache so a resize triggers a repaint (if we
-      // ever add display-size-dependent rendering; currently we don't).
       _lastStaticKey = null;
+      // Notify host of new dims (e.g. for zoom/pan clamped to display)
+      document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
     },
     render(state) {
       if (natural.w === 0) return;
+      if (typeof state.opacity === "number") _opacity = state.opacity;
       const k = staticKey(state.label);
       if (k !== _lastStaticKey) {
         paintStatic(state);
@@ -365,10 +518,13 @@ export function createCanvas(container) {
       paintDynamic(state);
       composite();
     },
+    getView, setView, resetView, fitView,
+    setZoom, zoomBy, panBy,
     onMouseDown(fn) { handlers.mousedown = fn; },
     onMouseMove(fn) { handlers.mousemove = fn; },
     onMouseUp(fn) { handlers.mouseup = fn; },
     onClick(fn) { handlers.click = fn; },
     onDblClick(fn) { handlers.dblclick = fn; },
+    onWheel(fn) { handlers.wheel = fn; },
   };
 }
