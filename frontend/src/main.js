@@ -554,7 +554,7 @@ let _imageResizeObserver = null;
 
 function installResizeObserver() {
   if (_imageResizeObserver) return;
-  _imageResizeObserver = observeImageResize(els.image, () => {
+  _imageResizeObserver = observeImageResize(document.getElementById("stage"), () => {
     if (state.imgNatural.w > 0) layoutCanvas();
   });
 }
@@ -1483,7 +1483,7 @@ function setupViewSync() {
 function waitForBridge(attempt = 0) {
   const app = window.__MoonBit__;
   if (app?.core?.invokeOp) {
-    canvasApi = createCanvas(els.imageFrame);
+    canvasApi = createCanvas(document.getElementById("stage"));
     bindCanvasEvents(canvasApi);
     installResizeObserver();
     bindEvents();

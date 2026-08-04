@@ -524,7 +524,6 @@ button.small { font-size: 12px; padding: 5px 12px; }
 }
 .image-frame {
   position: relative;
-  overflow: hidden;
   /* Without an aspect-ratio, fill the box; with one, lock the ratio. */
   width: 100%;
   height: 100%;

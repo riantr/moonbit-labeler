@@ -60,7 +60,11 @@ export function createCanvas(container) {
 
   // ---------- state ----------
   let natural = { w: 0, h: 0 };
-  let display = { w: 0, h: 0, dpr: window.devicePixelRatio || 1 };
+  // `display` is the fitted image rect relative to the full stage. The
+  // canvas itself covers the complete stage so black letterbox/pan areas are
+  // part of the same viewport as the image.
+  let display = { w: 0, h: 0, left: 0, top: 0, dpr: window.devicePixelRatio || 1 };
+  let viewport = { w: 0, h: 0 };
   /** The <img> DOM element we rasterize into the static layer. Held by
    * reference so paintStatic can drawImage it once per image change,
    * then the composite layer resamples it under the view transform. */
@@ -82,28 +86,28 @@ export function createCanvas(container) {
   }
 
   // ---------- coordinate mapping ----------
-  // The canvas is displayed at `display.w × display.h`, while the annotation
-  // layers are stored in natural image pixels. `view.zoom` is an extra zoom
-  // on top of that fitted display scale; pan is always in display CSS px.
+  // The canvas covers the full stage. `display.left/top` locate the fitted
+  // image inside that stage; pan and zoom apply to both image and labels.
   function baseScaleX() {
     return natural.w > 0 ? display.w / natural.w : 1;
   }
   function baseScaleY() {
     return natural.h > 0 ? display.h / natural.h : 1;
   }
-  /** display pixels (CSS) relative to image-frame -> image-natural pixels */
+  /** stage CSS pixels -> image-natural pixels */
   function toNatural(screenX, screenY) {
-    // screen = natural * baseScale * zoom + pan
+    const originX = display.left + view.pan.x;
+    const originY = display.top + view.pan.y;
     return [
-      (screenX - view.pan.x) / (baseScaleX() * view.zoom),
-      (screenY - view.pan.y) / (baseScaleY() * view.zoom),
+      (screenX - originX) / (baseScaleX() * view.zoom),
+      (screenY - originY) / (baseScaleY() * view.zoom),
     ];
   }
-  /** image-natural -> display pixels (CSS) relative to image-frame */
+  /** image-natural -> stage CSS pixels */
   function toScreen(nx, ny) {
     return [
-      nx * baseScaleX() * view.zoom + view.pan.x,
-      ny * baseScaleY() * view.zoom + view.pan.y,
+      display.left + nx * baseScaleX() * view.zoom + view.pan.x,
+      display.top + ny * baseScaleY() * view.zoom + view.pan.y,
     ];
   }
 
@@ -117,7 +121,13 @@ export function createCanvas(container) {
     if (display.w === 0) return null;
     const rect = canvas.getBoundingClientRect();
     if (rect.width === 0) return null;
-    return toNatural(ev.clientX - rect.left, ev.clientY - rect.top);
+    const point = toNatural(ev.clientX - rect.left, ev.clientY - rect.top);
+    // The canvas intentionally covers black stage areas too, but drawing
+    // outside the actual image should not create invalid negative points.
+    if (point[0] < 0 || point[1] < 0 || point[0] > natural.w || point[1] > natural.h) {
+      return null;
+    }
+    return point;
   }
 
   // ---------- pan/zoom drag state ----------
@@ -440,21 +450,23 @@ export function createCanvas(container) {
   function composite() {
     if (natural.w === 0) return;
     const op = stateRef && stateRef.opacity != null ? stateRef.opacity : 1;
-    applyDpr(ctx, display.w, display.h);
+    applyDpr(ctx, viewport.w, viewport.h);
     ctx.setTransform(display.dpr, 0, 0, display.dpr, 0, 0);
     ctx.globalAlpha = op;
-    ctx.clearRect(0, 0, display.w, display.h);
+    ctx.clearRect(0, 0, viewport.w, viewport.h);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    // Composite in display CSS pixels. The frame is already fitted to the
-    // available stage, so the natural->display base scale belongs here;
-    // `view.zoom` then represents only the user's additional zoom.
+    // Composite in full-stage CSS pixels. The fitted image rect supplies
+    // the base natural->display scale and left/top letterbox offset;
+    // `view.zoom` and `view.pan` then move image and labels together.
+    const destX = display.left + view.pan.x;
+    const destY = display.top + view.pan.y;
     const destW = display.w * view.zoom;
     const destH = display.h * view.zoom;
     ctx.drawImage(layerStatic, 0, 0, natural.w, natural.h,
-      view.pan.x, view.pan.y, destW, destH);
+      destX, destY, destW, destH);
     ctx.drawImage(layerDynamic, 0, 0, natural.w, natural.h,
-      view.pan.x, view.pan.y, destW, destH);
+      destX, destY, destW, destH);
     ctx.globalAlpha = 1;
   }
 
@@ -484,7 +496,7 @@ export function createCanvas(container) {
       zoomAtScreenPoint(newZ, sx, sy);
     } else {
       // Zoom around viewport center
-      zoomAtScreenPoint(newZ, display.w / 2, display.h / 2);
+      zoomAtScreenPoint(newZ, viewport.w / 2, viewport.h / 2);
     }
     document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
   }
@@ -493,7 +505,7 @@ export function createCanvas(container) {
     if (screenPt) {
       zoomAtScreenPoint(newZ, screenPt[0], screenPt[1]);
     } else {
-      zoomAtScreenPoint(newZ, display.w / 2, display.h / 2);
+      zoomAtScreenPoint(newZ, viewport.w / 2, viewport.h / 2);
     }
     document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
   }
@@ -538,9 +550,16 @@ export function createCanvas(container) {
     },
     resize(newNatural, newDisplay) {
       natural = newNatural;
+      const rect = container.getBoundingClientRect();
+      viewport = {
+        w: rect.width,
+        h: rect.height,
+      };
       display = {
         w: newDisplay.w,
         h: newDisplay.h,
+        left: newDisplay.left,
+        top: newDisplay.top,
         dpr: window.devicePixelRatio || 1,
       };
       _lastStaticKey = null;
