@@ -14,6 +14,7 @@
 import { parseLabel, normalizeLabel, serializeLabel, emptyLabel } from "./label.js";
 import { createCanvas } from "./canvas.js";
 import { createVideoController } from "./video.js";
+import * as Log from "./log.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -268,8 +269,16 @@ function renderListItem({ kind, index, path, name, ext, thumb, onClick }) {
     t.alt = "";
     t.loading = "lazy";
     t.decoding = "async";
+    // Per-thumb stopwatch: useful for spotting slow thumbnails once
+    // the list is bigger (we have 2580 entries on CARS.Part.01; a 50ms
+    // slip per thumb adds up). Only fires for image-mode thumbs.
+    const thumbStop = Log.start(Log.Event.IMAGE_THUMB_LOAD, { path });
+    t.onload = () => thumbStop.stop({ w: t.naturalWidth, h: t.naturalHeight });
+    t.onerror = () => {
+      thumbStop.stop({ ok: false });
+      loadThumbFallback(t, path);
+    };
     t.src = thumb;
-    t.onerror = () => loadThumbFallback(t, path);
     li.appendChild(t);
   } else {
     // video placeholder
@@ -346,24 +355,62 @@ function fileUrl(path) {
 
 let _currentLoadController = null;
 
-async function showImage(item) {
+async function showImage(item, opts = {}) {
   // Cancel any in-flight load from a previous nav.
   if (_currentLoadController) _currentLoadController.abort();
   const ctl = new AbortController();
   _currentLoadController = ctl;
 
+  // The "image.show" timer measures file:// I/O + first decode round-trip.
+  // The "image.decode" timer is a sub-event we fire from onImageLoad.
+  const showStop = Log.start(Log.Event.IMAGE_SHOW, {
+    path: item.path,
+    size: item.size,
+  });
+  let decodeStop = null;
+  const onFirstPaint = opts.onFirstPaint;
+
   showEmptyHint("加载图片...");
   els.image.hidden = false;
-  els.image.onload = onImageLoad;
-  els.image.onerror = onImageError;
+  // The onload / onerror handlers are *latched* one-shots for the
+  // lifetime of this showImage() call. We latch them because:
+  //   - onload may fire for the file:// URL and then again for the
+  //     data: URL fallback; the second is the same logical load.
+  //   - Chromium re-dispatches onerror after img.decode() rejects,
+  //     so without a latch we run onImageError() twice.
+  let onloadFired = false;
+  let onerrorFired = false;
+  els.image.onload = () => {
+    if (onloadFired) return;
+    onloadFired = true;
+    if (decodeStop) decodeStop.stop({ w: els.image.naturalWidth, h: els.image.naturalHeight });
+    onImageLoad();
+    if (onFirstPaint) onFirstPaint();
+  };
+  els.image.onerror = () => {
+    if (onerrorFired) return;
+    onerrorFired = true;
+    if (decodeStop) decodeStop.cancel();
+    onImageError();
+  };
   try {
+    decodeStop = Log.start(Log.Event.IMAGE_DECODE, { path: item.path });
     els.image.src = fileUrl(item.path);
     if (els.image.decode) {
       await els.image.decode();
+      // decode() resolves before onload in some browsers; if onload
+      // already fired we don't double-stop.
+      if (decodeStop) decodeStop.stop({ w: els.image.naturalWidth, h: els.image.naturalHeight });
     }
+    showStop.stop();
   } catch (err) {
-    if (err?.name === "AbortError") return;
+    if (decodeStop) decodeStop.cancel();
+    if (err?.name === "AbortError") {
+      showStop.cancel();
+      return;
+    }
     onImageError();
+    showStop.stop({ fallback: true }, err);
   }
 }
 
@@ -377,15 +424,25 @@ async function onImageError() {
   // Fallback to data: URL via the bridge (handles CORS / odd file:// schemes).
   const item = state.images[state.currentIndex];
   if (!item) return;
+  // The fallback path is split: IPC round-trip, then second decode.
+  // We treat them as one logical event for the user ("image.fallback")
+  // and also report the IPC as a child event for the summary.
+  const ipcStop = Log.start(Log.Event.IPC_READ_IMAGE, { path: item.path, role: "fallback" });
+  const fbStop = Log.start(Log.Event.IMAGE_FALLBACK, { path: item.path });
   try {
     const reply = await invokeLabeler("read_image", { path: item.path });
+    ipcStop.stop({ bytes: reply?.base64?.length || 0 });
     if (reply?.base64) {
       els.image.onerror = null;
       els.image.src = `data:${reply.mime};base64,${reply.base64}`;
+      fbStop.stop({ mime: reply.mime, bytes: reply.base64.length });
     } else {
+      fbStop.stop({ ok: false });
       showEmptyHint("无法加载图片");
     }
   } catch (err) {
+    ipcStop.stop({}, err);
+    fbStop.stop({ ok: false }, err);
     showEmptyHint(`无法加载图片: ${err}`);
   }
 }
@@ -404,12 +461,12 @@ function layoutCanvas() {
   if (state.imgNatural.w > 0 && state.imgNatural.h > 0) {
     // Switching images resets any pan/zoom the user left behind from
     // the previous one — much less disorienting than seeing the new
-    // image framed through last image's zoom window.
-    if (els.image.src && els.image.src !== "") {
-      // Only reset when the image actually changes (cheap heuristic —
-      // layoutCanvas is also called on resize).
-    }
-    if (state._currentImgSrc !== els.image.src) {
+    // image framed through last image's zoom window. This branch
+    // also gates the `image.first_paint` event so it fires *once*
+    // per image (subsequent resize-driven layouts are not first
+    // paints, they're reflows).
+    const imgChanged = state._currentImgSrc !== els.image.src;
+    if (imgChanged) {
       canvasApi.resetView();
       state._currentImgSrc = els.image.src;
     }
@@ -432,7 +489,26 @@ function layoutCanvas() {
       top: rect.top - stage.top,
     };
     canvasApi.resize(state.imgNatural, state.imgDisplay);
-    requestAnimationFrame(() => renderAnnotations());
+    // First-paint stopwatch: only meaningful on a real image change,
+    // not on every ResizeObserver tick. We use the `imgChanged` flag
+    // computed above to decide.
+    if (imgChanged) {
+      const firstPaintStop = Log.start(Log.Event.IMAGE_FIRST_PAINT, {
+        path: state.images[state.currentIndex]?.path,
+        naturalW: state.imgNatural.w,
+        naturalH: state.imgNatural.h,
+        displayW: rect.width,
+        displayH: rect.height,
+      });
+      requestAnimationFrame(() => {
+        renderAnnotations();
+        firstPaintStop.stop();
+      });
+    } else {
+      // Subsequent reflows (window resize, etc.) just re-render the
+      // canvas; no new log event.
+      requestAnimationFrame(renderAnnotations);
+    }
     hideEmptyHint();
   }
 }
@@ -451,15 +527,17 @@ function installResizeObserver() {
 // Label load / save
 // ============================================================
 
-async function loadLabelFor(item) {
+async function loadLabelFor(item, opts = {}) {
   state.label = emptyLabel();
   state.labelPath = "";
   state.loadedFromDisk = false;
   state.history = [];
   state.dirty = false;
   const token = ++state.loadToken;
+  const ipcStop = Log.start(Log.Event.IPC_READ_LABEL, { path: item.path });
   try {
     const reply = await invokeLabeler("read_label", { image_path: item.path });
+    ipcStop.stop({ found: !!reply?.found, bytes: reply?.content?.length || 0 });
     if (token !== state.loadToken) return;
     state.labelPath = reply.label_path;
     if (reply.found && reply.content) {
@@ -476,10 +554,12 @@ async function loadLabelFor(item) {
       markLabeled(item.path);
     }
   } catch (err) {
+    ipcStop.stop({}, err);
     if (token !== state.loadToken) return;
     console.error("read_label failed:", err);
     state.label = { img_name: item.name, infos: [], bindings: [] };
   }
+  if (opts.onLoaded) opts.onLoaded();
   if (token !== state.loadToken) return;
   updateDirtyBadge();
   requestAnimationFrame(() => renderAnnotations());
@@ -556,8 +636,18 @@ function selectImage(idx) {
   }
   const item = state.images[idx];
   updateStatus(item, idx, state.images.length);
-  showImage(item);
-  loadLabelFor(item);
+  // End-to-end load instrumentation. The handle is idempotent: it
+  // stops on whichever side (image show OR label load) finishes last,
+  // and the other callback's stop() call is a no-op.
+  const selectStop = Log.start(Log.Event.IMAGE_SELECT, {
+    index: idx,
+    path: item.path,
+    w: item.w,
+    h: item.h,
+    bytes: item.size,
+  });
+  showImage(item, { onFirstPaint: () => selectStop.stop() });
+  loadLabelFor(item, { onLoaded: () => selectStop.stop() });
 }
 
 // ============================================================
@@ -1129,20 +1219,29 @@ async function listImages(folder) {
   setFolder(folder);
   let images = [];
   let videos = [];
+  // The three IPCs here all run sequentially. We want them separately
+  // timed so the summary can flag, say, a slow list_images on a
+  // remote/network folder.
+  const listImagesStop = Log.start(Log.Event.IPC_LIST_IMAGES, { path: folder });
   try {
     const reply = await invokeLabeler("list_images", { path: folder });
+    listImagesStop.stop({ count: reply?.images?.length || 0 });
     if (reply?.images && Array.isArray(reply.images)) {
       images = reply.images;
     }
   } catch (err) {
+    listImagesStop.stop({}, err);
     console.error("[listImages] list_images failed:", err);
   }
+  const listVideosStop = Log.start(Log.Event.IPC_LIST_VIDEOS, { path: folder });
   try {
     const reply = await invokeLabeler("list_videos", { path: folder });
+    listVideosStop.stop({ count: reply?.videos?.length || 0 });
     if (reply?.videos && Array.isArray(reply.videos)) {
       videos = reply.videos;
     }
   } catch (err) {
+    listVideosStop.stop({}, err);
     // Video support is opt-in; missing ffmpeg / list_videos shouldn't
     // block the image workflow.
     console.warn("[listImages] list_videos failed:", err);
@@ -1155,8 +1254,10 @@ async function listImages(folder) {
   } else {
     setMedia({ images, videos });
   }
+  const scanStop = Log.start(Log.Event.IPC_SCAN_CLASSES, { path: folder });
   try {
     const cr = await invokeLabeler("scan_classes", { image_path: folder });
+    scanStop.stop({ count: cr?.classes?.length || 0 });
     if (cr?.classes && Array.isArray(cr.classes)) {
       state.classes = cr.classes;
       renderClassList();
