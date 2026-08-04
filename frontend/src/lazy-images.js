@@ -28,8 +28,10 @@
 //   network stack, not in our JS.
 
 let _observer = null;
-let _registry = new WeakMap(); // el -> { src, onLoad }
-let _rootMargin = "200px 0px"; // 200px ahead — pre-warm one screen
+let _scrollRoot = null;       // element the observer scrolls relative to
+let _registry = new WeakMap(); // el -> { loader, onLoad, loaded }
+let _pendingSet = new Set();   // parallel to WeakMap for batch iteration
+let _rootMargin = "100px 0px"; // 100px ahead — pre-warm one screen
 
 function _ensureObserver() {
   if (_observer) return _observer;
@@ -45,14 +47,50 @@ function _ensureObserver() {
         if (!rec || rec.loaded) continue;
         rec.loaded = true;
         _registry.delete(el);
+        _pendingSet.delete(el);
         _observer.unobserve(el);
-        el.src = rec.src;
-        if (rec.onLoad) rec.onLoad();
+        // The loader is responsible for setting `el.src` (or whatever
+        // wiring it wants). It may be async — that's fine, the observer
+        // has already dropped its reference.
+        Promise.resolve(rec.loader(el)).then(
+          () => rec.onLoad && rec.onLoad(),
+          (err) => rec.onLoad && rec.onLoad(err),
+        );
       }
     },
-    { root: null, rootMargin: _rootMargin, threshold: 0 },
+    {
+      // root=null uses the viewport (window). For a sidebar list inside
+      // a scrolling container we want the container itself, not the
+      // whole window — otherwise we end up issuing 48 simultaneous
+      // fetches for things that are "below the window fold" but above
+      // the sidebar's own scroll bottom. Callers attach the scroll
+      // container via `setRoot()`.
+      root: _scrollRoot,
+      rootMargin: _rootMargin,
+      threshold: 0,
+    },
   );
   return _observer;
+}
+
+/**
+ * Configure which scroll container the observer should use as its
+ * root. Idempotent: re-initializes the observer against the new root
+ * so existing entries become relative to the new container. PNG's
+ * sidebar uses #file-list (`.file-list` in style.css).
+ */
+export function setRoot(el) {
+  if (_scrollRoot === el) return;
+  _scrollRoot = el;
+  if (_observer) {
+    _observer.disconnect();
+    _observer = null;
+    // Re-observe anything still pending.
+    for (const target of _pendingSet) {
+      _observer = _ensureObserver();
+      _observer.observe(target);
+    }
+  }
 }
 
 /**
@@ -66,14 +104,33 @@ function _ensureObserver() {
  * the <img> onload. (If you need the <img> onload, attach directly.)
  */
 export function observe(el, src, onLoad) {
+  // Backward-compatible path: a static src is treated as a loader that
+  // immediately sets `el.src`. Most callers used this with file:// URLs
+  // before the IPC-thumbnail path was added.
+  const loader = (target) => {
+    target.src = src;
+  };
+  return observeLoader(el, loader, onLoad);
+}
+
+/**
+ * Variant of `observe` that accepts a custom loader (an async function
+ * that sets `el.src` itself). Used by the sidebar thumbnail path so the
+ * actual data fetch goes through `op_read_thumb` (which produces a 128px
+ * JPEG — 5 KB instead of 250 KB) rather than the full file:// URL.
+ */
+export function observeLoader(el, loader, onLoad) {
   const observer = _ensureObserver();
   if (!observer) {
     // No IntersectionObserver — fall back to eager load.
-    el.src = src;
-    if (onLoad) onLoad();
+    Promise.resolve(loader(el)).then(
+      () => onLoad && onLoad(),
+      (err) => onLoad && onLoad(err),
+    );
     return;
   }
-  _registry.set(el, { src, loaded: false, onLoad });
+  _registry.set(el, { loader, loaded: false, onLoad });
+  _pendingSet.add(el);
   observer.observe(el);
 }
 
@@ -88,6 +145,7 @@ export function forget(el) {
   if (!rec) return;
   if (_observer) _observer.unobserve(el);
   _registry.delete(el);
+  _pendingSet.delete(el);
 }
 
 /**
@@ -99,14 +157,12 @@ export function reset() {
     _observer = null;
   }
   _registry = new WeakMap();
+  _pendingSet = new Set();
 }
 
 /**
  * For tests / DevTools: how many images are pending.
  */
 export function pendingCount() {
-  // WeakMap can't be sized directly, but we can use a counter for
-  // debugging. We don't track size today because the only consumer
-  // bothers to count; left here as a stub.
-  return 0;
+  return _pendingSet.size;
 }

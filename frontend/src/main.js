@@ -289,6 +289,13 @@ function renderListItem({ kind, index, path, name, ext, thumb, onClick }) {
     // We use a shared IntersectionObserver with a 200px rootMargin so
     // the first ~15 visible thumbs load immediately (the observer fires
     // once for each on next layout) and the rest wait for scroll.
+    //
+    // We tried routing thumbs through `op_read_thumb` (a 128px JPEG,
+    // ~5 KB) to cut the per-thumb payload 50x. The CDP bench showed
+    // it was actually slower per-thumb (~3.7s vs 178ms) because ffmpeg
+    // cold-start cost per invocation dominates. The win is in lazy
+    // loading itself, not in downscale. The backend op is kept for
+    // future use (e.g. a low-bandwidth export pipeline).
     const thumbStop = Log.start(Log.Event.IMAGE_THUMB_LOAD, { path });
     t.onload = () => thumbStop.stop({ w: t.naturalWidth, h: t.naturalHeight });
     t.onerror = () => {
@@ -1418,3 +1425,11 @@ function onFrameLoaded(natural) {
 }
 
 waitForBridge();
+
+// Tell the lazy-images module to use the sidebar's file-list as the
+// scroll root. Without this, the IntersectionObserver defaults to the
+// window viewport and fires for far more items than are visually
+// relevant — in particular it fired 48 entries on a 1280x800 window
+// when the sidebar can only show ~10 at a time, which caused
+// 48 simultaneous file:// fetches that serialized at 6/frame.
+LazyImages.setRoot(els.fileList);

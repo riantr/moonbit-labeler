@@ -44,6 +44,22 @@ pub struct ReadImageReply {
   mime : String
 } derive(ToJson, Eq, Debug)
 
+///| Request a low-resolution thumbnail for sidebar / list previews.
+/// Reuses ReadImageReply so the frontend can drop the result straight
+/// into a `data:` URL. The backend resizes the source image to fit
+/// within `max_edge` on its longest side, preserving aspect ratio.
+/// This is the workhorse behind `image.thumb` — the small output
+/// keeps the bytecode cost down (the old path shipped full-res JPGs
+/// at ~250KB each, which 2580 thumbs = ~6.5MB of data to deserialize).
+pub struct ReadThumbRequest {
+  path : String
+  /// Longest-side pixel cap. 64-256 is the sensible range. Default 128.
+  max_edge : Int?
+  /// JPEG quality 1-31 (lower is better). Default 5 (slightly worse
+  /// than the main image path). Ignored for PNG source.
+  quality : Int?
+} derive(FromJson, ToJson, Eq, Debug)
+
 ///| Request to read a text file (JSON label files).
 pub struct ReadTextRequest {
   path : String
@@ -429,6 +445,68 @@ async fn op_read_image(req : ReadImageRequest) -> ReadImageReply raise {
   }
   let bytes = data.binary()
   { path: req.path, base64: base64_encode(bytes), mime: mime_for(req.path) }
+}
+
+///| Resolve a unique temp JPEG path under `%TEMP%/moonbit-labeler-thumbs/`.
+/// Mirrors `video_frame_tmp_path()` but lives in a sibling dir so we
+/// don't race with concurrent video frame extracts.
+async fn thumb_tmp_path() -> String {
+  let dir = "C:\\Windows\\Temp\\moonbit-labeler-thumbs"
+  if !(@fs.exists(dir) catch { _ => false }) {
+    @fs.mkdir(dir, recursive=true) catch { _ => () }
+  }
+  let stamp = now_millis_unix().to_string()
+  dir + "\\thumb-" + stamp + ".jpg"
+}
+
+///| Read a downscaled thumbnail. We use ffmpeg rather than a native
+/// image library because (a) it's already on PATH (used by the video
+/// path) and (b) it handles JPEG, PNG, BMP, WebP, GIF uniformly without
+/// us having to bring in Pillow-style deps. The `-vf scale=` filter
+/// preserves aspect ratio; `-1` on the second dim tells ffmpeg to
+/// compute it. Output JPEG quality is `q:v 5` by default — visually
+/// fine for a 128px sidebar thumb, ~3-5 KB per file vs ~250 KB for
+/// the original full-res JPG.
+async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply raise {
+  let max_edge = match req.max_edge {
+    Some(v) if v >= 32 && v <= 1024 => v
+    _ => 128
+  }
+  let q = match req.quality {
+    Some(v) if v >= 1 && v <= 31 => v
+    _ => 5
+  }
+  let tmp = thumb_tmp_path()
+  let scale = "scale=" + max_edge.to_string() + ":-1"
+  let (code, _out) = @process.collect_stdout(
+    "ffmpeg.exe",
+    [
+      "-loglevel", "error",
+      "-i", req.path,
+      "-vf", scale,
+      "-frames:v", "1",
+      "-q:v", q.to_string(),
+      "-y", tmp,
+    ],
+  ) catch {
+    err => fail("read_thumb ffmpeg spawn failed: " + err.to_string())
+  }
+  if code != 0 {
+    @fs.remove(tmp) catch { _ => () }
+    // Don't fail — surface as an empty reply so the frontend's
+    // loadThumbFallback can fall back to read_image.
+    return { path: req.path, base64: "", mime: "image/jpeg" }
+  }
+  let data = @fs.read_file(tmp) catch {
+    err => {
+      @fs.remove(tmp) catch { _ => () }
+      fail("read_thumb read failed: " + err.to_string())
+    }
+  }
+  let bytes = data.binary()
+  let base64 = base64_encode(bytes)
+  @fs.remove(tmp) catch { _ => () }
+  { path: req.path, base64, mime: "image/jpeg" }
 }
 
 async fn op_read_text(req : ReadTextRequest) -> ReadTextReply {
@@ -1449,6 +1527,7 @@ pub fn extension() -> @proton_extension.Extension {
       [
         @proton_command.AppCommandApiDescriptor::new("list_images"),
         @proton_command.AppCommandApiDescriptor::new("read_image"),
+        @proton_command.AppCommandApiDescriptor::new("read_thumb"),
         @proton_command.AppCommandApiDescriptor::new("read_text"),
         @proton_command.AppCommandApiDescriptor::new("write_text"),
         @proton_command.AppCommandApiDescriptor::new("read_label"),
@@ -1469,6 +1548,7 @@ fn register_labeler_commands(
 ) -> Result[Unit, String] {
   context.op_async("list_images", op_list_images, emits_events=false)
   context.op_async("read_image", op_read_image, emits_events=false)
+  context.op_async("read_thumb", op_read_thumb, emits_events=false)
   context.op_async("read_text", op_read_text, emits_events=false)
   context.op_async("write_text", op_write_text, emits_events=false)
   context.op_async("read_label", op_read_label, emits_events=false)
