@@ -307,12 +307,16 @@ export function layoutCanvas(deps) {
     imageFrame.offsetHeight;
   }
   const rect = imageFrame?.getBoundingClientRect() || img.getBoundingClientRect();
-  const stageRect = stage.getBoundingClientRect();
+  // Use the actual canvas viewport as the coordinate origin. This is more
+  // reliable than subtracting #stage's rect when the stage has padding or
+  // Chromium resolves an absolute child against a different containing box.
+  const viewportRect = canvasApi.element?.getBoundingClientRect()
+    || stage.getBoundingClientRect();
   const imgDisplay = {
     w: rect.width,
     h: rect.height,
-    left: rect.left - stageRect.left,
-    top: rect.top - stageRect.top,
+    left: rect.left - viewportRect.left,
+    top: rect.top - viewportRect.top,
   };
   canvasApi.resize(imgNatural, imgDisplay);
   // The mizchi bypass path puts the source bitmap into the canvas
