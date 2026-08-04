@@ -14,6 +14,15 @@
 import { parseLabel, normalizeLabel, serializeLabel, emptyLabel } from "./label.js";
 import { createCanvas } from "./canvas.js";
 import { createVideoController } from "./video.js";
+import {
+  fileUrl,
+  showImage as loadImageInto,
+  loadLabelFor as loadLabelInto,
+  onFrameLoaded as applyFrameLoaded,
+  layoutCanvas as layoutImageCanvas,
+  installResizeObserver as observeImageResize,
+} from "./image-loader.js";
+import * as LazyImages from "./lazy-images.js";
 import * as Log from "./log.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -219,6 +228,10 @@ function setMedia({ images = [], videos = [] } = {}) {
   els.imageCount.textContent =
     `${images.length} 张 · ${videos.length} 段`;
   els.fileList.replaceChildren();
+  // Drop any in-flight lazy thumb observations from the previous folder.
+  // The new <li>s we create below will replace them, but the old ones
+  // are still in the observer's watch list until they're GC'd.
+  LazyImages.reset();
   const frag = document.createDocumentFragment();
   images.forEach((img, idx) => {
     frag.appendChild(renderListItem({
@@ -267,18 +280,22 @@ function renderListItem({ kind, index, path, name, ext, thumb, onClick }) {
     const t = document.createElement("img");
     t.className = "thumb";
     t.alt = "";
-    t.loading = "lazy";
     t.decoding = "async";
-    // Per-thumb stopwatch: useful for spotting slow thumbnails once
-    // the list is bigger (we have 2580 entries on CARS.Part.01; a 50ms
-    // slip per thumb adds up). Only fires for image-mode thumbs.
+    // Defer setting `src` until the element is in (or near) the viewport.
+    // The previous code set `t.src = thumb` immediately, which on a
+    // 2580-entry list meant 2580 simultaneous file:// fetches; CDP timing
+    // shows that took ~27s total. The native `loading="lazy"` attribute
+    // alone wasn't enough — Chromium speculatively fetches nearby items.
+    // We use a shared IntersectionObserver with a 200px rootMargin so
+    // the first ~15 visible thumbs load immediately (the observer fires
+    // once for each on next layout) and the rest wait for scroll.
     const thumbStop = Log.start(Log.Event.IMAGE_THUMB_LOAD, { path });
     t.onload = () => thumbStop.stop({ w: t.naturalWidth, h: t.naturalHeight });
     t.onerror = () => {
       thumbStop.stop({ ok: false });
       loadThumbFallback(t, path);
     };
-    t.src = thumb;
+    LazyImages.observe(t, thumb);
     li.appendChild(t);
   } else {
     // video placeholder
@@ -338,117 +355,69 @@ function showEmptyHint(text) {
   els.image.hidden = true;
 }
 
-function fileUrl(path) {
-  let p = path.replace(/\\/g, "/");
-  // Encode characters that would break the file:// URL (spaces, #, ?, %, etc.)
-  let encoded = p.split("/").map(encodeURIComponent).join("/");
-  if (/^[a-zA-Z]:\//.test(p)) return "file:///" + encoded;
-  if (p.startsWith("/")) return "file://" + encoded;
-  return "file:///" + encoded;
-}
-
-// ============================================================
-// Image loading — uses Image.decode() (WHATWG) so we know the
-// bitmap is fully decoded before we measure it, and AbortController
-// to cancel stale loads when the user navigates quickly.
-// ============================================================
-
-let _currentLoadController = null;
-
-async function showImage(item, opts = {}) {
-  // Cancel any in-flight load from a previous nav.
-  if (_currentLoadController) _currentLoadController.abort();
-  const ctl = new AbortController();
-  _currentLoadController = ctl;
-
-  // The "image.show" timer measures file:// I/O + first decode round-trip.
-  // The "image.decode" timer is a sub-event we fire from onImageLoad.
-  const showStop = Log.start(Log.Event.IMAGE_SHOW, {
-    path: item.path,
-    size: item.size,
-  });
-  let decodeStop = null;
-  const onFirstPaint = opts.onFirstPaint;
-
-  showEmptyHint("加载图片...");
-  els.image.hidden = false;
-  // The onload / onerror handlers are *latched* one-shots for the
-  // lifetime of this showImage() call. We latch them because:
-  //   - onload may fire for the file:// URL and then again for the
-  //     data: URL fallback; the second is the same logical load.
-  //   - Chromium re-dispatches onerror after img.decode() rejects,
-  //     so without a latch we run onImageError() twice.
-  let onloadFired = false;
-  let onerrorFired = false;
-  els.image.onload = () => {
-    if (onloadFired) return;
-    onloadFired = true;
-    if (decodeStop) decodeStop.stop({ w: els.image.naturalWidth, h: els.image.naturalHeight });
-    onImageLoad();
-    if (onFirstPaint) onFirstPaint();
-  };
-  els.image.onerror = () => {
-    if (onerrorFired) return;
-    onerrorFired = true;
-    if (decodeStop) decodeStop.cancel();
-    onImageError();
-  };
-  try {
-    decodeStop = Log.start(Log.Event.IMAGE_DECODE, { path: item.path });
-    els.image.src = fileUrl(item.path);
-    if (els.image.decode) {
-      await els.image.decode();
-      // decode() resolves before onload in some browsers; if onload
-      // already fired we don't double-stop.
-      if (decodeStop) decodeStop.stop({ w: els.image.naturalWidth, h: els.image.naturalHeight });
-    }
-    showStop.stop();
-  } catch (err) {
-    if (decodeStop) decodeStop.cancel();
-    if (err?.name === "AbortError") {
-      showStop.cancel();
-      return;
-    }
-    onImageError();
-    showStop.stop({ fallback: true }, err);
-  }
-}
-
-function onImageLoad() {
-  state.imgNatural = { w: els.image.naturalWidth, h: els.image.naturalHeight };
-  // Defer to the next frame so CSS layout has applied the new image size.
-  requestAnimationFrame(layoutCanvas);
-}
-
-async function onImageError() {
-  // Fallback to data: URL via the bridge (handles CORS / odd file:// schemes).
-  const item = state.images[state.currentIndex];
-  if (!item) return;
-  // The fallback path is split: IPC round-trip, then second decode.
-  // We treat them as one logical event for the user ("image.fallback")
-  // and also report the IPC as a child event for the summary.
-  const ipcStop = Log.start(Log.Event.IPC_READ_IMAGE, { path: item.path, role: "fallback" });
-  const fbStop = Log.start(Log.Event.IMAGE_FALLBACK, { path: item.path });
-  try {
-    const reply = await invokeLabeler("read_image", { path: item.path });
-    ipcStop.stop({ bytes: reply?.base64?.length || 0 });
-    if (reply?.base64) {
-      els.image.onerror = null;
-      els.image.src = `data:${reply.mime};base64,${reply.base64}`;
-      fbStop.stop({ mime: reply.mime, bytes: reply.base64.length });
-    } else {
-      fbStop.stop({ ok: false });
-      showEmptyHint("无法加载图片");
-    }
-  } catch (err) {
-    ipcStop.stop({}, err);
-    fbStop.stop({ ok: false }, err);
-    showEmptyHint(`无法加载图片: ${err}`);
-  }
-}
+// Image loading pipeline now lives in image-loader.js. The thin
+// wrappers below keep the original call sites compiling: they
+// adapt main.js's state mutations + IPC handles into the deps
+// object the module expects.
 
 function hideEmptyHint() {
   els.emptyHint.hidden = true;
+}
+
+function showImage(item, opts = {}) {
+  showEmptyHint("加载图片...");
+  els.image.hidden = false;
+  return loadImageInto(item, {
+    img: els.image,
+    onLoad: (natural) => {
+      state.imgNatural = natural;
+      // Hand the <img> to the canvas overlay so it can rasterize the
+      // bitmap into the static layer. Once it's there, the view
+      // transform (zoom/pan) drives both the image and the annotations
+      // together. The visible <img> behind the canvas is still required
+      // for the decode pipeline (we need its onload + dimensions).
+      if (canvasApi && typeof canvasApi.setImage === "function") {
+        canvasApi.setImage(els.image);
+      }
+      requestAnimationFrame(layoutCanvas);
+    },
+    onFirstPaint: opts.onFirstPaint,
+    onError: (reason) => showEmptyHint(reason),
+    invokeReadImage: (path) => invokeLabeler("read_image", { path }),
+  });
+}
+
+function loadLabelFor(item, opts = {}) {
+  state.label = emptyLabel();
+  state.labelPath = "";
+  state.loadedFromDisk = false;
+  state.history = [];
+  state.dirty = false;
+  const token = ++state.loadToken;
+  return loadLabelInto(item, {
+    invokeReadLabel: (path) =>
+      invokeLabeler("read_label", { image_path: path }),
+    parseLabel,
+    normalizeLabel,
+    emptyLabel,
+    currentToken: token,
+    checkToken: () => state.loadToken,
+    onLabel: (parsed, label, labelPath, found) => {
+      state.labelPath = labelPath;
+      state.label = label;
+      state.loadedFromDisk = !!parsed;
+      if (found) {
+        state.labeledPaths.add(item.path);
+        markLabeled(item.path);
+      }
+    },
+    onMarkLabeled: (path) => markLabeled(path),
+  }).then(() => {
+    if (token !== state.loadToken) return;
+    if (opts.onLoaded) opts.onLoaded();
+    updateDirtyBadge();
+    requestAnimationFrame(() => renderAnnotations());
+  });
 }
 
 // ============================================================
@@ -457,112 +426,29 @@ function hideEmptyHint() {
 // ============================================================
 
 function layoutCanvas() {
-  if (!canvasApi) return;
-  if (state.imgNatural.w > 0 && state.imgNatural.h > 0) {
-    // Switching images resets any pan/zoom the user left behind from
-    // the previous one — much less disorienting than seeing the new
-    // image framed through last image's zoom window. This branch
-    // also gates the `image.first_paint` event so it fires *once*
-    // per image (subsequent resize-driven layouts are not first
-    // paints, they're reflows).
-    const imgChanged = state._currentImgSrc !== els.image.src;
-    if (imgChanged) {
-      canvasApi.resetView();
-      state._currentImgSrc = els.image.src;
-    }
-    const box = els.imageBox;
-    const frame = els.imageFrame;
-    if (frame) {
-      // Lock the inner frame to the image's natural ratio — the CSS
-      // collapses it to the largest rect that fits in the stage while
-      // keeping the ratio. image-box stays full-stage and centers.
-      frame.style.aspectRatio = `${state.imgNatural.w} / ${state.imgNatural.h}`;
-    }
-    if (box) box.classList.add("has-image");
-    // imgDisplay is still used by mouse -> image coord conversion.
-    const rect = els.image.getBoundingClientRect();
-    const stage = document.getElementById("stage").getBoundingClientRect();
-    state.imgDisplay = {
-      w: rect.width,
-      h: rect.height,
-      left: rect.left - stage.left,
-      top: rect.top - stage.top,
-    };
-    canvasApi.resize(state.imgNatural, state.imgDisplay);
-    // First-paint stopwatch: only meaningful on a real image change,
-    // not on every ResizeObserver tick. We use the `imgChanged` flag
-    // computed above to decide.
-    if (imgChanged) {
-      const firstPaintStop = Log.start(Log.Event.IMAGE_FIRST_PAINT, {
-        path: state.images[state.currentIndex]?.path,
-        naturalW: state.imgNatural.w,
-        naturalH: state.imgNatural.h,
-        displayW: rect.width,
-        displayH: rect.height,
-      });
-      requestAnimationFrame(() => {
-        renderAnnotations();
-        firstPaintStop.stop();
-      });
-    } else {
-      // Subsequent reflows (window resize, etc.) just re-render the
-      // canvas; no new log event.
-      requestAnimationFrame(renderAnnotations);
-    }
-    hideEmptyHint();
-  }
+  const stage = document.getElementById("stage");
+  const result = layoutImageCanvas({
+    img: els.image,
+    imgBox: els.imageBox,
+    imageFrame: els.imageFrame,
+    stage,
+    imgNatural: state.imgNatural,
+    currentSrc: state._currentImgSrc,
+    setSrcLocked: (s) => { state._currentImgSrc = s; },
+    canvasApi,
+    renderAnnotations,
+    hideEmptyHint,
+  });
+  if (result) state.imgDisplay = result;
 }
 
 let _imageResizeObserver = null;
 
 function installResizeObserver() {
   if (_imageResizeObserver) return;
-  _imageResizeObserver = new ResizeObserver(() => {
+  _imageResizeObserver = observeImageResize(els.image, () => {
     if (state.imgNatural.w > 0) layoutCanvas();
   });
-  _imageResizeObserver.observe(els.image);
-}
-
-// ============================================================
-// Label load / save
-// ============================================================
-
-async function loadLabelFor(item, opts = {}) {
-  state.label = emptyLabel();
-  state.labelPath = "";
-  state.loadedFromDisk = false;
-  state.history = [];
-  state.dirty = false;
-  const token = ++state.loadToken;
-  const ipcStop = Log.start(Log.Event.IPC_READ_LABEL, { path: item.path });
-  try {
-    const reply = await invokeLabeler("read_label", { image_path: item.path });
-    ipcStop.stop({ found: !!reply?.found, bytes: reply?.content?.length || 0 });
-    if (token !== state.loadToken) return;
-    state.labelPath = reply.label_path;
-    if (reply.found && reply.content) {
-      const parsed = parseLabel(reply.content);
-      state.label = parsed
-        ? normalizeLabel(parsed, item.name)
-        : { img_name: item.name, infos: [], bindings: [] };
-      state.loadedFromDisk = !!parsed;
-    } else {
-      state.label = { img_name: item.name, infos: [], bindings: [] };
-    }
-    if (reply.found) {
-      state.labeledPaths.add(item.path);
-      markLabeled(item.path);
-    }
-  } catch (err) {
-    ipcStop.stop({}, err);
-    if (token !== state.loadToken) return;
-    console.error("read_label failed:", err);
-    state.label = { img_name: item.name, infos: [], bindings: [] };
-  }
-  if (opts.onLoaded) opts.onLoaded();
-  if (token !== state.loadToken) return;
-  updateDirtyBadge();
-  requestAnimationFrame(() => renderAnnotations());
 }
 
 function markLabeled(path) {
@@ -1511,6 +1397,7 @@ function initVideoController() {
     updateFrameReadout,
     markLabeled,
     onFrameLoaded, // rebind layout for video frames
+    canvasApi,
   });
   window.__videoController = videoController;
 }
@@ -1520,16 +1407,14 @@ function initVideoController() {
 /// Mirrors `onImageLoad` but takes dimensions from the caller since
 /// the <img> onload may fire after we've moved on.
 function onFrameLoaded(natural) {
-  if (!natural || !natural.w || !natural.h) return;
-  const frame = els.imageFrame;
-  if (frame) {
-    frame.style.aspectRatio = `${natural.w} / ${natural.h}`;
-  }
-  if (els.imageBox) els.imageBox.classList.add("has-image");
-  state.imgNatural = natural;
-  // Defer to the next frame so CSS reflow has applied. This matches
-  // what onImageLoad does for image-mode.
-  requestAnimationFrame(layoutCanvas);
+  applyFrameLoaded(natural, {
+    imageFrame: els.imageFrame,
+    imageBox: els.imageBox,
+    onLayout: (n) => {
+      state.imgNatural = n;
+      layoutCanvas();
+    },
+  });
 }
 
 waitForBridge();

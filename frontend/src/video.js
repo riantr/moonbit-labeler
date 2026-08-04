@@ -40,6 +40,7 @@ export function createVideoController(deps) {
     setTimelineVisible,
     updateFrameReadout,
     onFrameLoaded,
+    canvasApi,
   } = deps;
 
   let _frameLoadToken = 0;
@@ -203,6 +204,12 @@ export function createVideoController(deps) {
       els.image.onload = () => {
         const w = els.image.naturalWidth, h = els.image.naturalHeight;
         setState({ imgNatural: { w, h } });
+        // Rasterize the freshly-decoded frame into the canvas overlay's
+        // static layer so the view transform (zoom/pan) moves the image
+        // together with the annotations. Same wiring as image-mode.
+        if (deps.canvasApi && typeof deps.canvasApi.setImage === "function") {
+          deps.canvasApi.setImage(els.image);
+        }
         onFrameLoaded?.({ w, h });
       };
       els.image.onerror = () => showEmptyHint(`第 ${frame} 帧加载失败`);
