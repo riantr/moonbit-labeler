@@ -250,6 +250,7 @@ export function layoutCanvas(deps) {
     canvasApi,
     renderAnnotations,
     hideEmptyHint,
+    displayOverride,
   } = deps;
 
   if (!canvasApi) return null;
@@ -273,15 +274,40 @@ export function layoutCanvas(deps) {
   // — without an explicit reflow the frame might still be at the
   // previous image's size when we read getBoundingClientRect()).
   imageFrame && imageFrame.offsetHeight;
-  const rect = img.getBoundingClientRect();
-  const stageRect = stage.getBoundingClientRect();
-  const imgDisplay = {
-    w: rect.width,
-    h: rect.height,
-    left: rect.left - stageRect.left,
-    top: rect.top - stageRect.top,
-  };
+  // Two display-rect paths:
+  //   - default: read the <img> element's CSS box. The <img> fills
+  //     the frame exactly so its rect is the same as the frame.
+  //   - mizchi (displayOverride passed): the <img> is hidden, so we
+  //     compute the fitted rect from imgNatural + stage padding.
+  let imgDisplay;
+  if (displayOverride) {
+    imgDisplay = {
+      w: displayOverride.w,
+      h: displayOverride.h,
+      left: displayOverride.left,
+      top: displayOverride.top,
+    };
+  } else {
+    const rect = img.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    imgDisplay = {
+      w: rect.width,
+      h: rect.height,
+      left: rect.left - stageRect.left,
+      top: rect.top - stageRect.top,
+    };
+  }
   canvasApi.resize(imgNatural, imgDisplay);
+  // The mizchi bypass path puts the source bitmap into the canvas
+  // overlay (see main.js showImageMizchi). In that case we want the
+  // view transform to scale the bitmap to the frame size, so fit
+  // the canvas to the frame rather than leaving it at zoom=1 which
+  // would draw the natural-sized bitmap in the frame's top-left
+  // corner. The native path doesn't need this — the <img> element
+  // handles the bitmap scale.
+  if (imgChanged && displayOverride) {
+    canvasApi.fitView();
+  }
   if (imgChanged) {
     const firstPaintStop = Log.start(Log.Event.IMAGE_FIRST_PAINT, {
       naturalW: imgNatural.w,

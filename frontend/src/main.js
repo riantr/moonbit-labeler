@@ -40,6 +40,17 @@ const settings = {
   annotationOpacity: 0.8,
   polygonClosePx: 12,
   autosaveMs: 600,
+  // "native"  : browser <img> element renders the bitmap; the canvas
+  //             overlay is transparent except for annotations. This is
+  //             the default path and what we ship.
+  // "mizchi"  : the canvas overlay rasterizes the bitmap (decoded by
+  //             the mizchi/image op in the backend). Slower than
+  //             native because every image change is a full IPC round
+  //             trip + a PNG round-trip, but it bypasses the
+  //             proton://app file:// cascade and doesn't depend on
+  //             the CEF image decoders. Toggle it in the dev console
+  //             (localStorage.setItem(... )).
+  imageRenderMode: "native",
 };
 try {
   const raw = localStorage.getItem(SETTINGS_KEY);
@@ -373,6 +384,18 @@ function hideEmptyHint() {
 
 function showImage(item, opts = {}) {
   showEmptyHint("加载图片...");
+  // Two render modes:
+  //   - "native" (default): the <img> element renders the bitmap and
+  //     the canvas overlay is transparent except for annotations.
+  //   - "mizchi": the backend (mizchi/image) decodes + encodes the
+  //     image and we hand the resulting PNG to the canvas overlay.
+  //     The <img> element is hidden because the canvas now owns the
+  //     bitmap.
+  const mode = settings.imageRenderMode || "native";
+  if (mode === "mizchi") {
+    els.image.hidden = true;
+    return showImageMizchi(item, opts);
+  }
   els.image.hidden = false;
   return loadImageInto(item, {
     img: els.image,
@@ -389,6 +412,43 @@ function showImage(item, opts = {}) {
     onError: (reason) => showEmptyHint(reason),
     invokeReadImage: (path) => invokeLabeler("read_image", { path }),
   });
+}
+
+///| Bypass path: ask the backend to decode the source image with
+/// mizchi/image, then hand the resulting PNG to the canvas overlay.
+/// The view transform (zoom/pan) moves the image and annotations
+/// together because both are painted into the same static layer.
+async function showImageMizchi(item, opts = {}) {
+  const selectStop = Log.start(Log.Event.IMAGE_SELECT, {
+    index: state.currentIndex,
+    path: item.path,
+    w: item.w,
+    h: item.h,
+    bytes: item.size,
+    mode: "mizchi",
+  });
+  try {
+    const reply = await invokeLabeler("decode_image", { path: item.path });
+    if (!reply?.base64) {
+      showEmptyHint("mizchi decode failed: empty reply");
+      return;
+    }
+    const blob = await fetch(`data:${reply.mime};base64,${reply.base64}`).then(
+      (r) => r.blob(),
+    );
+    const bitmap = await createImageBitmap(blob);
+    state.imgNatural = { w: bitmap.width, h: bitmap.height };
+    if (canvasApi && typeof canvasApi.setImageBitmap === "function") {
+      canvasApi.setImageBitmap(bitmap);
+    }
+    requestAnimationFrame(layoutCanvas);
+    if (opts.onLoaded) opts.onLoaded();
+    Log.emit("image.mizchi", { path: item.path, w: bitmap.width, h: bitmap.height });
+  } catch (err) {
+    showEmptyHint(`mizchi decode failed: ${err}`);
+  } finally {
+    selectStop.stop();
+  }
 }
 
 function loadLabelFor(item, opts = {}) {
@@ -431,6 +491,32 @@ function loadLabelFor(item, opts = {}) {
 
 function layoutCanvas() {
   const stage = document.getElementById("stage");
+  // In mizchi mode the <img> element is hidden, so we can't read its
+  // getBoundingClientRect. Compute the fitted frame size from the
+  // stage's content box and imgNatural instead, and pass it through
+  // displayOverride so image-loader.js uses that instead of the <img>.
+  let displayOverride = null;
+  if ((settings.imageRenderMode || "native") === "mizchi" && state.imgNatural.w > 0) {
+    const stageRect = stage.getBoundingClientRect();
+    // Stage has 12px padding all sides. Account for it.
+    const stagePad = 12;
+    const outerW = Math.max(1, stageRect.width - 2 * stagePad);
+    const outerH = Math.max(1, stageRect.height - 2 * stagePad);
+    const fit = Math.min(outerW / state.imgNatural.w, outerH / state.imgNatural.h);
+    const dw = state.imgNatural.w * fit;
+    const dh = state.imgNatural.h * fit;
+    // image-frame lives inside .image-box which centers it inside the
+    // padded stage. So frame left/top relative to stage is
+    // (pad + (outer - frame) / 2).
+    const leftInStage = stagePad + (outerW - dw) / 2;
+    const topInStage = stagePad + (outerH - dh) / 2;
+    displayOverride = {
+      w: dw,
+      h: dh,
+      left: leftInStage,
+      top: topInStage,
+    };
+  }
   const result = layoutImageCanvas({
     img: els.image,
     imgBox: els.imageBox,
@@ -442,6 +528,7 @@ function layoutCanvas() {
     canvasApi,
     renderAnnotations,
     hideEmptyHint,
+    displayOverride,
   });
   if (result) state.imgDisplay = result;
 }

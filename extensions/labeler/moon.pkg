@@ -4,6 +4,7 @@ import {
   "moonbitlang/core/json" @json,
   "justjavac/proton/command" @proton_command,
   "justjavac/proton/extension" @proton_extension,
+  "mizchi/image" @image,
 }
 
 supported_targets = "native"

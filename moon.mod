@@ -5,6 +5,7 @@ version = "0.1.0"
 import {
   "moonbitlang/async@0.19.4",
   "justjavac/proton@0.1.12",
+  "mizchi/image@0.4.3",
 }
 
 readme = "README.mbt.md"

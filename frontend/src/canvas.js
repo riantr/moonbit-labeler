@@ -365,21 +365,21 @@ export function createCanvas(container) {
     applyDpr(staticCtx, natural.w, natural.h);
     staticCtx.setTransform(display.dpr, 0, 0, display.dpr, 0, 0);
     staticCtx.clearRect(0, 0, natural.w, natural.h);
-    // The visible image is rendered by the <img> element itself (it
-    // sits at the bottom of the .image-frame stack with object-fit:
-    // contain and fills the frame exactly). The canvas overlay is
-    // transparent except where it draws annotations — so we never
-    // rasterize the source image into the static layer, and the only
-    // thing the user sees paint here is the annotation shapes.
-    //
-    // The previous version drew the <img> into layerStatic. That
-    // caused a double-render at cold-load: the canvas's drawImage
-    // scaled the source bitmap to (natural.w, natural.h) at zoom=1
-    // while the <img> element scaled the same bitmap to its
-    // object-fit:contain size inside the frame. The two scales are
-    // different (the canvas doesn't know about the frame's fitted
-    // size), so the user saw the image at two different scales
-    // overlapping on the same point.
+    // Rasterize the source bitmap into the static layer if one is
+    // attached. Two paths feed this:
+    //   - native: an <img> element from the previous "setImage" API;
+    //   - mizchi: an ImageBitmap decoded from the backend's PNG reply.
+    // We don't draw the source image when the host hasn't given us one
+    // — that's the "canvas overlay only" mode where the <img> element
+    // renders the bitmap directly (see main.js showImage).
+    if (_sourceImage) {
+      try {
+        staticCtx.drawImage(_sourceImage, 0, 0, natural.w, natural.h);
+      } catch {
+        // drawImage can throw synchronously if the bitmap has been
+        // closed (e.g. between image switches). Clear and continue.
+      }
+    }
     const { label, selectedId, colorForType } = state;
     const byId = new Map();
     for (const a of label.infos) byId.set(a.id, a);
@@ -515,6 +515,16 @@ export function createCanvas(container) {
     element: canvas,
     get natural() { return natural; },
     get view() { return view; },
+    setImageBitmap(bitmap) {
+      // Used by the mizchi/image bypass path: the frontend asks the
+      // backend to decode + (optionally) resize the source image,
+      // parses the PNG reply into an ImageBitmap, and hands it here.
+      // paintStatic rasterizes it into the static layer; composite()
+      // draws the layer through the view transform so the image and
+      // annotations move together on zoom/pan.
+      _sourceImage = bitmap;
+      _lastStaticKey = null;
+    },
     resize(newNatural, newDisplay) {
       natural = newNatural;
       display = {
