@@ -406,9 +406,14 @@ function showImage(item, opts = {}) {
   const mode = settings.imageRenderMode || "native";
   if (mode === "mizchi") {
     els.image.hidden = true;
+    els.image.style.transform = "";
     return showImageMizchi(item, opts);
   }
   els.image.hidden = false;
+  // A previous image may have been panned/zoomed. Clear its DOM transform
+  // before the new fitted frame is measured; setupViewSync will apply the
+  // fresh identity view again when layoutCanvas resets the canvas view.
+  els.image.style.transform = "";
   return loadImageInto(item, {
     img: els.image,
     onLoad: (natural) => {
@@ -1452,11 +1457,24 @@ function flashHint(msg, kind) {
 // View (zoom/pan) sync — keep the menubar "100%" readout accurate
 // ============================================================
 
+function syncNativeImageView(v) {
+  if (!v || !els.image) return;
+  const nativeMode = (settings.imageRenderMode || "native") === "native" && !els.image.hidden;
+  els.image.style.transformOrigin = "0 0";
+  els.image.style.transform = nativeMode
+    ? `translate(${v.pan.x}px, ${v.pan.y}px) scale(${v.zoom})`
+    : "";
+}
+
 function setupViewSync() {
   function fmtZoom(z) { return `${Math.round(z * 100)}%`; }
   document.addEventListener("labeler:viewchange", (ev) => {
     const v = ev.detail;
     if (els.zoomReadout && v) els.zoomReadout.textContent = fmtZoom(v.zoom);
+    // Native mode renders the bitmap in <img>, so mirror the canvas view
+    // transform there. Mizchi mode owns both bitmap and annotations in the
+    // canvas and must not receive a second DOM transform.
+    syncNativeImageView(v);
     // Force a redraw at the new view (composite picks up view.pan/zoom)
     requestAnimationFrame(() => renderAnnotations());
   });
