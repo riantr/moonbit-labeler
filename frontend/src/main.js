@@ -378,14 +378,11 @@ function showImage(item, opts = {}) {
     img: els.image,
     onLoad: (natural) => {
       state.imgNatural = natural;
-      // Hand the <img> to the canvas overlay so it can rasterize the
-      // bitmap into the static layer. Once it's there, the view
-      // transform (zoom/pan) drives both the image and the annotations
-      // together. The visible <img> behind the canvas is still required
-      // for the decode pipeline (we need its onload + dimensions).
-      if (canvasApi && typeof canvasApi.setImage === "function") {
-        canvasApi.setImage(els.image);
-      }
+      // The <img> element itself renders the bitmap (via object-fit:
+      // contain inside the aspect-locked frame). The canvas overlay is
+      // transparent except for the annotation shapes it draws on top.
+      // Both share the same coordinate origin so pan/zoom/click
+      // coordinate mapping is trivial.
       requestAnimationFrame(layoutCanvas);
     },
     onFirstPaint: opts.onFirstPaint,

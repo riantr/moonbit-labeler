@@ -257,11 +257,7 @@ export function layoutCanvas(deps) {
 
   // Switching images resets any pan/zoom the user left behind from
   // the previous one — much less disorienting than seeing the new frame
-  // through the previous one's zoom window. We also fit-to-frame on
-  // image change so the static bitmap is drawn at the same scale the
-  // <img> element renders at (which uses object-fit: contain at the
-  // frame's natural aspect-ratio). The fit makes the canvas overlay
-  // and the <img> element pixel-identical. This branch also gates the
+  // through the previous one's zoom window. This branch also gates the
   // `image.first_paint` event so it fires *once* per image.
   const imgChanged = currentSrc !== img.src;
   if (imgChanged) {
@@ -286,16 +282,6 @@ export function layoutCanvas(deps) {
     top: rect.top - stageRect.top,
   };
   canvasApi.resize(imgNatural, imgDisplay);
-  if (imgChanged) {
-    // Fit-to-frame after the canvas resize so the canvas overlay and
-    // the <img> element render at the same scale. fitView() computes
-    // zoom = min(display.w/natural.w, display.h/natural.h) and
-    // centers the image in the canvas. Without this, the overlay
-    // would drawImage(img, 0, 0, natural.w, natural.h) at zoom=1 and
-    // miss the up-to-50% upscale the <img> element does via
-    // object-fit: contain.
-    canvasApi.fitView();
-  }
   if (imgChanged) {
     const firstPaintStop = Log.start(Log.Event.IMAGE_FIRST_PAINT, {
       naturalW: imgNatural.w,

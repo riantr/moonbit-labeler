@@ -365,15 +365,21 @@ export function createCanvas(container) {
     applyDpr(staticCtx, natural.w, natural.h);
     staticCtx.setTransform(display.dpr, 0, 0, display.dpr, 0, 0);
     staticCtx.clearRect(0, 0, natural.w, natural.h);
-    // Rasterize the source <img> into the static layer first. This is
-    // what makes zoom/pan move the image together with the annotations:
-    // composite() draws both layers through the same view transform, so
-    // the only "image" the user sees is the one we paint here. The
-    // visible <img> behind the canvas is a hidden placeholder for the
-    // decode pipeline (we still need it to fire onload + get pixels).
-    if (_sourceImage && _sourceImage.complete && _sourceImage.naturalWidth > 0) {
-      staticCtx.drawImage(_sourceImage, 0, 0, natural.w, natural.h);
-    }
+    // The visible image is rendered by the <img> element itself (it
+    // sits at the bottom of the .image-frame stack with object-fit:
+    // contain and fills the frame exactly). The canvas overlay is
+    // transparent except where it draws annotations — so we never
+    // rasterize the source image into the static layer, and the only
+    // thing the user sees paint here is the annotation shapes.
+    //
+    // The previous version drew the <img> into layerStatic. That
+    // caused a double-render at cold-load: the canvas's drawImage
+    // scaled the source bitmap to (natural.w, natural.h) at zoom=1
+    // while the <img> element scaled the same bitmap to its
+    // object-fit:contain size inside the frame. The two scales are
+    // different (the canvas doesn't know about the frame's fitted
+    // size), so the user saw the image at two different scales
+    // overlapping on the same point.
     const { label, selectedId, colorForType } = state;
     const byId = new Map();
     for (const a of label.infos) byId.set(a.id, a);
@@ -509,15 +515,6 @@ export function createCanvas(container) {
     element: canvas,
     get natural() { return natural; },
     get view() { return view; },
-    setImage(img) {
-      // Called by main.js when a new image is loaded. We just hold the
-      // reference; the next render() call will trigger paintStatic()
-      // which rasterizes this image into the static layer. We invalidate
-      // the static-layer cache so the new image is drawn even if the
-      // label structure is identical to the previous image.
-      _sourceImage = img;
-      _lastStaticKey = null;
-    },
     resize(newNatural, newDisplay) {
       natural = newNatural;
       display = {
