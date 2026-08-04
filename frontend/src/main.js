@@ -48,13 +48,25 @@ const settings = {
   //             native because every image change is a full IPC round
   //             trip + a PNG round-trip, but it bypasses the
   //             proton://app file:// cascade and doesn't depend on
-  //             the CEF image decoders. Toggle it in the dev console
-  //             (localStorage.setItem(... )).
+  //             the CEF image decoders. Toggle it by adding
+  //             `?mode=mizchi` to the URL or by calling
+  //             `settings.imageRenderMode = 'mizchi'` from the
+  //             dev console. localStorage is unavailable in the
+  //             proton://app origin so we don't read it from there.
   imageRenderMode: "native",
 };
 try {
   const raw = localStorage.getItem(SETTINGS_KEY);
   if (raw) Object.assign(settings, JSON.parse(raw));
+} catch {}
+// URL query string takes precedence over localStorage. Useful for
+// quickly switching the render path during dev without the devtools.
+try {
+  const url = new URL(window.location.href);
+  const mode = url.searchParams.get("mode");
+  if (mode === "mizchi" || mode === "native") {
+    settings.imageRenderMode = mode;
+  }
 } catch {}
 function persistSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}

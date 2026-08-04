@@ -274,29 +274,46 @@ export function layoutCanvas(deps) {
   // — without an explicit reflow the frame might still be at the
   // previous image's size when we read getBoundingClientRect()).
   imageFrame && imageFrame.offsetHeight;
-  // Two display-rect paths:
-  //   - default: read the <img> element's CSS box. The <img> fills
-  //     the frame exactly so its rect is the same as the frame.
-  //   - mizchi (displayOverride passed): the <img> is hidden, so we
-  //     compute the fitted rect from imgNatural + stage padding.
-  let imgDisplay;
+  // Measure the actual fitted image frame, not the <img> element's outer
+  // box. `object-fit: contain` can leave horizontal/vertical letterbox
+  // inside that box; putting the canvas over the outer box makes labels
+  // drift into the letterbox (especially for portrait images).
+  let targetDisplay;
   if (displayOverride) {
-    imgDisplay = {
+    targetDisplay = {
       w: displayOverride.w,
       h: displayOverride.h,
-      left: displayOverride.left,
-      top: displayOverride.top,
     };
   } else {
-    const rect = img.getBoundingClientRect();
-    const stageRect = stage.getBoundingClientRect();
-    imgDisplay = {
-      w: rect.width,
-      h: rect.height,
-      left: rect.left - stageRect.left,
-      top: rect.top - stageRect.top,
+    const boxRect = imgBox?.getBoundingClientRect();
+    const boxW = boxRect?.width || stage.getBoundingClientRect().width;
+    const boxH = boxRect?.height || stage.getBoundingClientRect().height;
+    const fit = Math.min(boxW / imgNatural.w, boxH / imgNatural.h);
+    targetDisplay = {
+      w: Math.max(1, imgNatural.w * fit),
+      h: Math.max(1, imgNatural.h * fit),
     };
   }
+  if (imageFrame) {
+    // Set both dimensions explicitly. Relying on `width: 100%` plus
+    // `aspect-ratio` lets a flex child stretch the frame to the full box;
+    // the image then gets letterboxed by object-fit while the canvas does
+    // not, which is exactly the drift seen with the CARS portrait images.
+    imageFrame.style.width = `${targetDisplay.w}px`;
+    imageFrame.style.height = `${targetDisplay.h}px`;
+    imageFrame.style.maxWidth = "100%";
+    imageFrame.style.maxHeight = "100%";
+    imageFrame.style.flex = "0 0 auto";
+    imageFrame.offsetHeight;
+  }
+  const rect = imageFrame?.getBoundingClientRect() || img.getBoundingClientRect();
+  const stageRect = stage.getBoundingClientRect();
+  const imgDisplay = {
+    w: rect.width,
+    h: rect.height,
+    left: rect.left - stageRect.left,
+    top: rect.top - stageRect.top,
+  };
   canvasApi.resize(imgNatural, imgDisplay);
   // The mizchi bypass path puts the source bitmap into the canvas
   // overlay (see main.js showImageMizchi). In that case we want the
@@ -312,8 +329,8 @@ export function layoutCanvas(deps) {
     const firstPaintStop = Log.start(Log.Event.IMAGE_FIRST_PAINT, {
       naturalW: imgNatural.w,
       naturalH: imgNatural.h,
-      displayW: rect.width,
-      displayH: rect.height,
+      displayW: imgDisplay.w,
+      displayH: imgDisplay.h,
     });
     requestAnimationFrame(() => {
       renderAnnotations();

@@ -82,17 +82,29 @@ export function createCanvas(container) {
   }
 
   // ---------- coordinate mapping ----------
+  // The canvas is displayed at `display.w × display.h`, while the annotation
+  // layers are stored in natural image pixels. `view.zoom` is an extra zoom
+  // on top of that fitted display scale; pan is always in display CSS px.
+  function baseScaleX() {
+    return natural.w > 0 ? display.w / natural.w : 1;
+  }
+  function baseScaleY() {
+    return natural.h > 0 ? display.h / natural.h : 1;
+  }
   /** display pixels (CSS) relative to image-frame -> image-natural pixels */
   function toNatural(screenX, screenY) {
-    // screen = (natural * zoom) + pan  =>  natural = (screen - pan) / zoom
+    // screen = natural * baseScale * zoom + pan
     return [
-      (screenX - view.pan.x) / view.zoom,
-      (screenY - view.pan.y) / view.zoom,
+      (screenX - view.pan.x) / (baseScaleX() * view.zoom),
+      (screenY - view.pan.y) / (baseScaleY() * view.zoom),
     ];
   }
   /** image-natural -> display pixels (CSS) relative to image-frame */
   function toScreen(nx, ny) {
-    return [nx * view.zoom + view.pan.x, ny * view.zoom + view.pan.y];
+    return [
+      nx * baseScaleX() * view.zoom + view.pan.x,
+      ny * baseScaleY() * view.zoom + view.pan.y,
+    ];
   }
 
   // ---------- event forwarding ----------
@@ -195,12 +207,13 @@ export function createCanvas(container) {
 
   /** Zoom to `z` keeping the natural point currently under (sx, sy) in place. */
   function zoomAtScreenPoint(z, sx, sy) {
-    const nx = (sx - view.pan.x) / view.zoom;
-    const ny = (sy - view.pan.y) / view.zoom;
+    const [nx, ny] = toNatural(sx, sy);
+    const sxScale = baseScaleX();
+    const syScale = baseScaleY();
     view = {
       pan: {
-        x: sx - nx * z,
-        y: sy - ny * z,
+        x: sx - nx * sxScale * z,
+        y: sy - ny * syScale * z,
       },
       zoom: z,
     };
@@ -433,13 +446,15 @@ export function createCanvas(container) {
     ctx.clearRect(0, 0, display.w, display.h);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    // drawImage with viewport: source = full natural bitmap (after view),
-    // destination = display canvas. When view.zoom == 1 and view.pan == (0,0)
-    // this resamples natural -> display rect in one cheap GPU op.
+    // Composite in display CSS pixels. The frame is already fitted to the
+    // available stage, so the natural->display base scale belongs here;
+    // `view.zoom` then represents only the user's additional zoom.
+    const destW = display.w * view.zoom;
+    const destH = display.h * view.zoom;
     ctx.drawImage(layerStatic, 0, 0, natural.w, natural.h,
-      view.pan.x, view.pan.y, natural.w * view.zoom, natural.h * view.zoom);
+      view.pan.x, view.pan.y, destW, destH);
     ctx.drawImage(layerDynamic, 0, 0, natural.w, natural.h,
-      view.pan.x, view.pan.y, natural.w * view.zoom, natural.h * view.zoom);
+      view.pan.x, view.pan.y, destW, destH);
     ctx.globalAlpha = 1;
   }
 
@@ -457,14 +472,10 @@ export function createCanvas(container) {
   }
   function resetView() { setView({ pan: { x: 0, y: 0 }, zoom: 1 }); }
   function fitView() {
-    if (display.w === 0 || display.h === 0 || natural.w === 0) return;
-    const z = Math.min(display.w / natural.w, display.h / natural.h);
-    const dw = natural.w * z;
-    const dh = natural.h * z;
-    setView({
-      pan: { x: (display.w - dw) / 2, y: (display.h - dh) / 2 },
-      zoom: z,
-    });
+    // The DOM image-frame is fitted to the available stage by image-loader.
+    // Keep the view transform at identity so the canvas and <img> share the
+    // exact same fitted rectangle. User zoom is applied on top of that.
+    setView({ pan: { x: 0, y: 0 }, zoom: 1 });
   }
   function setZoom(z, centerNatural) {
     const newZ = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
