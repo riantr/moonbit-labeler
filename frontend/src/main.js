@@ -1074,11 +1074,20 @@ function renderClassList() {
     const li = document.createElement("li");
     li.dataset.index = String(idx);
     li.dataset.name = cls.name;
+    if (cls.color) li.dataset.color = cls.color;
 
     const key = document.createElement("span");
     key.className = "key";
     key.textContent = idx < 9 ? String(idx + 1) : "-";
     li.appendChild(key);
+
+    if (cls.color) {
+      const swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.backgroundColor = cls.color;
+      swatch.title = cls.color;
+      li.appendChild(swatch);
+    }
 
     const name = document.createElement("span");
     name.className = "name";
@@ -1515,9 +1524,10 @@ async function runMenuAction(action) {
     case "load-classes-from-file":
       try {
         const pickReply = await invokeLabeler("pick_file", {
-          title: "选择类别 JSON 文件",
+          title: "选择类别文件",
           initial: state.folder || null,
-          filter: "JSON files (*.json)|*.json|All files (*.*)|*.*",
+          filter:
+            "Class files (*.json;*.txt)|*.json;*.txt|JSON files (*.json)|*.json|Text files (*.txt)|*.txt|All files (*.*)|*.*",
         });
         if (pickReply?.cancelled || !pickReply?.path) {
           flashHint("已取消", "info");

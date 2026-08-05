@@ -154,10 +154,13 @@ pub struct ScanClassesRequest {
 } derive(FromJson, ToJson, Eq, Debug)
 
 ///|
-/// One class with its frequency.
+/// One class with its frequency. `color` is an optional `#RRGGBB`
+/// string; empty when the source has no color (e.g. JSON files or a
+/// label-folder scan that can't recover one).
 pub struct ClassInfo {
   name : String
   count : Int
+  color : String
 } derive(ToJson, Eq, Debug)
 
 ///|
@@ -329,7 +332,25 @@ fn to_lower_char(c : Char) -> Char {
 fn lower(s : String) -> String {
   let buf = StringBuilder::new(size_hint=s.length())
   for c in s {
-    buf.write_char(to_lower_char(c))
+    if c >= 'A' && c <= 'Z' {
+      buf.write_char(Char::from_int(c.to_int() + 32))
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+/// Upper-case helper for color normalization (color hex).
+fn upper(s : String) -> String {
+  let buf = StringBuilder::new(size_hint=s.length())
+  for c in s {
+    if c >= 'a' && c <= 'z' {
+      buf.write_char(Char::from_int(c.to_int() - 32))
+    } else {
+      buf.write_char(c)
+    }
   }
   buf.to_string()
 }
@@ -1270,7 +1291,7 @@ async fn op_scan_classes(req : ScanClassesRequest) -> ScanClassesReply {
     log("label_dir empty or missing -> fallback")
     let classes : Array[ClassInfo] = []
     for c in fallback_classes {
-      classes.push({ name: c, count: 0 })
+      classes.push({ name: c, count: 0, color: "" })
     }
     return { label_dir, classes }
   }
@@ -1330,12 +1351,12 @@ fn aggregate_label_entries(items : Array[(String, String)]) -> Array[ClassInfo] 
   }
   let entries : Array[ClassInfo] = []
   for k, v in counts {
-    entries.push({ name: k, count: v })
+    entries.push({ name: k, count: v, color: "" })
   }
   entries.sort_by(fn(a, b) { b.count - a.count })
   for fallback in fallback_classes {
     if !counts.contains(fallback) {
-      entries.push({ name: fallback, count: 0 })
+      entries.push({ name: fallback, count: 0, color: "" })
     }
   }
   entries
@@ -1434,10 +1455,11 @@ async fn op_load_classes(req : LoadClassesRequest) -> LoadClassesReply {
         fail("load_classes: read " + curated + " failed: " + err.to_string())
     }
     let text = raw.text() catch { _ => "" }
-    let names = parse_curated_classes(text)
+    let parsed = parse_curated_classes(text)
     let entries : Array[ClassInfo] = []
-    for n in names {
-      entries.push({ name: n, count: 0 })
+    for p in parsed {
+      let (name, color) = p
+      entries.push({ name, count: 0, color })
     }
     return { path: curated, classes: entries, from_curated: true }
   }
@@ -1465,7 +1487,7 @@ async fn op_load_classes(req : LoadClassesRequest) -> LoadClassesReply {
   // (3) fallback
   let entries : Array[ClassInfo] = []
   for c in fallback_classes {
-    entries.push({ name: c, count: 0 })
+    entries.push({ name: c, count: 0, color: "" })
   }
   { path: "", classes: entries, from_curated: false }
 }
@@ -1491,23 +1513,71 @@ async fn op_load_classes_from_file(
       )
   }
   let text = raw.text() catch { _ => "" }
-  let names = parse_curated_classes(text)
+  let parsed = parse_curated_classes(text)
   let entries : Array[ClassInfo] = []
-  for n in names {
-    entries.push({ name: n, count: 0 })
+  for p in parsed {
+    let (name, color) = p
+    entries.push({ name, count: 0, color })
   }
   { path, classes: entries, from_curated: true }
 }
 
 ///|
-/// Extract class names from the `{"classes":["a","b"]}` curated JSON.
-/// We hand-parse instead of pulling in `@json` to keep the path small and
-/// avoid an extra dependency; the schema is fixed.
-fn parse_curated_classes(text : String) -> Array[String] {
-  let out : Array[String] = []
+/// Result of parsing a curated class file. `name` is the class label,
+/// `color` is a `#RRGGBB` string or "" when the format doesn't carry
+/// colors (the legacy `{"classes":[...]}` JSON, for example).
+type CuratedClass = (String, String) // (name, color)
+
+///|
+/// UTF-8 BOM (U+FEFF) as a Char literal.
+let bom_char : Char = Char::from_int(0xFEFF)
+
+///|
+/// Extract class names from a curated file. Two formats supported:
+///
+///   1. JSON: `{"classes":["a","b"]}` — returns the names with empty
+///      color. Hand-parsed to avoid pulling in `@json`.
+///   2. TXT:  `id|name|#RRGGBB` per line (UTF-8, often with BOM).
+///      `id` is ignored; we only need `name` and `#RRGGBB` color. The
+///      color string is normalized to `#RRGGBB` (8-digit `#AARRGGBB`
+///      input is accepted and the leading alpha pair is dropped).
+///
+/// Empty lines and lines starting with `#` are skipped as comments.
+/// Format is auto-detected: if the first non-whitespace character is
+/// `{`, treat as JSON; otherwise treat as TXT.
+fn parse_curated_classes(text : String) -> Array[CuratedClass] {
+  // Strip BOM if present
+  let trimmed_text = if text.length() > 0 &&
+    Char::from_int(text[0].to_int()) == bom_char {
+    text[1:].to_string()
+  } else {
+    text
+  }
+  // Auto-detect format by looking at the first non-whitespace char.
+  let n = trimmed_text.length()
+  let mut first_char : Char = ' '
+  let mut probe = 0
+  while probe < n {
+    let c = Char::from_int(trimmed_text[probe].to_int())
+    if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+      probe = probe + 1
+      continue
+    }
+    first_char = c
+    break
+  }
+  if first_char == '{' {
+    parse_curated_json(trimmed_text)
+  } else {
+    parse_curated_txt(trimmed_text)
+  }
+}
+
+///|
+/// Parse `{"classes":["a","b"]}` JSON. Returns names with empty color.
+fn parse_curated_json(text : String) -> Array[CuratedClass] {
+  let out : Array[CuratedClass] = []
   let needle = "\"classes\""
-  // Find the key. Iterate by code point to avoid byte/char off-by-one
-  // (the curated file is user-edited and may include non-ASCII).
   let n = text.length()
   let mut start : Int = -1
   let mut i = 0
@@ -1537,16 +1607,13 @@ fn parse_curated_classes(text : String) -> Array[String] {
     let ch = text[j]
     if in_str {
       if escape {
-        // Pass the escaped char through verbatim. The curated file only
-        // really needs the simple cases; anything fancier is rare enough
-        // to be ignored for now.
         buf.write_char(Char::from_int(ch.to_int()))
         escape = false
       } else if ch == '\\' {
         escape = true
       } else if ch == '"' {
         in_str = false
-        out.push(buf.to_string())
+        out.push((buf.to_string(), ""))
         buf.reset()
       } else {
         buf.write_char(Char::from_int(ch.to_int()))
@@ -1559,6 +1626,107 @@ fn parse_curated_classes(text : String) -> Array[String] {
     j = j + 1
   }
   out
+}
+
+///|
+/// Parse `id|name|#RRGGBB` TXT (one entry per line). Skips blank lines
+/// and lines starting with `#`. Tolerates missing/short color column.
+fn parse_curated_txt(text : String) -> Array[CuratedClass] {
+  let out : Array[CuratedClass] = []
+  let n = text.length()
+  let mut line_start = 0
+  while line_start < n {
+    // Find end of line
+    let mut line_end = line_start
+    while line_end < n && text[line_end] != '\n' {
+      line_end = line_end + 1
+    }
+    // Trim trailing \r
+    let mut trim_end = line_end
+    if trim_end > line_start && text[trim_end - 1] == '\r' {
+      trim_end = trim_end - 1
+    }
+    // Skip leading whitespace
+    let mut s = line_start
+    while s < trim_end && (text[s] == ' ' || text[s] == '\t') {
+      s = s + 1
+    }
+    if s < trim_end && text[s] != '#' {
+      // Split on '|'. Format is `id|name|#RRGGBB` so we skip the
+      // first column (id) and take the second column as `name`.
+      let mut p1 = s
+      while p1 < trim_end && text[p1] != '|' {
+        p1 = p1 + 1
+      }
+      let p1_end = if p1 < trim_end { p1 } else { trim_end }
+      let mut p2 = if p1 < trim_end { p1 + 1 } else { p1 }
+      while p2 < trim_end && text[p2] != '|' {
+        p2 = p2 + 1
+      }
+      let p2_end = if p2 < trim_end { p2 } else { trim_end }
+      let name = slice_trim(text, p1_end + 1, p2_end)
+      let raw_color = if p2 < trim_end {
+        slice_trim(text, p2 + 1, trim_end)
+      } else {
+        ""
+      }
+      if name.length() > 0 {
+        out.push((name, normalize_color(raw_color)))
+      }
+    }
+    if line_end >= n {
+      break
+    }
+    line_start = line_end + 1
+  }
+  out
+}
+
+///|
+/// Substring `text[s:e]` rendered as an owned String (no UTF-8 boundary
+/// checks — caller is expected to slice on ASCII boundaries, e.g. on
+/// `|` delimiters or line endings).
+fn slice_trim(text : String, s : Int, e : Int) -> String {
+  let mut a = s
+  let mut b = e
+  while a < b && (text[a] == ' ' || text[a] == '\t') {
+    a = a + 1
+  }
+  while b > a && (text[b - 1] == ' ' || text[b - 1] == '\t') {
+    b = b - 1
+  }
+  let buf = StringBuilder::new(size_hint=b - a)
+  let mut k = a
+  while k < b {
+    buf.write_char(Char::from_int(text[k].to_int()))
+    k = k + 1
+  }
+  buf.to_string()
+}
+
+///|
+/// Normalize a color string to `#RRGGBB`. Accepts:
+///   - `#RRGGBB`          → unchanged
+///   - `#AARRGGBB`        → drop alpha, return `#RRGGBB`
+///   - `RRGGBB`           → return `#RRGGBB`
+///   - anything else      → return "" (no color)
+fn normalize_color(s : String) -> String {
+  if s.length() == 0 {
+    return ""
+  }
+  // Uppercase
+  let upper = upper(s)
+  if upper.length() == 7 && upper[0] == '#' {
+    return upper
+  }
+  if upper.length() == 9 && upper[0] == '#' {
+    // #AARRGGBB → #RRGGBB
+    return "#" + upper[3:9].to_string()
+  }
+  if upper.length() == 6 {
+    return "#" + upper
+  }
+  ""
 }
 
 ///|
