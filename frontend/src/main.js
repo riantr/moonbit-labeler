@@ -110,6 +110,11 @@ const state = {
   // callbacks (file:// onload vs IPC fallback) without this guard the
   // canvas overlay ends up rendering the wrong bitmap's natural size.
   selectToken: 0,
+  // When true, the user has manually panned/zoomed the current image.
+  // Window resize then leaves the user's view alone instead of
+  // snapping back to "fit". Reset whenever a new image is loaded or
+  // the user explicitly picks "适应窗口" / "实际像素".
+  userAdjustedView: false,
   // Video mode state — populated by video.js
   currentVideo: null,      // { name, path, ext, sizeBytes }
   currentVideoIdx: -1,
@@ -569,8 +574,19 @@ let _imageResizeObserver = null;
 
 function installResizeObserver() {
   if (_imageResizeObserver) return;
+  // Observe the stage. The <img> child would also fire (because of its
+  // percentage sizing), but we want the *viewport* size — that's what
+  // decides the image's fitted rect.
   _imageResizeObserver = observeImageResize(document.getElementById("stage"), () => {
-    if (state.imgNatural.w > 0) layoutCanvas();
+    if (state.imgNatural.w <= 0) return;
+    layoutCanvas();
+    // Window-size changed: re-fit so the image fills the new viewport.
+    // Skip the auto-fit if the user has manually panned/zoomed on this
+    // image — the next image or a fresh "适应窗口" / "实际像素" pick
+    // resets the flag.
+    if (canvasApi && !state.userAdjustedView) {
+      canvasApi.fitView();
+    }
   });
 }
 
@@ -642,6 +658,9 @@ function selectImage(idx) {
   // label read) drop their result the moment the user navigates away.
   const token = ++state.selectToken;
   state.loadToken = token;
+  // Reset the "user adjusted view" flag for the new image so the first
+  // fit is canonical; subsequent manual zoom will set it again.
+  state.userAdjustedView = false;
   // Wipe the visible bitmap synchronously so a fast next/prev doesn't
   // paint the previous image's pixels while the new one is loading.
   if (els.image) {
@@ -1573,6 +1592,16 @@ function setupViewSync() {
     // transform there. Mizchi mode owns both bitmap and annotations in the
     // canvas and must not receive a second DOM transform.
     syncNativeImageView(v);
+    // Track whether the user has manually adjusted the view. A freshly-fit
+    // image (isFit=true) is not an "adjustment" — only pan/zoom/reset
+    // moves that come from the user's input count.
+    if (v) {
+      if (v.isFit) {
+        state.userAdjustedView = false;
+      } else {
+        state.userAdjustedView = true;
+      }
+    }
     // Force a redraw at the new view (composite picks up view.pan/zoom)
     requestAnimationFrame(() => renderAnnotations());
   });

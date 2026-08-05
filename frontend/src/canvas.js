@@ -474,7 +474,7 @@ export function createCanvas(container) {
   function getView() {
     return { pan: { ...view.pan }, zoom: view.zoom };
   }
-  function emitViewChange() {
+  function emitViewChange(isFit) {
     // The host also needs the screen-space rect of the rendered bitmap so
     // it can keep the <img> element in lock-step with the canvas composite
     // (used by the native render path which paints the bitmap in <img> and
@@ -486,12 +486,12 @@ export function createCanvas(container) {
       h: natural.h * view.zoom,
     };
     document.dispatchEvent(new CustomEvent("labeler:viewchange", {
-      detail: { ...getView(), imageRect: rect },
+      detail: { ...getView(), imageRect: rect, isFit: !!isFit },
     }));
   }
   function setView(v) {
     view = { pan: { ...v.pan }, zoom: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v.zoom)) };
-    emitViewChange();
+    emitViewChange(v.__fit === true);
   }
   function resetView() { setView({ pan: { x: 0, y: 0 }, zoom: 1 }); }
   function fitView() {
@@ -506,7 +506,7 @@ export function createCanvas(container) {
     // center it in the stage.
     const panX = (viewport.w - dw) / 2 - display.left;
     const panY = (viewport.h - dh) / 2 - display.top;
-    setView({ pan: { x: panX, y: panY }, zoom: z });
+    setView({ pan: { x: panX, y: panY }, zoom: z, __fit: true });
   }
   function setZoom(z, centerNatural) {
     const newZ = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
