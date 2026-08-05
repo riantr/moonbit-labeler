@@ -148,6 +148,37 @@ pub struct ScanClassesReply {
   classes : Array[ClassInfo]
 } derive(ToJson, Eq, Debug)
 
+///| Request to write the user's curated class list to `<image_folder>/classes.json`.
+pub struct SaveClassesRequest {
+  image_path : String
+  classes : Array[String]
+} derive(FromJson, ToJson, Eq, Debug)
+
+///| Result of `save_classes`. `path` is the absolute path of the written
+/// file (may be empty if the destination couldn't be determined).
+pub struct SaveClassesReply {
+  path : String
+  written : Int
+} derive(ToJson, Eq, Debug)
+
+///| Request to read the user-curated class list. If no `classes.json` is
+/// present, the backend falls back to scanning the sibling `Label@<rest>`
+/// folder (the same path as `scan_classes`).
+pub struct LoadClassesRequest {
+  image_path : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///| Result of `load_classes`. `path` is the file that was read (or "" if
+/// neither the curated file nor any label file was available). `classes`
+/// carries the merged class list; `from_curated` is `true` when the
+/// curated file was the source, `false` when the result came from a
+/// label-folder scan.
+pub struct LoadClassesReply {
+  path : String
+  classes : Array[ClassInfo]
+  from_curated : Bool
+} derive(ToJson, Eq, Debug)
+
 ///| Request to enumerate video files. `Video@<name>/*.mp4` is the
 /// conventional folder layout. Sibling-folder fallback applies.
 pub struct ListVideosRequest {
@@ -704,6 +735,21 @@ async fn derive_label_dir_for_scan(p : String) -> String {
   dir
 }
 
+///| Resolve the *image* directory for a path that may be a directory
+/// (`D:/x/Image@Foo`) or a file inside it (`D:/x/Image@Foo/1800003_0.jpg`).
+/// Returns the directory itself, or "" if we can't tell. The result is
+/// the destination folder for `classes.json`.
+async fn derive_image_dir(p : String) -> String {
+  if @fs.exists(p) && @fs.kind(p) == @fs.Directory {
+    return p
+  }
+  let (dir, _) = split_dir_name(p)
+  if @fs.exists(dir) && @fs.kind(dir) == @fs.Directory {
+    return dir
+  }
+  ""
+}
+
 ///| Map `Image@X/<basename>.ext` -> `Label@X/<basename>.json`.
 /// Mirrors the frontend's `detectLabelFolder` heuristic. The basename is
 /// preserved verbatim — `1800003_0.jpg` becomes `1800003_0.json` (the `_0`
@@ -965,10 +1011,7 @@ async fn op_scan_classes(req : ScanClassesRequest) -> ScanClassesReply raise {
     }
   }
   log("readdir returned " + names.length().to_string() + " entries")
-  let counts : Map[String, Int] = Map::new(capacity=fallback_classes.length() * 2)
-  let mut files_read = 0
-  let mut files_decoded = 0
-  let mut files_scanned = 0
+  let items : Array[(String, String)] = []
   for name in names {
     if !lower(name).has_suffix(".json") {
       continue
@@ -980,45 +1023,214 @@ async fn op_scan_classes(req : ScanClassesRequest) -> ScanClassesReply raise {
         continue
       }
     }
-    files_read = files_read + 1
     let text = data.text() catch {
       err => {
         log("decode failed for " + name + ": " + err.to_string())
         continue
       }
     }
-    files_decoded = files_decoded + 1
-    // Strip BOM if present.
+    items.push((full, text))
+  }
+  let entries = aggregate_label_entries(items)
+  log("distinct classes found: " + entries.length().to_string())
+  log("returning " + entries.length().to_string() + " entries")
+  { label_dir, classes: entries }
+}
+
+///| Build a `ClassInfo` list from a pre-read list of (path, text) pairs.
+/// `op_scan_classes` and `op_load_classes` both want the same shape; we
+/// share the aggregation logic here and let callers handle the async
+/// filesystem read.
+fn aggregate_label_entries(
+  items : Array[(String, String)],
+) -> Array[ClassInfo] {
+  let counts : Map[String, Int] = Map::new(capacity=fallback_classes.length() * 2)
+  for pair in items {
+    let (_, text) = pair
     let cleaned = if text.length() > 0 && text[0] == '\u{FEFF}' {
       text[1:].to_owned()
     } else {
       text
     }
-    let class_counts = collect_classes_from_text(cleaned)
-    if class_counts.length() > 0 {
-      files_scanned = files_scanned + 1
-    }
-    for k, v in class_counts {
+    for k, v in collect_classes_from_text(cleaned) {
       let prev = counts.get(k).unwrap_or(0)
       counts[k] = prev + v
     }
   }
-  log("files_read=" + files_read.to_string() + " decoded=" + files_decoded.to_string() + " with_classes=" + files_scanned.to_string())
-  log("distinct classes found: " + counts.length().to_string())
   let entries : Array[ClassInfo] = []
   for k, v in counts {
     entries.push({ name: k, count: v })
   }
   entries.sort_by(fn(a, b) { b.count - a.count })
-  // Append any fallback classes that weren't seen, so the UI always has
-  // the seed list available (with count 0).
   for fallback in fallback_classes {
     if !counts.contains(fallback) {
       entries.push({ name: fallback, count: 0 })
     }
   }
-  log("returning " + entries.length().to_string() + " entries")
-  { label_dir, classes: entries }
+  entries
+}
+
+///| Persist a curated class list to `<image_folder>/classes.json` so the
+/// user can reload it across sessions and share it with other folders.
+async fn op_save_classes(
+  req : SaveClassesRequest,
+) -> SaveClassesReply raise {
+  let image_dir = derive_image_dir(req.image_path)
+  if image_dir == "" {
+    fail("save_classes: cannot determine image folder for " + req.image_path)
+  }
+  // Build JSON. We escape a few characters minimally: class names are
+  // alphanumeric + underscore, but be safe in case users type " or \.
+  let buf = StringBuilder::new(size_hint=64 + req.classes.length() * 16)
+  buf.write_string("{\n  \"classes\": [\n")
+  let mut first = true
+  for c in req.classes {
+    if !first {
+      buf.write_string(",\n")
+    }
+    first = false
+    buf.write_string("    \"")
+    for ch in c {
+      if ch == '"' || ch == '\\' {
+        buf.write_char('\\')
+      }
+      buf.write_char(ch)
+    }
+    buf.write_string("\"")
+  }
+  buf.write_string("\n  ]\n}\n")
+  let dest = join_path(image_dir, "classes.json")
+  // PowerShell-based UTF-8-no-BOM write, matching `op_write_label` to avoid
+  // the MoonBit async @-path bug on Windows.
+  let (code, ps_out) = @process.collect_stdout(
+    "powershell",
+    [
+      "-NoProfile", "-NonInteractive", "-Command",
+      "[System.IO.File]::WriteAllText('" + dest + "', '" +
+        ps_powershell_string_literal(buf.to_string()) +
+        "', (New-Object System.Text.UTF8Encoding $false))",
+    ],
+  ) catch {
+    err => fail("save_classes spawn failed: " + err.to_string())
+  }
+  if code != 0 {
+    let ps_text = ps_out.text() catch { _ => "<decode err>" }
+    fail("save_classes exited with code " + code.to_string() + ": " + ps_text)
+  }
+  { path: dest, written: req.classes.length() }
+}
+
+///| Load the user's curated class list. Order of resolution:
+///   1. `<image_folder>/classes.json`  (curated, persists author intent)
+///   2. sibling `Label@<name>/` directory scan  (auto-discovered)
+///   3. `fallback_classes`               (seed list for an empty folder)
+async fn op_load_classes(
+  req : LoadClassesRequest,
+) -> LoadClassesReply raise {
+  let image_dir = derive_image_dir(req.image_path)
+  if image_dir == "" {
+    fail("load_classes: cannot determine image folder for " + req.image_path)
+  }
+  // (1) curated file
+  let curated = join_path(image_dir, "classes.json")
+  if @fs.exists(curated) {
+    let raw = @fs.read_file(curated) catch {
+      err => fail("load_classes: read " + curated + " failed: " + err.to_string())
+    }
+    let text = raw.text() catch { _ => "" }
+    let names = parse_curated_classes(text)
+    let entries : Array[ClassInfo] = []
+    for n in names {
+      entries.push({ name: n, count: 0 })
+    }
+    return { path: curated, classes: entries, from_curated: true }
+  }
+  // (2) label-folder scan
+  let label_dir = derive_label_dir_for_scan(req.image_path)
+  if label_dir != "" && @fs.exists(label_dir) {
+    let names = @fs.readdir(label_dir, include_hidden=false, sort=false) catch {
+      _ => []
+    }
+    let items : Array[(String, String)] = []
+    for name in names {
+      if !lower(name).has_suffix(".json") {
+        continue
+      }
+      let full = join_path(label_dir, name)
+      let data = @fs.read_file(full) catch { _ => continue }
+      let text = data.text() catch { _ => continue }
+      items.push((full, text))
+    }
+    let entries = aggregate_label_entries(items)
+    if entries.length() > 0 {
+      return { path: label_dir, classes: entries, from_curated: false }
+    }
+  }
+  // (3) fallback
+  let entries : Array[ClassInfo] = []
+  for c in fallback_classes {
+    entries.push({ name: c, count: 0 })
+  }
+  { path: "", classes: entries, from_curated: false }
+}
+
+///| Extract class names from the `{"classes":["a","b"]}` curated JSON.
+/// We hand-parse instead of pulling in `@json` to keep the path small and
+/// avoid an extra dependency; the schema is fixed.
+fn parse_curated_classes(text : String) -> Array[String] {
+  let out : Array[String] = []
+  let needle = "\"classes\""
+  // Find the key. Iterate by code point to avoid byte/char off-by-one
+  // (the curated file is user-edited and may include non-ASCII).
+  let n = text.length()
+  let mut start : Int = -1
+  let mut i = 0
+  while i < n {
+    if i + 8 <= n && text[i:i + 8] == needle {
+      start = i + 8
+      break
+    }
+    i = i + 1
+  }
+  if start < 0 { return out }
+  // Find the first '['
+  let mut j = start
+  while j < n && text[j] != '[' {
+    j = j + 1
+  }
+  if j >= n { return out }
+  j = j + 1
+  let buf = StringBuilder::new(size_hint=8)
+  let mut in_str = false
+  let mut escape = false
+  while j < n {
+    let ch = text[j]
+    if in_str {
+      if escape {
+        // Pass the escaped char through verbatim. The curated file only
+        // really needs the simple cases; anything fancier is rare enough
+        // to be ignored for now.
+        buf.write_char(Char::from_int(ch.to_int()))
+        escape = false
+      } else if ch == '\\' {
+        escape = true
+      } else if ch == '"' {
+        in_str = false
+        out.push(buf.to_string())
+        buf.reset()
+      } else {
+        buf.write_char(Char::from_int(ch.to_int()))
+      }
+    } else {
+      if ch == '"' {
+        in_str = true
+      } else if ch == ']' {
+        break
+      }
+    }
+    j = j + 1
+  }
+  out
 }
 
 ///| Returns a count map of class-name -> frequency inside the given
@@ -1637,6 +1849,8 @@ pub fn extension() -> @proton_extension.Extension {
         @proton_command.AppCommandApiDescriptor::new("write_label"),
         @proton_command.AppCommandApiDescriptor::new("pick_folder"),
         @proton_command.AppCommandApiDescriptor::new("scan_classes"),
+        @proton_command.AppCommandApiDescriptor::new("save_classes"),
+        @proton_command.AppCommandApiDescriptor::new("load_classes"),
         @proton_command.AppCommandApiDescriptor::new("list_videos"),
         @proton_command.AppCommandApiDescriptor::new("read_video_info"),
         @proton_command.AppCommandApiDescriptor::new("read_video_frame"),
@@ -1660,6 +1874,8 @@ fn register_labeler_commands(
   context.op_async("write_label", op_write_label, emits_events=false)
   context.op_async("pick_folder", op_pick_folder, emits_events=false)
   context.op_async("scan_classes", op_scan_classes, emits_events=false)
+  context.op_async("save_classes", op_save_classes, emits_events=false)
+  context.op_async("load_classes", op_load_classes, emits_events=false)
   context.op_async("list_videos", op_list_videos, emits_events=false)
   context.op_async("read_video_info", op_read_video_info, emits_events=false)
   context.op_async("read_video_frame", op_read_video_frame, emits_events=false)

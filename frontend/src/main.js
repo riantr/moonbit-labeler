@@ -1405,6 +1405,49 @@ async function runMenuAction(action) {
       try { localStorage.removeItem(RECENT_KEY); } catch {}
       flashHint("最近文件夹历史已清空", "info");
       break;
+    case "save-classes":
+      if (!state.folder) {
+        flashHint("请先载入图片文件夹", "info");
+        break;
+      }
+      try {
+        const names = state.classes.map((c) => c.name);
+        const reply = await invokeLabeler("save_classes", {
+          image_path: state.folder,
+          classes: names,
+        });
+        if (reply?.path) {
+          flashHint(`类别已储存到 ${reply.path}（${reply.written} 条）`, "ok");
+        } else {
+          flashHint("储存类别失败：未返回路径", "info");
+        }
+      } catch (err) {
+        flashHint(`储存类别失败: ${err}`, "info");
+      }
+      break;
+    case "load-classes":
+      if (!state.folder) {
+        flashHint("请先载入图片文件夹", "info");
+        break;
+      }
+      try {
+        const reply = await invokeLabeler("load_classes", {
+          image_path: state.folder,
+        });
+        if (reply?.classes && reply.classes.length > 0) {
+          state.classes = reply.classes;
+          renderClassList();
+          const source = reply.from_curated
+            ? "用户 curated 文件"
+            : (reply.path ? "Label 目录汇总" : "内置默认列表");
+          flashHint(`已载入 ${reply.classes.length} 个类别（来源：${source}）`, "ok");
+        } else {
+          flashHint("未找到类别", "info");
+        }
+      } catch (err) {
+        flashHint(`载入类别失败: ${err}`, "info");
+      }
+      break;
     case "rescan-classes":
       if (state.folder) {
         const cr = await invokeLabeler("scan_classes", { image_path: state.folder });
@@ -1429,12 +1472,18 @@ function zoomMenu(factor) {
 
 function flashHint(msg, kind) {
   // Lightweight one-shot toast near the statusbar.
+  const colors = {
+    info: "var(--panel)",
+    ok: "#dcfce7",
+    error: "#fee2e2",
+  };
+  const bg = colors[kind] || colors.info;
   const el = document.createElement("div");
   el.textContent = msg;
   el.className = "toast";
   el.style.cssText = `
     position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%);
-    background: var(--panel); border: 1px solid var(--line);
+    background: ${bg}; border: 1px solid var(--line);
     padding: 8px 16px; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.18);
     font-size: 12px; color: var(--ink);
     z-index: 9999;
