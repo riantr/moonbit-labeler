@@ -204,6 +204,13 @@ pub struct LoadClassesReply {
 } derive(ToJson, Eq, Debug)
 
 ///|
+/// Request to read a class list from an arbitrary file path (typically
+/// picked via `pick_file`).
+pub struct LoadClassesFromFileRequest {
+  path : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
 /// Request to enumerate video files. `Video@<name>/*.mp4` is the
 /// conventional folder layout. Sibling-folder fallback applies.
 pub struct ListVideosRequest {
@@ -461,7 +468,21 @@ pub struct PickFolderRequest {
 } derive(FromJson, ToJson, Eq, Debug)
 
 ///|
-/// Reply with the picked folder path (empty if the user cancelled).
+/// Request to show a native file picker dialog.
+pub struct PickFileRequest {
+  title : String
+  initial : String?
+  filter : String // e.g. "JSON files (*.json)|*.json|All files (*.*)|*.*"
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+/// Reply with the picked file path (empty if the user cancelled).
+pub struct PickFileReply {
+  path : String
+  cancelled : Bool
+} derive(ToJson, Eq, Debug)
+
+///|
 pub struct PickFolderReply {
   path : String
   cancelled : Bool
@@ -998,6 +1019,86 @@ async fn op_write_label(req : WriteLabelRequest) -> WriteLabelReply {
 }
 
 ///|
+/// Show a native file picker via PowerShell's `OpenFileDialog` and
+/// return the selected absolute path. Same temp-file handoff as
+/// `op_pick_folder` to sidestep PowerShell stdout encoding issues.
+async fn op_pick_file(req : PickFileRequest) -> PickFileReply {
+  let debug_log = "C:\\Windows\\Temp\\moonbit-labeler-pick-file.log"
+  @fs.write_file(debug_log, "", create_mode=@fs.CreateOrTruncate) catch {
+    _ => ()
+  }
+  let initial_text = match req.initial {
+    Some(p) => p
+    None => ""
+  }
+  @fs.write_file(
+    debug_log,
+    "req.title=" + req.title + ", initial=" + initial_text + "\n",
+    append=true,
+    create_mode=@fs.OpenOrCreate,
+  ) catch {
+    _ => ()
+  }
+  let title = ps_escape(req.title)
+  let filter = ps_escape(req.filter)
+  let initial_clause = match req.initial {
+    Some(p) if p.length() > 0 =>
+      // InitialDirectory expects a folder, not a file. If the user
+      // passed a file path, point at its parent.
+      "$parent = [System.IO.Path]::GetDirectoryName('" +
+      ps_escape(p) +
+      "');\n" +
+      "if ($parent) { $f.InitialDirectory = $parent; }\n" +
+      "$leaf = [System.IO.Path]::GetFileName('" +
+      ps_escape(p) +
+      "');\n" +
+      "if ($leaf) { $f.FileName = $leaf; }\n"
+    _ => ""
+  }
+  let temp_path = "C:\\Windows\\Temp\\moonbit-labeler-pick-file.txt"
+  let script = "Add-Type -AssemblyName System.Windows.Forms;\n" +
+    "$f = New-Object System.Windows.Forms.OpenFileDialog;\n" +
+    "$f.Title = '" +
+    title +
+    "';\n" +
+    "$f.Filter = '" +
+    filter +
+    "';\n" +
+    initial_clause +
+    "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {\n" +
+    "  [System.IO.File]::WriteAllText('" +
+    ps_escape(temp_path) +
+    "', $f.FileName, [System.Text.Encoding]::UTF8)\n" +
+    "}\n"
+  if @fs.exists(temp_path) {
+    @fs.remove(temp_path) catch {
+      _ => ()
+    }
+  }
+  let (exit_code, _stdout) = @process.collect_stdout("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script,
+  ]) catch {
+    err => fail("pick_file spawn failed: " + err.to_string())
+  }
+  if exit_code != 0 {
+    fail("pick_file exited with code \{exit_code}")
+  }
+  if !@fs.exists(temp_path) {
+    return { path: "", cancelled: true }
+  }
+  let data = @fs.read_file(temp_path) catch {
+    err => fail("pick_file read result failed: " + err.to_string())
+  }
+  let raw = data.text() catch {
+    err => fail("pick_file decode failed: " + err.to_string())
+  }
+  @fs.remove(temp_path) catch {
+    _ => ()
+  }
+  { path: trim_string(raw), cancelled: false }
+}
+
+///|
 /// Show a native folder picker via PowerShell's `FolderBrowserDialog` and
 /// return the selected absolute path. The path is written to a temp file
 /// (UTF-8) by the script and read back here, which avoids both PowerShell
@@ -1367,6 +1468,35 @@ async fn op_load_classes(req : LoadClassesRequest) -> LoadClassesReply {
     entries.push({ name: c, count: 0 })
   }
   { path: "", classes: entries, from_curated: false }
+}
+
+///|
+/// Load a class list from an arbitrary `classes.json` path picked by
+/// the user (e.g. via a native file dialog). Same reply shape as
+/// `op_load_classes` so the frontend can render the result uniformly.
+async fn op_load_classes_from_file(
+  req : LoadClassesFromFileRequest,
+) -> LoadClassesReply {
+  let path = req.path
+  if path == "" {
+    fail("load_classes_from_file: empty path")
+  }
+  if !@fs.exists(path) {
+    fail("load_classes_from_file: file not found: " + path)
+  }
+  let raw = @fs.read_file(path) catch {
+    err =>
+      fail(
+        "load_classes_from_file: read " + path + " failed: " + err.to_string(),
+      )
+  }
+  let text = raw.text() catch { _ => "" }
+  let names = parse_curated_classes(text)
+  let entries : Array[ClassInfo] = []
+  for n in names {
+    entries.push({ name: n, count: 0 })
+  }
+  { path, classes: entries, from_curated: true }
 }
 
 ///|
@@ -2197,9 +2327,11 @@ pub fn extension() -> @proton_extension.Extension {
         @proton_command.AppCommandApiDescriptor::new("read_label"),
         @proton_command.AppCommandApiDescriptor::new("write_label"),
         @proton_command.AppCommandApiDescriptor::new("pick_folder"),
+        @proton_command.AppCommandApiDescriptor::new("pick_file"),
         @proton_command.AppCommandApiDescriptor::new("scan_classes"),
         @proton_command.AppCommandApiDescriptor::new("save_classes"),
         @proton_command.AppCommandApiDescriptor::new("load_classes"),
+        @proton_command.AppCommandApiDescriptor::new("load_classes_from_file"),
         @proton_command.AppCommandApiDescriptor::new("list_videos"),
         @proton_command.AppCommandApiDescriptor::new("read_video_info"),
         @proton_command.AppCommandApiDescriptor::new("read_video_frame"),
@@ -2223,9 +2355,15 @@ fn register_labeler_commands(
   context.op_async("read_label", op_read_label, emits_events=false)
   context.op_async("write_label", op_write_label, emits_events=false)
   context.op_async("pick_folder", op_pick_folder, emits_events=false)
+  context.op_async("pick_file", op_pick_file, emits_events=false)
   context.op_async("scan_classes", op_scan_classes, emits_events=false)
   context.op_async("save_classes", op_save_classes, emits_events=false)
   context.op_async("load_classes", op_load_classes, emits_events=false)
+  context.op_async(
+    "load_classes_from_file",
+    op_load_classes_from_file,
+    emits_events=false,
+  )
   context.op_async("list_videos", op_list_videos, emits_events=false)
   context.op_async("read_video_info", op_read_video_info, emits_events=false)
   context.op_async("read_video_frame", op_read_video_frame, emits_events=false)

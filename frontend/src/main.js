@@ -1512,6 +1512,34 @@ async function runMenuAction(action) {
         flashHint(`载入类别失败: ${err}`, "info");
       }
       break;
+    case "load-classes-from-file":
+      try {
+        const pickReply = await invokeLabeler("pick_file", {
+          title: "选择类别 JSON 文件",
+          initial: state.folder || null,
+          filter: "JSON files (*.json)|*.json|All files (*.*)|*.*",
+        });
+        if (pickReply?.cancelled || !pickReply?.path) {
+          flashHint("已取消", "info");
+          break;
+        }
+        const reply = await invokeLabeler("load_classes_from_file", {
+          path: pickReply.path,
+        });
+        if (reply?.classes && reply.classes.length > 0) {
+          state.classes = reply.classes;
+          renderClassList();
+          flashHint(
+            `已从 ${pickReply.path} 载入 ${reply.classes.length} 个类别`,
+            "ok",
+          );
+        } else {
+          flashHint("所选文件中未找到 classes 字段", "info");
+        }
+      } catch (err) {
+        flashHint(`从文件载入类别失败: ${err}`, "info");
+      }
+      break;
     case "rescan-classes":
       if (state.folder) {
         const cr = await invokeLabeler("scan_classes", { image_path: state.folder });
