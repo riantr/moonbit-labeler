@@ -106,6 +106,10 @@ const state = {
   labeledPaths: new Set(),
   // Monotonic counter to discard stale async replies
   loadToken: 0,
+  // Same idea but for the *image* path. Fast navigation reorders image
+  // callbacks (file:// onload vs IPC fallback) without this guard the
+  // canvas overlay ends up rendering the wrong bitmap's natural size.
+  selectToken: 0,
   // Video mode state — populated by video.js
   currentVideo: null,      // { name, path, ext, sizeBytes }
   currentVideoIdx: -1,
@@ -404,6 +408,10 @@ function showImage(item, opts = {}) {
   //     The <img> element is hidden because the canvas now owns the
   //     bitmap.
   const mode = settings.imageRenderMode || "native";
+  // Tag this image load with the current selectToken. Image-loader and
+  // label-loader callbacks check the token to bail out when the user
+  // has already moved on to the next image.
+  const token = ++state.selectToken;
   if (mode === "mizchi") {
     els.image.hidden = true;
     els.image.style.transform = "";
@@ -416,7 +424,10 @@ function showImage(item, opts = {}) {
   els.image.style.transform = "";
   return loadImageInto(item, {
     img: els.image,
+    selectToken: token,
+    checkToken: () => state.selectToken,
     onLoad: (natural) => {
+      if (token !== state.selectToken) return;
       state.imgNatural = natural;
       // The <img> element itself renders the bitmap (via object-fit:
       // contain inside the aspect-locked frame). The canvas overlay is
@@ -474,7 +485,11 @@ function loadLabelFor(item, opts = {}) {
   state.loadedFromDisk = false;
   state.history = [];
   state.dirty = false;
-  const token = ++state.loadToken;
+  // Reuse the same selectToken as the image path so a fast next/prev
+  // cancels both legs in lock-step. Fall back to loadToken for callers
+  // that don't supply one.
+  const token = opts.token ?? ++state.loadToken;
+  state.loadToken = token;
   return loadLabelInto(item, {
     invokeReadLabel: (path) =>
       invokeLabeler("read_label", { image_path: path }),
@@ -497,7 +512,13 @@ function loadLabelFor(item, opts = {}) {
     if (token !== state.loadToken) return;
     if (opts.onLoaded) opts.onLoaded();
     updateDirtyBadge();
-    requestAnimationFrame(() => renderAnnotations());
+    // Compose layout + render into a single frame: the canvas may have
+    // already re-fit the image; if so we just paint the labels on top.
+    // Doing them as separate rAFs risked the image-fit racing the label
+    // render and leaving the labels out of sync with the new bitmap.
+    requestAnimationFrame(() => {
+      renderAnnotations();
+    });
   });
 }
 
@@ -536,6 +557,10 @@ function layoutCanvas() {
     renderAnnotations,
     hideEmptyHint,
     displayOverride,
+    // Snapshot the selectToken now so any rAF that fires after layout
+    // finished can bail out if the user already moved on.
+    layoutToken: state.selectToken,
+    checkLayoutToken: () => state.selectToken,
   });
   if (result) state.imgDisplay = result;
 }
@@ -612,6 +637,20 @@ function selectImage(idx) {
   state.videoMeta = null;
   state.frameLabels = new Map();
   state.diskJson = null;
+  // Single monotonic token shared by the image and label legs. Bumping
+  // it here lets every in-flight callback (file:// onload, decode, IPC
+  // label read) drop their result the moment the user navigates away.
+  const token = ++state.selectToken;
+  state.loadToken = token;
+  // Wipe the visible bitmap synchronously so a fast next/prev doesn't
+  // paint the previous image's pixels while the new one is loading.
+  if (els.image) {
+    els.image.removeAttribute("src");
+    els.image.style.left = "0px";
+    els.image.style.top = "0px";
+    els.image.style.width = "0px";
+    els.image.style.height = "0px";
+  }
   for (const li of els.fileList.children) {
     li.classList.toggle(
       "active",
@@ -630,8 +669,14 @@ function selectImage(idx) {
     h: item.h,
     bytes: item.size,
   });
-  showImage(item, { onFirstPaint: () => selectStop.stop() });
-  loadLabelFor(item, { onLoaded: () => selectStop.stop() });
+  showImage(item, {
+    token,
+    onFirstPaint: () => selectStop.stop(),
+  });
+  loadLabelFor(item, {
+    token,
+    onLoaded: () => selectStop.stop(),
+  });
 }
 
 // ============================================================

@@ -66,6 +66,8 @@ export async function showImage(item, deps) {
     onError,              // (reason: string) => void
     onFallback,           // optional () => void   (IPC fallback started)
     invokeReadImage,      // (path) => Promise<{base64, mime} | null>
+    selectToken,          // current selectImage token
+    checkToken,           // () => number — caller's current token
   } = deps;
 
   // Cancel any in-flight load from a previous nav. We use a single
@@ -74,6 +76,12 @@ export async function showImage(item, deps) {
   if (_currentLoadController) _currentLoadController.abort();
   const ctl = new AbortController();
   _currentLoadController = ctl;
+  const myToken = selectToken;
+
+  // Helper: every async callback re-checks the token before touching
+  // shared state. Without this, fast navigation reorders callbacks and
+  // the wrong image's natural size ends up driving the canvas overlay.
+  const stillCurrent = () => checkToken() === myToken;
 
   // The "image.show" timer measures file:// I/O + first decode round-trip.
   // The "image.decode" timer is a sub-event we fire from onImageLoad.
@@ -91,6 +99,7 @@ export async function showImage(item, deps) {
     if (decodeStop) {
       decodeStop.stop({ w: img.naturalWidth, h: img.naturalHeight });
     }
+    if (!stillCurrent()) return;
     if (onLoad) onLoad({ w: img.naturalWidth, h: img.naturalHeight });
     if (onFirstPaint) onFirstPaint();
   };
@@ -98,11 +107,16 @@ export async function showImage(item, deps) {
     if (onerrorFired) return;
     onerrorFired = true;
     if (decodeStop) decodeStop.cancel();
+    if (!stillCurrent()) return;
     handleImageError(item, { img, invokeReadImage, onError, onFallback })
       .catch(() => {});
   };
   try {
     decodeStop = Log.start(Log.Event.IMAGE_DECODE, { path: item.path });
+    // Resetting src before assignment cancels any pending file:// load and
+    // drops the previously-set width/height/transform synchronously, so
+    // the user doesn't see a stale bitmap while the next one fetches.
+    img.removeAttribute("src");
     img.src = fileUrl(item.path);
     if (img.decode) {
       await img.decode();
@@ -112,10 +126,14 @@ export async function showImage(item, deps) {
         decodeStop.stop({ w: img.naturalWidth, h: img.naturalHeight });
       }
     }
+    if (!stillCurrent()) {
+      showStop.cancel();
+      return;
+    }
     showStop.stop();
   } catch (err) {
     if (decodeStop) decodeStop.cancel();
-    if (err?.name === "AbortError") {
+    if (err?.name === "AbortError" || !stillCurrent()) {
       showStop.cancel();
       return;
     }
@@ -251,10 +269,16 @@ export function layoutCanvas(deps) {
     renderAnnotations,
     hideEmptyHint,
     displayOverride,
+    layoutToken,
+    checkLayoutToken,
   } = deps;
 
   if (!canvasApi) return null;
   if (imgNatural.w <= 0 || imgNatural.h <= 0) return null;
+  // Bail out if the caller has already moved on to a newer image.
+  if (layoutToken !== undefined && checkLayoutToken && checkLayoutToken() !== layoutToken) {
+    return null;
+  }
 
   // Switching images resets any pan/zoom the user left behind from
   // the previous one — much less disorienting than seeing the new frame
