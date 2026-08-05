@@ -1,10 +1,12 @@
 import {
-  "moonbitlang/async/fs" @fs,
-  "moonbitlang/async/process" @process,
-  "moonbitlang/core/json" @json,
+  "moonbitlang/async/fs",
+  "moonbitlang/async/process",
+  "moonbitlang/core/json",
+  "moonbitlang/x/codec/base64",
+  "moonbitlang/x/encoding",
   "justjavac/proton/command" @proton_command,
   "justjavac/proton/extension" @proton_extension,
-  "mizchi/image" @image,
+  "mizchi/image",
 }
 
 supported_targets = "native"

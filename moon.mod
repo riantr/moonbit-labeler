@@ -4,6 +4,7 @@ version = "0.1.0"
 
 import {
   "moonbitlang/async@0.19.4",
+  "moonbitlang/x@0.4.43",
   "justjavac/proton@0.1.12",
   "mizchi/image@0.4.3",
 }
