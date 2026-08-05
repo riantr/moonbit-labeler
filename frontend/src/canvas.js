@@ -484,10 +484,22 @@ export function createCanvas(container) {
   }
   function resetView() { setView({ pan: { x: 0, y: 0 }, zoom: 1 }); }
   function fitView() {
-    // The DOM image-frame is fitted to the available stage by image-loader.
-    // Keep the view transform at identity so the canvas and <img> share the
-    // exact same fitted rectangle. User zoom is applied on top of that.
-    setView({ pan: { x: 0, y: 0 }, zoom: 1 });
+    // "适应窗口" — pick a zoom so the image fits entirely inside the stage
+    // (the canvas container), and pan so the image's top-left lands on the
+    // stage's top-left. After this, the user can pan/zoom freely, but the
+    // first fit always renders the picture fully inside the black area.
+    if (viewport.w === 0 || viewport.h === 0 || natural.w === 0) return;
+    const z = Math.min(viewport.w / natural.w, viewport.h / natural.h);
+    // dest origin (image top-left in stage CSS pixels) = (0, 0) by design.
+    // We still go through the existing view math so pan / zoom stay
+    // consistent with the rest of the canvas.
+    const dw = natural.w * z;
+    const dh = natural.h * z;
+    // The fitted image rect lives at (display.left + view.pan, display.top + view.pan).
+    // We want destX = 0, destY = 0, so solve for view.pan.
+    const panX = -display.left;
+    const panY = -display.top;
+    setView({ pan: { x: panX, y: panY }, zoom: z });
   }
   function setZoom(z, centerNatural) {
     const newZ = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
