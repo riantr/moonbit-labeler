@@ -16,3 +16,5 @@ data/Label*/
 *.bak
 # Leftover exe at root (the real portable build lives in target/proton-dist/)
 /moonbit-labeler.exe
+# Loose type-list files dropped at the repo root by mistake.
+/types.txt
