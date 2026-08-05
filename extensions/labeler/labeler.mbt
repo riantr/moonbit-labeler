@@ -1100,22 +1100,50 @@ async fn op_save_classes(
   }
   buf.write_string("\n  ]\n}\n")
   let dest = join_path(image_dir, "classes.json")
-  // PowerShell-based UTF-8-no-BOM write, matching `op_write_label` to avoid
-  // the MoonBit async @-path bug on Windows.
-  let (code, ps_out) = @process.collect_stdout(
-    "powershell",
-    [
-      "-NoProfile", "-NonInteractive", "-Command",
-      "[System.IO.File]::WriteAllText('" + dest + "', '" +
-        ps_powershell_string_literal(buf.to_string()) +
-        "', (New-Object System.Text.UTF8Encoding $false))",
-    ],
+  // Diagnostic log so the user (and we) can see exactly what was
+  // spawned when something goes wrong. Mirrors the pick_folder log.
+  let dbg = "C:\\Windows\\Temp\\moonbit-labeler-save-classes.log"
+  @fs.write_file(dbg, "dest=" + dest + "\n", create_mode=@fs.CreateOrTruncate) catch { _ => () }
+  @fs.write_file(dbg, "buf=\n" + buf.to_string() + "\n", append=true, create_mode=@fs.OpenOrCreate) catch { _ => () }
+  // Use cmd.exe instead of powershell.exe: cmd.exe handles paths with
+  // `@` natively and doesn't have PowerShell's argv parsing quirks.
+  // We round-trip the content through a UTF-8 temp file to avoid any
+  // quoting issues with the JSON string itself.
+  let tmp_src = "C:\\Windows\\Temp\\moonbit-labeler-classes-payload.txt"
+  let write_tmp_cmd = "[System.IO.File]::WriteAllText('" + ps_escape(tmp_src) +
+    "', " + ps_powershell_string_literal(buf.to_string()) +
+    ", (New-Object System.Text.UTF8Encoding $false))"
+  let (tcode, tout) = @process.collect_stdout(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", write_tmp_cmd],
   ) catch {
-    err => fail("save_classes spawn failed: " + err.to_string())
+    err => {
+      @fs.write_file(dbg, "tmp spawn err=" + err.to_string() + "\n", append=true, create_mode=@fs.OpenOrCreate) catch { _ => () }
+      fail("save_classes tmp write failed: " + err.to_string())
+    }
   }
+  @fs.write_file(dbg, "tmp exit=" + tcode.to_string() + "\n", append=true, create_mode=@fs.OpenOrCreate) catch { _ => () }
+  if tcode != 0 {
+    let ps_text = tout.text() catch { _ => "<decode err>" }
+    fail("save_classes tmp write exited with code " + tcode.to_string() + ": " + ps_text)
+  }
+  // Now move the temp file to the destination via cmd.exe. cmd.exe
+  // understands the `@` in the path and double-quoted paths work for
+  // both source and destination.
+  let move_cmd = "move /Y \"" + tmp_src + "\" \"" + dest + "\""
+  let (code, ps_out) = @process.collect_stdout(
+    "cmd.exe",
+    ["/d", "/c", move_cmd],
+  ) catch {
+    err => {
+      @fs.write_file(dbg, "move err=" + err.to_string() + "\n", append=true, create_mode=@fs.OpenOrCreate) catch { _ => () }
+      fail("save_classes move failed: " + err.to_string())
+    }
+  }
+  @fs.write_file(dbg, "move exit=" + code.to_string() + "\n", append=true, create_mode=@fs.OpenOrCreate) catch { _ => () }
   if code != 0 {
     let ps_text = ps_out.text() catch { _ => "<decode err>" }
-    fail("save_classes exited with code " + code.to_string() + ": " + ps_text)
+    fail("save_classes move exited with code " + code.to_string() + ": " + ps_text)
   }
   { path: dest, written: req.classes.length() }
 }
