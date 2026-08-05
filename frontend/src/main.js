@@ -1447,13 +1447,27 @@ function flashHint(msg, kind) {
 // View (zoom/pan) sync — keep the menubar "100%" readout accurate
 // ============================================================
 
-function syncNativeImageView(v) {
-  if (!v || !els.image) return;
+function syncNativeImageView(detail) {
+  if (!detail || !els.image) return;
   const nativeMode = (settings.imageRenderMode || "native") === "native" && !els.image.hidden;
+  if (!nativeMode) {
+    els.image.style.transform = "";
+    return;
+  }
+  // The canvas reports the screen-space rect of the rendered bitmap; the
+  // <img> element must mirror it exactly so bitmap and annotations stay
+  // in lock-step across pan / zoom.
+  const r = detail.imageRect;
+  if (!r) {
+    els.image.style.transform = "";
+    return;
+  }
   els.image.style.transformOrigin = "0 0";
-  els.image.style.transform = nativeMode
-    ? `translate(${v.pan.x}px, ${v.pan.y}px) scale(${v.zoom})`
-    : "";
+  els.image.style.width = `${r.w}px`;
+  els.image.style.height = `${r.h}px`;
+  els.image.style.left = `${r.x}px`;
+  els.image.style.top = `${r.y}px`;
+  els.image.style.transform = "";
 }
 
 function setupViewSync() {

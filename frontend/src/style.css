@@ -490,16 +490,8 @@ button.small { font-size: 12px; padding: 5px 12px; }
   overflow: hidden;
 }
 .canvas-stage img {
-  /* The frame has a fixed aspect-ratio (set by JS) and is the largest
-     rect that fits in the box. Make the <img> fill that frame exactly
-     (width: 100%; height: 100%) and let `object-fit: contain` handle
-     the case where the bitmap's own aspect doesn't match the frame's
-     — sans that, the image would render at its natural pixel size
-     and leave a letterbox inside the frame. */
   display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+  position: absolute;
   user-select: none;
   -webkit-user-drag: none;
 }

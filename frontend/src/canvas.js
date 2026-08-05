@@ -86,28 +86,25 @@ export function createCanvas(container) {
   }
 
   // ---------- coordinate mapping ----------
-  // The canvas covers the full stage. `display.left/top` locate the fitted
-  // image inside that stage; pan and zoom apply to both image and labels.
-  function baseScaleX() {
-    return natural.w > 0 ? display.w / natural.w : 1;
-  }
-  function baseScaleY() {
-    return natural.h > 0 ? display.h / natural.h : 1;
-  }
-  /** stage CSS pixels -> image-natural pixels */
+  // The canvas covers the full stage. The annotation layers are stored in
+  // natural image pixels; the view transform (`view.pan`, `view.zoom`)
+  // moves the *image* — and therefore the labels with it — inside the
+  // stage. `display.left/top` is the untransformed image origin (its
+  // CSS position before any pan/zoom). The unified screen->natural map
+  // is therefore:
+  //   screen = display.left + natural * zoom + view.pan
+  // and inverse:
+  //   natural = (screen - display.left - view.pan) / zoom
   function toNatural(screenX, screenY) {
-    const originX = display.left + view.pan.x;
-    const originY = display.top + view.pan.y;
     return [
-      (screenX - originX) / (baseScaleX() * view.zoom),
-      (screenY - originY) / (baseScaleY() * view.zoom),
+      (screenX - display.left - view.pan.x) / view.zoom,
+      (screenY - display.top - view.pan.y) / view.zoom,
     ];
   }
-  /** image-natural -> stage CSS pixels */
   function toScreen(nx, ny) {
     return [
-      display.left + nx * baseScaleX() * view.zoom + view.pan.x,
-      display.top + ny * baseScaleY() * view.zoom + view.pan.y,
+      display.left + nx * view.zoom + view.pan.x,
+      display.top + ny * view.zoom + view.pan.y,
     ];
   }
 
@@ -167,7 +164,7 @@ export function createCanvas(container) {
           },
           zoom: view.zoom,
         };
-        document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+        emitViewChange();
         return;
       }
       if (handlers.mousemove) handlers.mousemove(ev, mouseToImg(ev));
@@ -208,7 +205,7 @@ export function createCanvas(container) {
           zoom: view.zoom,
         };
       }
-      document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+      emitViewChange();
       if (handlers.wheel) handlers.wheel(ev, mouseToImg(ev));
     }, { passive: false });
     // Suppress browser context menu on right-click so we can use it for pan.
@@ -218,12 +215,10 @@ export function createCanvas(container) {
   /** Zoom to `z` keeping the natural point currently under (sx, sy) in place. */
   function zoomAtScreenPoint(z, sx, sy) {
     const [nx, ny] = toNatural(sx, sy);
-    const sxScale = baseScaleX();
-    const syScale = baseScaleY();
     view = {
       pan: {
-        x: sx - nx * sxScale * z,
-        y: sy - ny * syScale * z,
+        x: sx - display.left - nx * z,
+        y: sy - display.top - ny * z,
       },
       zoom: z,
     };
@@ -456,13 +451,14 @@ export function createCanvas(container) {
     ctx.clearRect(0, 0, viewport.w, viewport.h);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    // Composite in full-stage CSS pixels. The fitted image rect supplies
-    // the base natural->display scale and left/top letterbox offset;
-    // `view.zoom` and `view.pan` then move image and labels together.
+    // Composite in full-stage CSS pixels. Both the static image layer and
+    // the dynamic overlay share the same view transform: top-left of the
+    // natural bitmap lands at `(display.left + view.pan, display.top + view.pan)`
+    // in stage coordinates, then the bitmap is resampled at `view.zoom`.
     const destX = display.left + view.pan.x;
     const destY = display.top + view.pan.y;
-    const destW = display.w * view.zoom;
-    const destH = display.h * view.zoom;
+    const destW = natural.w * view.zoom;
+    const destH = natural.h * view.zoom;
     ctx.drawImage(layerStatic, 0, 0, natural.w, natural.h,
       destX, destY, destW, destH);
     ctx.drawImage(layerDynamic, 0, 0, natural.w, natural.h,
@@ -478,27 +474,38 @@ export function createCanvas(container) {
   function getView() {
     return { pan: { ...view.pan }, zoom: view.zoom };
   }
+  function emitViewChange() {
+    // The host also needs the screen-space rect of the rendered bitmap so
+    // it can keep the <img> element in lock-step with the canvas composite
+    // (used by the native render path which paints the bitmap in <img> and
+    // the labels in the canvas).
+    const rect = {
+      x: display.left + view.pan.x,
+      y: display.top + view.pan.y,
+      w: natural.w * view.zoom,
+      h: natural.h * view.zoom,
+    };
+    document.dispatchEvent(new CustomEvent("labeler:viewchange", {
+      detail: { ...getView(), imageRect: rect },
+    }));
+  }
   function setView(v) {
     view = { pan: { ...v.pan }, zoom: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v.zoom)) };
-    document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+    emitViewChange();
   }
   function resetView() { setView({ pan: { x: 0, y: 0 }, zoom: 1 }); }
   function fitView() {
-    // "适应窗口" — pick a zoom so the image fits entirely inside the stage
-    // (the canvas container), and pan so the image's top-left lands on the
-    // stage's top-left. After this, the user can pan/zoom freely, but the
-    // first fit always renders the picture fully inside the black area.
+    // Pick a zoom so the entire image fits inside the stage (the canvas
+    // container) and pan so the bitmap is centered inside the unused area.
+    // The view transform must keep image and annotations in lock-step.
     if (viewport.w === 0 || viewport.h === 0 || natural.w === 0) return;
     const z = Math.min(viewport.w / natural.w, viewport.h / natural.h);
-    // dest origin (image top-left in stage CSS pixels) = (0, 0) by design.
-    // We still go through the existing view math so pan / zoom stay
-    // consistent with the rest of the canvas.
     const dw = natural.w * z;
     const dh = natural.h * z;
-    // The fitted image rect lives at (display.left + view.pan, display.top + view.pan).
-    // We want destX = 0, destY = 0, so solve for view.pan.
-    const panX = -display.left;
-    const panY = -display.top;
+    // The image is drawn at (display.left + view.pan, display.top + view.pan);
+    // center it in the stage.
+    const panX = (viewport.w - dw) / 2 - display.left;
+    const panY = (viewport.h - dh) / 2 - display.top;
     setView({ pan: { x: panX, y: panY }, zoom: z });
   }
   function setZoom(z, centerNatural) {
@@ -510,7 +517,7 @@ export function createCanvas(container) {
       // Zoom around viewport center
       zoomAtScreenPoint(newZ, viewport.w / 2, viewport.h / 2);
     }
-    document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+    emitViewChange();
   }
   function zoomBy(factor, screenPt) {
     const newZ = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, view.zoom * factor));
@@ -519,14 +526,14 @@ export function createCanvas(container) {
     } else {
       zoomAtScreenPoint(newZ, viewport.w / 2, viewport.h / 2);
     }
-    document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+    emitViewChange();
   }
   function panBy(dx, dy) {
     view = {
       pan: { x: view.pan.x + dx, y: view.pan.y + dy },
       zoom: view.zoom,
     };
-    document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+    emitViewChange();
   }
 
   // helper so paintStatic/Dynamic read opacity — close over _opacity
@@ -576,7 +583,7 @@ export function createCanvas(container) {
       };
       _lastStaticKey = null;
       // Notify host of new dims (e.g. for zoom/pan clamped to display)
-      document.dispatchEvent(new CustomEvent("labeler:viewchange", { detail: getView() }));
+      emitViewChange();
     },
     render(state) {
       if (natural.w === 0) return;

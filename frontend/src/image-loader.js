@@ -269,64 +269,34 @@ export function layoutCanvas(deps) {
     imageFrame.style.aspectRatio = `${imgNatural.w} / ${imgNatural.h}`;
   }
   if (imgBox) imgBox.classList.add("has-image");
-  // Force a layout read so the frame's CSS box settles on the natural
-  // aspect-ratio (see image-frame[style*="aspect-ratio"] in style.css
-  // — without an explicit reflow the frame might still be at the
-  // previous image's size when we read getBoundingClientRect()).
-  imageFrame && imageFrame.offsetHeight;
-  // Measure the actual fitted image frame, not the <img> element's outer
-  // box. `object-fit: contain` can leave horizontal/vertical letterbox
-  // inside that box; putting the canvas over the outer box makes labels
-  // drift into the letterbox (especially for portrait images).
-  let targetDisplay;
-  if (displayOverride) {
-    targetDisplay = {
-      w: displayOverride.w,
-      h: displayOverride.h,
-    };
-  } else {
-    // Top-left alignment: render the bitmap at its natural pixel size and
-    // pin it to the top-left corner of the stage. No fit, no centering —
-    // every image opens at the same canvas coordinate, so jumping between
-    // frames is purely about the image content, not the previous layout.
-    targetDisplay = {
-      w: Math.max(1, imgNatural.w),
-      h: Math.max(1, imgNatural.h),
-    };
-  }
+  // image-frame is a "transform-origin" container; it stays at (0, 0) of
+  // the stage and never resizes itself. The <img> element and the canvas
+  // composite both read from the view transform; the frame is just a
+  // guaranteed reference for `display.left/top` = 0.
   if (imageFrame) {
-    // Pin to top-left of the stage. `flex: 0 0 auto` keeps the frame at
-    // its declared size; `justify-content: flex-start / align-items: flex-start`
-    // on the parent (set in style.css) parks it in the top-left corner.
-    imageFrame.style.width = `${targetDisplay.w}px`;
-    imageFrame.style.height = `${targetDisplay.h}px`;
+    imageFrame.style.width = "0px";
+    imageFrame.style.height = "0px";
     imageFrame.style.maxWidth = "none";
     imageFrame.style.maxHeight = "none";
     imageFrame.style.flex = "0 0 auto";
     imageFrame.style.margin = "0";
     imageFrame.offsetHeight;
   }
-  const rect = imageFrame?.getBoundingClientRect() || img.getBoundingClientRect();
-  // Use the actual canvas viewport as the coordinate origin. This is more
-  // reliable than subtracting #stage's rect when the stage has padding or
-  // Chromium resolves an absolute child against a different containing box.
-  const viewportRect = canvasApi.element?.getBoundingClientRect()
-    || stage.getBoundingClientRect();
+  // The image's CSS position is fully owned by the canvas view transform.
+  // We force the untransformed origin to (0, 0) and let the canvas decide
+  // where the bitmap lands (composite destination) and how big it is.
   const imgDisplay = {
-    w: rect.width,
-    h: rect.height,
-    left: displayOverride?.left ?? (rect.left - viewportRect.left),
-    top: displayOverride?.top ?? (rect.top - viewportRect.top),
+    w: displayOverride?.w ?? imgNatural.w,
+    h: displayOverride?.h ?? imgNatural.h,
+    left: displayOverride?.left ?? 0,
+    top: displayOverride?.top ?? 0,
   };
   canvasApi.resize(imgNatural, imgDisplay);
-  // The mizchi bypass path puts the source bitmap into the canvas
-  // overlay (see main.js showImageMizchi). In that case we want the
-  // view transform to scale the bitmap to the frame size, so fit
-  // the canvas to the frame rather than leaving it at zoom=1 which
-  // would draw the natural-sized bitmap in the frame's top-left
-  // corner. The native path doesn't need this — the <img> element
-  // handles the bitmap scale.
-  if (imgChanged && displayOverride) {
+  // Every new image (and any layout reset) defaults to "fit view": scale to
+  // the stage and center the image inside it. Both the <img> element and
+  // the canvas composite pick up the same `view.zoom` / `view.pan` so they
+  // stay pixel-aligned across the entire drawing surface.
+  if (imgChanged) {
     canvasApi.fitView();
   }
   if (imgChanged) {
