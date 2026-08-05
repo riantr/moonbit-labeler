@@ -285,25 +285,25 @@ export function layoutCanvas(deps) {
       h: displayOverride.h,
     };
   } else {
-    const boxRect = imgBox?.getBoundingClientRect();
-    const boxW = boxRect?.width || stage.getBoundingClientRect().width;
-    const boxH = boxRect?.height || stage.getBoundingClientRect().height;
-    const fit = Math.min(boxW / imgNatural.w, boxH / imgNatural.h);
+    // Top-left alignment: render the bitmap at its natural pixel size and
+    // pin it to the top-left corner of the stage. No fit, no centering —
+    // every image opens at the same canvas coordinate, so jumping between
+    // frames is purely about the image content, not the previous layout.
     targetDisplay = {
-      w: Math.max(1, imgNatural.w * fit),
-      h: Math.max(1, imgNatural.h * fit),
+      w: Math.max(1, imgNatural.w),
+      h: Math.max(1, imgNatural.h),
     };
   }
   if (imageFrame) {
-    // Set both dimensions explicitly. Relying on `width: 100%` plus
-    // `aspect-ratio` lets a flex child stretch the frame to the full box;
-    // the image then gets letterboxed by object-fit while the canvas does
-    // not, which is exactly the drift seen with the CARS portrait images.
+    // Pin to top-left of the stage. `flex: 0 0 auto` keeps the frame at
+    // its declared size; `justify-content: flex-start / align-items: flex-start`
+    // on the parent (set in style.css) parks it in the top-left corner.
     imageFrame.style.width = `${targetDisplay.w}px`;
     imageFrame.style.height = `${targetDisplay.h}px`;
-    imageFrame.style.maxWidth = "100%";
-    imageFrame.style.maxHeight = "100%";
+    imageFrame.style.maxWidth = "none";
+    imageFrame.style.maxHeight = "none";
     imageFrame.style.flex = "0 0 auto";
+    imageFrame.style.margin = "0";
     imageFrame.offsetHeight;
   }
   const rect = imageFrame?.getBoundingClientRect() || img.getBoundingClientRect();
@@ -315,8 +315,8 @@ export function layoutCanvas(deps) {
   const imgDisplay = {
     w: rect.width,
     h: rect.height,
-    left: rect.left - viewportRect.left,
-    top: rect.top - viewportRect.top,
+    left: displayOverride?.left ?? (rect.left - viewportRect.left),
+    top: displayOverride?.top ?? (rect.top - viewportRect.top),
   };
   canvasApi.resize(imgNatural, imgDisplay);
   // The mizchi bypass path puts the source bitmap into the canvas

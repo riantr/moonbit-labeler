@@ -483,10 +483,10 @@ button.small { font-size: 12px; padding: 5px 12px; }
   position: relative;
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   min-height: 0;
-  padding: 12px;
+  padding: 0;
   overflow: hidden;
 }
 .canvas-stage img {
@@ -516,39 +516,26 @@ button.small { font-size: 12px; padding: 5px 12px; }
   width: 100%;
   height: 100%;
   display: none;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
 }
 .image-box.has-image {
   display: flex;
 }
 .image-frame {
   position: relative;
-  /* Without an aspect-ratio, fill the box; with one, lock the ratio. */
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  max-height: 100%;
+  /* Top-left alignment: the JS sets explicit width/height to the bitmap's
+     natural pixels, and the parent flex container parks the frame at the
+     top-left of the stage (no fit, no centering). */
+  flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
 }
-/* Once a frame has a ratio, the size collapses to the largest rect that
-   fits. Without a ratio (no image yet) it just fills the box — JS sets
-   the ratio the moment the image's natural size is known. We disable
-   flex shrinking so the aspect-ratio actually wins against the
-   child <img>'s natural size.
-
-   The earlier `width: auto; height: auto` together with
-   `max-width: 100%; max-height: 100%` produced a CSS circular
-   reference: the <img> child's natural size pulled the frame down
-   to its own intrinsic size before the max constraints had a chance
-   to kick in. The fix: drive width from the box (100%), and let
-   aspect-ratio compute height. The browser then enforces max-height
-   by clamping the height (and the aspect-ratio CSS recomputes width
-   to preserve the ratio). This gives a single, deterministic solution
-   that fills the largest fitting rectangle. */
-.image-frame[style*="aspect-ratio"] {
+/* Once JS has set explicit width/height, the aspect-ratio rule below
+   is redundant (and would override the JS-set size); leave it as a
+   fallback for any code path that hasn't measured the image yet. */
+.image-frame[style*="aspect-ratio"]:not([style*="width:"]) {
   width: 100%;
   height: auto;
   max-width: 100%;

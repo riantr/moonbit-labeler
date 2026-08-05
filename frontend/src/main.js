@@ -514,24 +514,14 @@ function layoutCanvas() {
   // displayOverride so image-loader.js uses that instead of the <img>.
   let displayOverride = null;
   if ((settings.imageRenderMode || "native") === "mizchi" && state.imgNatural.w > 0) {
-    const stageRect = stage.getBoundingClientRect();
-    // Stage has 12px padding all sides. Account for it.
-    const stagePad = 12;
-    const outerW = Math.max(1, stageRect.width - 2 * stagePad);
-    const outerH = Math.max(1, stageRect.height - 2 * stagePad);
-    const fit = Math.min(outerW / state.imgNatural.w, outerH / state.imgNatural.h);
-    const dw = state.imgNatural.w * fit;
-    const dh = state.imgNatural.h * fit;
-    // image-frame lives inside .image-box which centers it inside the
-    // padded stage. So frame left/top relative to stage is
-    // (pad + (outer - frame) / 2).
-    const leftInStage = stagePad + (outerW - dw) / 2;
-    const topInStage = stagePad + (outerH - dh) / 2;
+    // Top-left alignment: anchor the frame at (0, 0) inside the stage so the
+    // mizchi canvas overlay renders the bitmap at the same coordinate as the
+    // <img>-driven native path.
     displayOverride = {
-      w: dw,
-      h: dh,
-      left: leftInStage,
-      top: topInStage,
+      w: state.imgNatural.w,
+      h: state.imgNatural.h,
+      left: 0,
+      top: 0,
     };
   }
   const result = layoutImageCanvas({
