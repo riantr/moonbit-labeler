@@ -318,22 +318,11 @@ async fn ensure_dir(path : String) -> Unit {
 ///| --- string helpers ---
 
 ///|
-/// Lowercase an ASCII character. Non-ASCII chars pass through.
-fn to_lower_char(c : Char) -> Char {
-  let code = c.to_int()
-  if code >= 65 && code <= 90 {
-    Int::unsafe_to_char(code + 32)
-  } else {
-    c
-  }
-}
-
-///|
 fn lower(s : String) -> String {
   let buf = StringBuilder::new(size_hint=s.length())
   for c in s {
     if c >= 'A' && c <= 'Z' {
-      buf.write_char(Char::from_int(c.to_int() + 32))
+      buf.write_char(Int::unsafe_to_char(c.to_int() + 32))
     } else {
       buf.write_char(c)
     }
@@ -347,7 +336,7 @@ fn upper(s : String) -> String {
   let buf = StringBuilder::new(size_hint=s.length())
   for c in s {
     if c >= 'a' && c <= 'z' {
-      buf.write_char(Char::from_int(c.to_int() - 32))
+      buf.write_char(Int::unsafe_to_char(c.to_int() - 32))
     } else {
       buf.write_char(c)
     }
@@ -380,7 +369,7 @@ fn is_video_ext(name : String, exts : Array[String]) -> Bool {
 ///|
 /// Returns the file extension including the leading `.`, or `""`.
 fn ext_of(name : String) -> String {
-  let bytes = name.to_bytes()
+  let bytes = @encoding.encode(@encoding.UTF8, name)
   let mut dot = -1
   for i in 0..<bytes.length() {
     if bytes[i] == b'.' {
@@ -1334,9 +1323,7 @@ async fn op_scan_classes(req : ScanClassesRequest) -> ScanClassesReply {
 /// share the aggregation logic here and let callers handle the async
 /// filesystem read.
 fn aggregate_label_entries(items : Array[(String, String)]) -> Array[ClassInfo] {
-  let counts : Map[String, Int] = Map::new(
-    capacity=fallback_classes.length() * 2,
-  )
+  let counts : Map[String, Int] = Map([])
   for pair in items {
     let (_, text) = pair
     let cleaned = if text.length() > 0 && text[0] == '\u{FEFF}' {
@@ -1530,7 +1517,7 @@ type CuratedClass = (String, String) // (name, color)
 
 ///|
 /// UTF-8 BOM (U+FEFF) as a Char literal.
-let bom_char : Char = Char::from_int(0xFEFF)
+let bom_char : Char = Int::unsafe_to_char(0xFEFF)
 
 ///|
 /// Extract class names from a curated file. Two formats supported:
@@ -1548,8 +1535,8 @@ let bom_char : Char = Char::from_int(0xFEFF)
 fn parse_curated_classes(text : String) -> Array[CuratedClass] {
   // Strip BOM if present
   let trimmed_text = if text.length() > 0 &&
-    Char::from_int(text[0].to_int()) == bom_char {
-    text[1:].to_string()
+    Int::unsafe_to_char(text[0].to_int()) == bom_char {
+    text[1:].to_owned()
   } else {
     text
   }
@@ -1558,7 +1545,7 @@ fn parse_curated_classes(text : String) -> Array[CuratedClass] {
   let mut first_char : Char = ' '
   let mut probe = 0
   while probe < n {
-    let c = Char::from_int(trimmed_text[probe].to_int())
+    let c = Int::unsafe_to_char(trimmed_text[probe].to_int())
     if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
       probe = probe + 1
       continue
@@ -1607,7 +1594,7 @@ fn parse_curated_json(text : String) -> Array[CuratedClass] {
     let ch = text[j]
     if in_str {
       if escape {
-        buf.write_char(Char::from_int(ch.to_int()))
+        buf.write_char(Int::unsafe_to_char(ch.to_int()))
         escape = false
       } else if ch == '\\' {
         escape = true
@@ -1616,7 +1603,7 @@ fn parse_curated_json(text : String) -> Array[CuratedClass] {
         out.push((buf.to_string(), ""))
         buf.reset()
       } else {
-        buf.write_char(Char::from_int(ch.to_int()))
+        buf.write_char(Int::unsafe_to_char(ch.to_int()))
       }
     } else if ch == '"' {
       in_str = true
@@ -1698,7 +1685,7 @@ fn slice_trim(text : String, s : Int, e : Int) -> String {
   let buf = StringBuilder::new(size_hint=b - a)
   let mut k = a
   while k < b {
-    buf.write_char(Char::from_int(text[k].to_int()))
+    buf.write_char(Int::unsafe_to_char(text[k].to_int()))
     k = k + 1
   }
   buf.to_string()
@@ -1721,7 +1708,7 @@ fn normalize_color(s : String) -> String {
   }
   if upper.length() == 9 && upper[0] == '#' {
     // #AARRGGBB → #RRGGBB
-    return "#" + upper[3:9].to_string()
+    return "#" + upper[3:9].to_owned()
   }
   if upper.length() == 6 {
     return "#" + upper
@@ -1733,7 +1720,7 @@ fn normalize_color(s : String) -> String {
 /// Returns a count map of class-name -> frequency inside the given
 /// (already BOM-stripped) label JSON text.
 fn collect_classes_from_text(text : String) -> Map[String, Int] {
-  let counts : Map[String, Int] = Map::new(capacity=16)
+  let counts : Map[String, Int] = Map([])
   // Simple scan: find every `"type":"..."` occurrence. Avoids a full JSON
   // parse for speed — the on-disk schema is small.
   let needle = "\"type\""
@@ -2072,32 +2059,6 @@ fn find_key(s : String, from : Int, needle : String) -> Int? {
 }
 
 ///|
-/// After `from`, find the next JSON string literal and return
-/// `(start, end)` indices excluding the surrounding quotes.
-fn find_quoted_string(s : String, from : Int) -> (Int, Int)? {
-  let n = s.length()
-  let mut i = from
-  while i < n && s[i] != '"' {
-    i = i + 1
-  }
-  if i >= n {
-    return None
-  }
-  let start = i + 1
-  let mut j = start
-  // JSON string: no escaped quotes inside for our use (codec_type, codec_name
-  // are simple ASCII). ffprobe does not emit escaped quotes in these fields.
-  while j < n && s[j] != '"' {
-    j = j + 1
-  }
-  if j > n {
-    None
-  } else {
-    Some((start, j))
-  }
-}
-
-///|
 /// Find `"key": "<value>"` and return `value` (without quotes).
 fn find_quoted_string_value(s : String, key : String) -> String? {
   let n = s.length()
@@ -2284,51 +2245,6 @@ fn parse_double_text(s : String) -> Double {
 }
 
 ///|
-/// Parse a positive double (integer or simple decimal) from a UTF-8
-/// byte view. Sufficient for durations like "12.345" — we don't need
-/// scientific notation for ffprobe output.
-fn parse_double_bytes(bytes : Bytes) -> Double {
-  let n = bytes.length()
-  let mut int_part = 0.0
-  let mut frac = 0.0
-  let mut frac_div = 1.0
-  let mut in_frac = false
-  let mut seen_digit = false
-  for i in 0..<n {
-    let c = bytes[i]
-    if c == b'.' {
-      in_frac = true
-      continue
-    }
-    if c < b'0' || c > b'9' {
-      // Stop at the first non-digit after a number. ffprobe emits
-      // "12.345000" for the duration — trailing zeros are fine.
-      if seen_digit {
-        break
-      } else {
-        continue
-      }
-    }
-    seen_digit = true
-    let d = (c - b'0').to_double()
-    if in_frac {
-      frac = frac * 10.0 + d
-      frac_div = frac_div * 10.0
-    } else {
-      int_part = int_part * 10.0 + d
-    }
-  }
-  if !seen_digit {
-    return 0.0
-  }
-  if in_frac {
-    int_part + frac / frac_div
-  } else {
-    int_part
-  }
-}
-
-///|
 /// Cheap approximation of the current Unix time in milliseconds. We
 /// don't need accuracy — the value only feeds the temp-file name.
 async fn now_millis_unix() -> Int {
@@ -2341,7 +2257,7 @@ async fn now_millis_unix() -> Int {
     return 0
   }
   let out = out_data.text() catch { _ => return 0 }
-  parse_int_bytes(trim_string(out).to_bytes())
+  parse_int_bytes(@encoding.encode(@encoding.UTF8, trim_string(out)))
 }
 
 ///|
