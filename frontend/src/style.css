@@ -191,6 +191,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-weight: 600;
 }
 .menubar-menu .muted-item { color: var(--muted); }
+.menubar-menu .menubar-hint { padding: 0 14px 6px; font-size: 11px; }
 .menubar-menu .menubar-sep {
   height: 1px;
   background: var(--line);

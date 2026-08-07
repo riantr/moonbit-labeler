@@ -154,6 +154,7 @@ const els = {
   autosaveSlider: $("#autosave-slider"),
   closePxLabel: $("#close-px-label"),
   autosaveLabel: $("#autosave-label"),
+  renderModeSelect: $("#render-mode-select"),
   // timeline (video mode)
   timeline: $("#timeline"),
   framePrev: $("#frame-prev"),
@@ -1415,6 +1416,31 @@ function setupMenubar() {
   initSlider(els.opacitySlider, null, "annotationOpacity", (v) => `${Math.round(v * 100)}%`);
   initSlider(els.closeRadiusSlider, els.closePxLabel, "polygonClosePx");
   initSlider(els.autosaveSlider, els.autosaveLabel, "autosaveMs");
+
+  // Render-mode select. Switches the image load path between the
+  // native <img> renderer and the mizchi backend round-trip. Triggers
+  // a re-load of the current image so the change is visible
+  // immediately. localStorage is unavailable on proton://app so
+  // settings don't persist across runs in production — but the URL
+  // query `?mode=mizchi` still works in dev mode.
+  if (els.renderModeSelect) {
+    els.renderModeSelect.value = settings.imageRenderMode || "native";
+    els.renderModeSelect.addEventListener("change", () => {
+      const v = els.renderModeSelect.value;
+      if (v !== "native" && v !== "mizchi") return;
+      settings.imageRenderMode = v;
+      persistSettings();
+      if (state.images && state.images.length > 0 && state.currentIndex >= 0) {
+        flashHint(
+          v === "mizchi"
+            ? "已切换到 mizchi 后端解码,正在重新加载..."
+            : "已切换到原生 img 渲染,正在重新加载...",
+          "info",
+        );
+        selectImage(state.currentIndex);
+      }
+    });
+  }
 
   applySettings();
 }

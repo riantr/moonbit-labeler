@@ -90,6 +90,17 @@
               <input id="autosave-slider" type="range" min="100" max="3000" step="100" value="600" />
             </li>
             <li class="menubar-sep"></li>
+            <li class="menubar-pad">
+              <label class="menubar-label">图像渲染模式</label>
+              <select id="render-mode-select">
+                <option value="native">原生 (浏览器 img)</option>
+                <option value="mizchi">mizchi 后端解码</option>
+              </select>
+            </li>
+            <li class="menubar-pad menubar-hint">
+              <span class="muted-item">切换后会自动重新加载当前图片</span>
+            </li>
+            <li class="menubar-sep"></li>
             <li role="menuitem" data-action="save-classes">储存类别...</li>
             <li role="menuitem" data-action="load-classes">载入类别</li>
             <li role="menuitem" data-action="load-classes-from-file">从文件载入类别...</li>
