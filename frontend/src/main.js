@@ -99,6 +99,7 @@ const state = {
   saving: false,
   saveError: null,
   history: [],
+  redoStack: [],
   // Image mapping
   imgNatural: { w: 0, h: 0 },
   imgDisplay: { w: 0, h: 0 },
@@ -145,6 +146,7 @@ const els = {
   dirtyBadge: $("#dirty-badge"),
   saveBtn: $("#save-btn"),
   undoBtn: $("#undo-btn"),
+  redoBtn: $("#redo-btn"),
   deleteBtn: $("#delete-btn"),
   // menubar
   menubar: $("#menubar"),
@@ -490,6 +492,7 @@ function loadLabelFor(item, opts = {}) {
   state.labelPath = "";
   state.loadedFromDisk = false;
   state.history = [];
+  state.redoStack = [];
   state.dirty = false;
   // Reuse the same selectToken as the image path so a fast next/prev
   // cancels both legs in lock-step. Fall back to loadToken for callers
@@ -707,8 +710,20 @@ let saveTimer = null;
 
 function pushHistory() {
   // structuredClone is the modern way to deep-copy without the JSON round-trip.
+  // We cap at 50 entries — about 30s of fast drawing. Any new operation
+  // also clears the redo stack: redo is only meaningful for the
+  // "linear" history branch, not a branching tree.
   state.history.push(structuredClone(state.label));
   if (state.history.length > 50) state.history.shift();
+  state.redoStack = [];
+  updateUndoRedoButtons();
+}
+
+function updateUndoRedoButtons() {
+  // Cheap UI hint: enable/disable the toolbar undo/redo buttons. The
+  // keyboard shortcuts still work even when the buttons are hidden.
+  if (els.undoBtn) els.undoBtn.disabled = state.history.length === 0;
+  if (els.redoBtn) els.redoBtn.disabled = state.redoStack.length === 0;
 }
 
 function markDirty() {
@@ -721,12 +736,34 @@ function markDirty() {
 
 function undo() {
   if (state.history.length === 0) return;
+  // Push the current state onto the redo stack so redo() can put it
+  // back. Symmetric to redo() below.
+  state.redoStack.push(structuredClone(state.label));
   const prev = state.history.pop();
   state.label = prev;
   state.dirty = true;
   updateDirtyBadge();
   requestAnimationFrame(() => renderAnnotations());
   updateDeleteBtn();
+  updateUndoRedoButtons();
+  if (state.labelPath) {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushSave, settings.autosaveMs);
+  }
+}
+
+function redo() {
+  if (state.redoStack.length === 0) return;
+  // Mirror of undo(). The current state goes back onto the undo stack
+  // so undo() can return to it.
+  state.history.push(structuredClone(state.label));
+  const next = state.redoStack.pop();
+  state.label = next;
+  state.dirty = true;
+  updateDirtyBadge();
+  requestAnimationFrame(() => renderAnnotations());
+  updateDeleteBtn();
+  updateUndoRedoButtons();
   if (state.labelPath) {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(flushSave, settings.autosaveMs);
@@ -1145,6 +1182,7 @@ function bindToolbar() {
     }
   });
   els.undoBtn.addEventListener("click", undo);
+  els.redoBtn.addEventListener("click", redo);
   els.deleteBtn.addEventListener("click", deleteSelected);
   els.saveBtn.addEventListener("click", () => flushSave());
   if (els.browseBtn) els.browseBtn.addEventListener("click", browseFolder);
@@ -1158,6 +1196,7 @@ function bindToolbar() {
   });
   if (els.frameCopyNext) els.frameCopyNext.addEventListener("click", () => videoController?.copyFrameToNext());
   updateDeleteBtn();
+  updateUndoRedoButtons();
 }
 
 async function browseFolder() {
@@ -1197,6 +1236,13 @@ function bindEvents() {
     if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && (ev.key === "z" || ev.key === "Z")) {
       ev.preventDefault(); undo(); return;
+    }
+    // Redo: Ctrl+Y (Windows convention) or Ctrl+Shift+Z (Mac/Linux).
+    if ((ev.ctrlKey || ev.metaKey) && (ev.key === "y" || ev.key === "Y")) {
+      ev.preventDefault(); redo(); return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && (ev.key === "z" || ev.key === "Z")) {
+      ev.preventDefault(); redo(); return;
     }
     if ((ev.ctrlKey || ev.metaKey) && (ev.key === "s" || ev.key === "S")) {
       ev.preventDefault(); flushSave(); return;
@@ -1475,9 +1521,7 @@ async function runMenuAction(action) {
     case "undo":
       undo(); break;
     case "redo":
-      // redo stack not implemented yet
-      flashHint("重做 (Ctrl+Y) 还没实现 —— 多步撤销用 Ctrl+Z 即可", "info");
-      break;
+      redo(); break;
     case "delete-selected":
       deleteSelected(); break;
     case "clear-all":
@@ -1584,6 +1628,72 @@ async function runMenuAction(action) {
       break;
     case "add-prefix":
     case "add-suffix":
+    case "remove-prefix":
+    case "remove-suffix": {
+      // Batch-rewrite the `type` field of every annotation on the
+      // current image. Add keeps the operation idempotent (skips
+      // types that already start with the prefix). Remove only
+      // strips the first matching prefix/suffix.
+      if (!state.label || !state.label.infos || state.label.infos.length === 0) {
+        flashHint("当前图没有标注可改", "info");
+        break;
+      }
+      const op =
+        action === "add-prefix" ? "add" :
+        action === "add-suffix" ? "add" : "remove";
+      const where = action.endsWith("prefix") ? "prefix" : "suffix";
+      const def = op === "add"
+        ? (where === "prefix" ? "cutter_" : "_v1")
+        : (where === "prefix" ? "cutter_" : "_v1");
+      const raw = window.prompt(
+        op === "add"
+          ? `给当前图所有标注的 type 字段添加${where === "prefix" ? "前缀" : "后缀"}（不含分隔符，例如 ${def}）:`
+          : `从当前图所有标注的 type 字段移除${where === "prefix" ? "前缀" : "后缀"}（要精确匹配，例如 ${def}）:`,
+        def,
+      );
+      if (raw === null) break;
+      const token = raw.trim();
+      if (!token) {
+        flashHint("输入为空，未修改", "info");
+        break;
+      }
+      let changed = 0;
+      const next = state.label.infos.map((info) => {
+        if (!info || typeof info.type !== "string") return info;
+        let t = info.type;
+        if (op === "add") {
+          if (where === "prefix" && !t.startsWith(token)) {
+            t = token + t;
+            changed += 1;
+          } else if (where === "suffix" && !t.endsWith(token)) {
+            t = t + token;
+            changed += 1;
+          }
+        } else {
+          // remove
+          if (where === "prefix" && t.startsWith(token)) {
+            t = t.slice(token.length);
+            changed += 1;
+          } else if (where === "suffix" && t.endsWith(token)) {
+            t = t.slice(0, t.length - token.length);
+            changed += 1;
+          }
+        }
+        return { ...info, type: t };
+      });
+      if (changed === 0) {
+        flashHint("没有标注需要修改（已全部匹配）", "info");
+        break;
+      }
+      pushHistory();
+      state.label = { ...state.label, infos: next };
+      markDirty();
+      flashHint(
+        `已${op === "add" ? "添加" : "移除"} ${where === "prefix" ? "前缀" : "后缀"} "${token}"（${changed} 处）`,
+        "ok",
+      );
+      break;
+    }
     case "open-devtools":
       flashHint(`"${action}" 还在路上 —— 标记 TODO`, "info");
       break;

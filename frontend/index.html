@@ -112,8 +112,10 @@
           <button class="menubar-trigger" type="button" aria-haspopup="true" aria-expanded="false">工具</button>
           <ul class="menubar-menu" role="menu">
             <li role="menuitem" data-action="rescan-classes">重新扫描类别</li>
-            <li role="menuitem" data-action="add-prefix" class="muted-item">添加前缀...</li>
-            <li role="menuitem" data-action="add-suffix" class="muted-item">添加后缀...</li>
+            <li role="menuitem" data-action="add-prefix">添加前缀...</li>
+            <li role="menuitem" data-action="add-suffix">添加后缀...</li>
+            <li role="menuitem" data-action="remove-prefix">移除前缀...</li>
+            <li role="menuitem" data-action="remove-suffix">移除后缀...</li>
             <li class="menubar-sep"></li>
             <li role="menuitem" data-action="open-devtools" class="muted-item">开发者工具</li>
           </ul>
@@ -154,7 +156,8 @@
               spellcheck="false"
             />
             <div class="toolbar-spacer"></div>
-            <button id="undo-btn" class="ghost" title="撤销 (Ctrl+Z)">↶ 撤销</button>
+            <button id="undo-btn" class="ghost" title="撤销 (Ctrl+Z)" disabled>↶ 撤销</button>
+            <button id="redo-btn" class="ghost" title="重做 (Ctrl+Y)" disabled>↷ 重做</button>
             <button id="delete-btn" class="ghost danger" title="删除选中 (Delete)" disabled>🗑 删除</button>
             <span id="dirty-badge" class="dirty-badge"></span>
             <button id="save-btn" class="primary small" title="立即保存">保存</button>
