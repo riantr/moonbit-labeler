@@ -6,7 +6,7 @@ import {
   "moonbitlang/x/encoding",
   "justjavac/proton/command" @proton_command,
   "justjavac/proton/extension" @proton_extension,
-  "mizchi/image",
+  "buildliming/image",
 }
 
 supported_targets = "native"
