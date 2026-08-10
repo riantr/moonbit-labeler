@@ -1,16 +1,20 @@
-// Local vendored copy of buildliming/moonbit_image — a pure-MoonBit
-// image decoder covering BMP / QOI / TGA / PNG / GIF / JPEG. The
-// upstream package publishes as `shunge/image` on the moon registry
-// but the network here can't reach it, so we bundle the source for
-// reproducibility. Original copyright (c) 2025 lws — MIT license.
+// Local vendored copy of buildliming/moonbit_image, a pure-MoonBit
+// image decoder covering BMP / QOI / TGA / PNG / GIF / JPEG. Upstream
+// publishes as `shunge/image` on the moon registry but the network
+// here cannot reach it, so we bundle the source for reproducibility.
+// Original copyright (c) 2025 lws, MIT license.
 //
 // Key API surface used by the labeler extension:
-//   - detect_format(data) -> ImageFormat?    // already exposed via Image::decode
 //   - decode(data)         -> Image raise   // one-call entry point
 //   - decode_*             -> Image raise   // per-format decoders
 //   - image_dimensions(data) -> (w, h, fmt)
-//   - to_rgba8(self)       -> Image         // cheap (bulk-loop) format conversion
-//   - resize_nearest/bilinear(self, w, h) -> Image
-//   - encode(img, format)  -> Bytes         // only BMP / QOI write paths
+//   - Image::to_rgba8      -> Image         // cheap format conversion
+//   - Image::resize_nearest/bilinear(self, w, h) -> Image
+//   - encode_bmp / encode_qoi  -> Bytes
 // Image struct: { width, height, format : PixelFormat, data : Bytes }
-// PixelFormat: Gray8 / GrayA8 / RGB8 / RGBA8 (after to_rgba8() always RGBA8).
+// PixelFormat: Gray8 / GrayA8 / RGB8 / RGBA8.
+
+import {
+}
+
+supported_targets = "native"

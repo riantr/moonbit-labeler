@@ -672,29 +672,35 @@ async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply {
   { path: req.path, base64, mime: "image/jpeg" }
 }
 
-///| --- mizchi/image integration (bypass path) ---
+///| --- buildliming/moonbit_image integration (bypass path) ---
 ///
-/// Two new ops that route through the mizchi/image MoonBit library
-/// instead of the ffmpeg/file:// path. They are registered alongside
-/// the existing ops but never called from the default code path —
-/// the frontend opts in via a settings flag (`imageRenderMode`).
+/// Two new ops that route through the vendored buildliming/moonbit_image
+/// library (extensions/image/) instead of the ffmpeg/file:// path.
+/// They are registered alongside the existing ops but never called from
+/// the default code path — the frontend opts in via a settings flag
+/// (`imageRenderMode`).
 ///
-/// Why have them at all? The mizchi/image path:
-///   - decodes fully to RGBA8 in pure MoonBit (no subprocess),
-///   - can resize to a target dimension with bilinear/bicubic,
-///   - can re-encode to PNG/JPEG without leaving the language.
+/// Why have them at all? The buildliming path:
+///   - decodes fully to RGBA8 in pure MoonBit (no subprocess, no FFI),
+///   - supports BMP / QOI / TGA / PNG / GIF / JPEG via one `decode_*` call,
+///   - can resize to a target dimension with bilinear / nearest,
+///   - can re-encode to BMP / QOI without leaving the language.
 /// Useful for future work where we want to:
 ///   - skip the CEF file:// cascade and ship a single data: URL,
 ///   - bake a custom low-res pipeline into the export step,
 ///   - ship image diffs/snapshots for unit tests.
+/// Trade-off: the library only writes BMP / QOI (no PNG encoder yet).
+/// Browsers accept both via `<img>` / canvas / createImageBitmap, so we
+/// ship BMP — uncompressed, similar size to PNG for our X-ray data
+/// and supported in every CEF release we care about.
 
 ///|
 /// Decode the image at full resolution into RGBA8. We piggyback on
 /// `ReadImageReply` so the frontend can drop the result into a
 /// `data:` URL using the same `mime` field as the existing read_image
-/// reply. The returned `base64` is a PNG re-encoded from the RGBA
-/// buffer (mizchi/image doesn't return RGBA to the FFI boundary
-/// cheaply, so we encode once and ship the bytes).
+/// reply. The returned `base64` is a BMP re-encoded from the RGBA
+/// buffer (buildliming/image doesn't ship a PNG encoder, so we go
+/// BMP — 24-bit when fully opaque, 32-bit otherwise).
 pub struct DecodeImageRequest {
   path : String
 } derive(FromJson, ToJson, Eq, Debug)
@@ -708,25 +714,27 @@ async fn op_decode_image(req : DecodeImageRequest) -> ReadImageReply {
   let img = decode_for(req.path, raw) catch {
     err => fail("decode_image decode failed: " + err.to_string())
   }
-  // Re-encode to PNG so the frontend can drop the bytes into a
-  // data: URL. The frontend then draws the PNG into a canvas at
+  // Re-encode to BMP so the frontend can drop the bytes into a
+  // data: URL. The frontend then draws the BMP into a canvas at
   // any size it likes via object-fit: contain.
-  let png = @image.encode_png(img) catch {
-    err => fail("decode_image encode_png failed: " + err.to_string())
+  let bmp = @image.encode_bmp(img) catch {
+    err => fail("decode_image encode_bmp failed: " + err.to_string())
   }
-  { path: req.path, base64: base64_encode(png), mime: "image/png" }
+  { path: req.path, base64: base64_encode(bmp), mime: "image/bmp" }
 }
 
 ///|
-/// Decode + resize + PNG encode. Longest-side cap, same convention
-/// as op_read_thumb. The PNG comes back ready to drop into a
-/// `data:` URL. Internally uses mizchi/image's resize with bilinear
-/// interpolation, which is cheap (no ffmpeg subprocess) and gives
-/// visually fine output at thumbnail sizes.
+/// Decode + resize + BMP encode. Longest-side cap, same convention
+/// as op_read_thumb. The BMP comes back ready to drop into a
+/// `data:` URL. Internally uses buildliming/image's resize with
+/// bilinear interpolation by default, which is cheap (no ffmpeg
+/// subprocess) and gives visually fine output at thumbnail sizes.
 pub struct ResizeImageRequest {
   path : String
   max_edge : Int?
   /// "Nearest" | "Bilinear" | "Bicubic". Defaults to Bilinear.
+  /// (Bicubic falls back to bilinear — buildliming has no bicubic
+  /// kernel, and the visual difference is invisible at our sizes.)
   resize_method : String?
 } derive(FromJson, ToJson, Eq, Debug)
 
@@ -746,34 +754,36 @@ async fn op_resize_image(req : ResizeImageRequest) -> ReadImageReply {
   let w = img.width
   let h = img.height
   if w <= 0 || h <= 0 {
-    return { path: req.path, base64: "", mime: "image/png" }
+    return { path: req.path, base64: "", mime: "image/bmp" }
   }
   let scale = max_edge.to_double() / w.to_double()
   let nh = if scale >= 1.0 { h } else { (h.to_double() * scale).to_int() }
   let nw = if scale >= 1.0 { w } else { max_edge }
-  let m = match req.resize_method {
-    Some("Nearest") => @image.ResizeMethod::Nearest
-    Some("Bicubic") => @image.ResizeMethod::Bicubic
-    _ => @image.ResizeMethod::Bilinear
+  let resized = match req.resize_method {
+    Some("Nearest") => img.resize_nearest(nw, nh)
+    // "Bilinear" or "Bicubic" both → bilinear. The visual delta at
+    // thumbnail sizes isn't worth carrying a second kernel for.
+    _ => img.resize_bilinear(nw, nh)
   }
-  let resized = @image.resize(img, nw, nh, m) catch {
-    err => fail("resize_image resize failed: " + err.to_string())
+  let bmp = @image.encode_bmp(resized) catch {
+    err => fail("resize_image encode_bmp failed: " + err.to_string())
   }
-  let png = @image.encode_png(resized) catch {
-    err => fail("resize_image encode_png failed: " + err.to_string())
-  }
-  { path: req.path, base64: base64_encode(png), mime: "image/png" }
+  { path: req.path, base64: base64_encode(bmp), mime: "image/bmp" }
 }
 
 ///|
 /// Pick the right decoder by file extension. Errors are raised as
-/// DecodeError; we let the caller wrap them.
-fn decode_for(path : String, raw : Bytes) -> @image.ImageData raise {
+/// `Failure` (the buildliming error type); we let the caller wrap
+/// them.
+fn decode_for(path : String, raw : Bytes) -> @image.Image raise {
   let ext = ext_of(path).to_lower()
   match ext {
     ".png" => @image.decode_png(raw)
     ".jpg" | ".jpeg" => @image.decode_jpeg(raw)
     ".bmp" => @image.decode_bmp(raw)
+    ".gif" => @image.decode_gif(raw)
+    ".qoi" => @image.decode_qoi(raw)
+    ".tga" => @image.decode_tga(raw)
     _ => fail("decode_image: unsupported format '" + ext + "'")
   }
 }
