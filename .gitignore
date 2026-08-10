@@ -18,3 +18,7 @@ data/Label*/
 /moonbit-labeler.exe
 # Loose type-list files dropped at the repo root by mistake.
 /types.txt
+# Temporary CDP smoke-test scripts (debugging helpers, not source).
+.tmp-*.mjs
+.tmp-*
+tmp_force_check/

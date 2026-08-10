@@ -1223,6 +1223,66 @@ async function browseFolder() {
   }
 }
 
+// ============================================================
+// runExportFolder — drives the VOC Pascal / YOLO TXT export menu
+// items. We pick a destination folder, then hand the currently
+// loaded image folder + dest to the backend op. The backend walks
+// the image/label pairs and writes one output per labelled image
+// (plus `classes.txt` for YOLO). We surface the per-image /
+// per-class counts in a status hint so the user can spot a half-
+// finished export at a glance.
+// ============================================================
+async function runExportFolder(kind) {
+  if (!state.folder) {
+    flashHint("请先载入图片文件夹再导出", "info");
+    return;
+  }
+  const whichName = kind === "voc" ? "Pascal VOC XML" : "YOLO TXT";
+  let pick;
+  try {
+    pick = await invokeLabeler("pick_folder", {
+      title: `选择 ${whichName} 输出文件夹`,
+      initial: state.folder || null,
+    });
+  } catch (err) {
+    console.error("pick_folder (export) failed:", err);
+    flashHint(`选择输出文件夹失败: ${err}`, "info");
+    return;
+  }
+  if (pick?.cancelled || !pick?.path) {
+    flashHint("已取消", "info");
+    return;
+  }
+  const op = kind === "voc" ? "export_voc_folder" : "export_yolo_folder";
+  flashHint(`正在导出 ${whichName} 到 ${pick.path} ...`, "info");
+  let reply;
+  try {
+    reply = await invokeLabeler(op, {
+      image_path: state.folder,
+      dest_folder: pick.path,
+    });
+  } catch (err) {
+    console.error(`${op} failed:`, err);
+    flashHint(`导出失败: ${err}`, "info");
+    return;
+  }
+  if (!reply) {
+    flashHint("导出失败:后端无返回", "info");
+    return;
+  }
+  const head = `${whichName} 导出完成`;
+  const tail = reply.skipped_count > 0
+    ? `，${reply.skipped_count} 个被跳过（看后端日志）`
+    : "";
+  const classesInfo = reply.classes?.length
+    ? `，${reply.classes.length} 个类别：${reply.classes.join(", ")}`
+    : "";
+  flashHint(
+    `${head}（已写入 ${reply.exported_count} 个文件到 ${reply.dest_folder}${classesInfo}${tail}）`,
+    reply.exported_count > 0 ? "ok" : "info",
+  );
+}
+
 function bindEvents() {
   bindToolbar();
   els.folderForm.addEventListener("submit", (ev) => {
@@ -1511,9 +1571,13 @@ async function runMenuAction(action) {
       flushSave();
       break;
     case "save-all":
-    case "export-voc":
-    case "export-yolo":
       flashHint(`"${action}" 还在路上 —— 标记 TODO`, "info");
+      break;
+    case "export-voc":
+      await runExportFolder("voc");
+      break;
+    case "export-yolo":
+      await runExportFolder("yolo");
       break;
     case "quit":
       window.close();

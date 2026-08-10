@@ -1,4 +1,4 @@
-///| ---------------------------------------------------------------
+﻿///| ---------------------------------------------------------------
 /// MoonBit Labeler — backend extension
 ///
 /// Exposes filesystem operations the frontend needs to:
@@ -285,6 +285,29 @@ pub struct ReadVideoFrameReply {
   width : Int
   height : Int
   ok : Bool
+} derive(ToJson, Eq, Debug)
+
+///|
+/// One annotation with a normalised `(shape, type, points)` triple.
+/// Coordinates are image pixels (XY order). Used by the VOC/YOLO
+/// exporters.
+pub struct ExportAnn {
+  shape : String
+  type_ : String
+  points : Array[(Double, Double)]
+} derive(ToJson, Eq, Debug)
+
+///|
+/// Result of `export_voc_folder` / `export_yolo_folder`. The
+/// `classes` field is the ordered list of distinct class names that
+/// were written into `classes.txt` (YOLO) or into `<name>` elements
+/// (VOC). The order matches `load_classes` so it stays stable across
+/// export calls.
+pub struct ExportReply {
+  dest_folder : String
+  exported_count : Int
+  skipped_count : Int
+  classes : Array[String]
 } derive(ToJson, Eq, Debug)
 
 ///|
@@ -2393,6 +2416,1029 @@ fn trim_string(s : String) -> String {
   }
 }
 
+///| --- export helpers (VOC Pascal / YOLO TXT) ---
+
+///|
+/// Read image dimensions from a JPEG or PNG header. Returns `(0, 0)`
+/// for unsupported formats or on parse failure. Cheap: only the first
+/// few KB are inspected, never the full file.
+async fn read_image_dims(path : String) -> (Int, Int) {
+  if path == "" {
+    return (0, 0)
+  }
+  let data = @fs.read_file(path) catch {
+    _ => return (0, 0)
+  }
+  let bytes = data.binary()
+  if bytes.length() < 24 {
+    return (0, 0)
+  }
+  // PNG signature: 89 50 4E 47 0D 0A 1A 0A, then IHDR chunk.
+  // width: bytes[16..20], height: bytes[20..24] (big-endian).
+  if bytes[0] == b'\x89' &&
+    bytes[1] == b'P' &&
+    bytes[2] == b'N' &&
+    bytes[3] == b'G' {
+    let w = (bytes[16].to_int() << 24) |
+      (bytes[17].to_int() << 16) |
+      (bytes[18].to_int() << 8) |
+      bytes[19].to_int()
+    let h = (bytes[20].to_int() << 24) |
+      (bytes[21].to_int() << 16) |
+      (bytes[22].to_int() << 8) |
+      bytes[23].to_int()
+    return (w, h)
+  }
+  // JPEG: scan markers until we hit an SOFn. After the marker (1 byte)
+  // + segment length (2 bytes), the next byte is sample precision, then
+  // height (2 bytes), then width (2 bytes).
+  if bytes[0] == b'\xFF' && bytes[1] == b'\xD8' {
+    let n = bytes.length()
+    let mut i = 2
+    while i + 9 < n {
+      // Skip non-marker padding bytes until we find a 0xFF marker.
+      if bytes[i] != b'\xFF' {
+        i = i + 1
+        continue
+      }
+      // Skip duplicate 0xFF padding bytes (e.g. FF FF C0 -> seg at C0).
+      while i < n && bytes[i] == b'\xFF' {
+        i = i + 1
+      }
+      if i >= n {
+        break
+      }
+      let marker = bytes[i].to_int()
+      i = i + 1
+      // Markers without payload (D8..D9, D0..D7 reset, 00/01 fill).
+      if marker == 0xD8 ||
+        marker == 0xD9 ||
+        (marker >= 0xD0 && marker <= 0xD7) ||
+        marker == 0x01 ||
+        marker == 0x00 {
+        continue
+      }
+      if i + 1 >= n {
+        return (0, 0)
+      }
+      let seg_len = (bytes[i].to_int() << 8) | bytes[i + 1].to_int()
+      // SOFn family: 0xC0..0xCF minus the DAC/dht-specific reserved
+      // marks. C0/C1/C2/C3 are baseline/extended/progressive/lossless
+      // and that's what most files in the wild use.
+      let is_sof = marker == 0xC0 ||
+        marker == 0xC1 ||
+        marker == 0xC2 ||
+        marker == 0xC3 ||
+        (marker >= 0xC5 && marker <= 0xC7) ||
+        (marker >= 0xC9 && marker <= 0xCB) ||
+        (marker >= 0xCD && marker <= 0xCF)
+      if is_sof && i + 7 < n {
+        let h = (bytes[i + 3].to_int() << 8) | bytes[i + 4].to_int()
+        let w = (bytes[i + 5].to_int() << 8) | bytes[i + 6].to_int()
+        return (w, h)
+      }
+      if seg_len < 2 {
+        return (0, 0)
+      }
+      i = i + seg_len
+    }
+  }
+  (0, 0)
+}
+
+///|
+/// Look for `"key": <value>` in a JSON text, scanning only after
+/// offset `from`. Returns the index of the value's first byte (right
+/// after `:` and any whitespace) or `-1` if not found. Hand-rolled to
+/// stay consistent with the other light parsers in this file.
+fn find_value_after_key(s : String, from : Int, key : String) -> Int {
+  let n = s.length()
+  let key_len = key.length()
+  let mut i = from
+  while i + key_len + 4 <= n {
+    if s[i] == '"' {
+      let mut ok = true
+      let mut k = 0
+      while k < key_len {
+        if s[i + 1 + k] != key[k] {
+          ok = false
+          break
+        }
+        k = k + 1
+      }
+      if ok && s[i + 1 + key_len] == '"' {
+        let mut j = i + 2 + key_len
+        while j < n &&
+              (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r') {
+          j = j + 1
+        }
+        if j < n && s[j] == ':' {
+          j = j + 1
+          while j < n &&
+                (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r') {
+            j = j + 1
+          }
+          return j
+        }
+      }
+    }
+    i = i + 1
+  }
+  -1
+}
+
+///|
+/// Read a JSON string literal starting at `s[idx]` (which must be `"`).
+/// Returns the parsed string (without surrounding quotes) and advances
+/// `idx` past the closing quote. Supports `\"`, `\\`, `\/`, `\n`, `\r`,
+/// `\t`, `\b`, `\f`, `\uXXXX` — more than we need for label JSON but
+/// cheap to include.
+fn read_json_string(s : String, idx : Int) -> (String, Int)? {
+  let n = s.length()
+  if idx >= n || s[idx] != '"' {
+    return None
+  }
+  let mut j = idx + 1
+  let buf = StringBuilder::new(size_hint=16)
+  while j < n {
+    let c = s[j]
+    if c == '\\' {
+      if j + 1 >= n {
+        return None
+      }
+      let e = Int::unsafe_to_char(s[j + 1].to_int())
+      if e == '"' {
+        buf.write_char('"')
+      } else if e == '\\' {
+        buf.write_char('\\')
+      } else if e == '/' {
+        buf.write_char('/')
+      } else if e == 'n' {
+        buf.write_char('\n')
+      } else if e == 'r' {
+        buf.write_char('\r')
+      } else if e == 't' {
+        buf.write_char('\t')
+      } else if e == 'b' {
+        buf.write_char('\b')
+      } else if e == 'f' {
+        buf.write_char('\u000C')
+      } else if e == 'u' {
+        // \uXXXX — keep the literal escape so the caller doesn't see
+        // a charset-converted char. Our annotations don't use any.
+        buf.write_string("\\u")
+      } else {
+        buf.write_char(e)
+      }
+      j = j + 2
+      continue
+    }
+    if c == '"' {
+      return Some((buf.to_string(), j + 1))
+    }
+    buf.write_char(Int::unsafe_to_char(c.to_int()))
+    j = j + 1
+  }
+  None
+}
+
+///|
+/// Parse one entry from the `infos` array starting at `s[idx]`
+/// (which must be `{`). Returns the parsed annotation and the index
+/// right after the closing `}`. Returns `None` if the entry is not
+/// a recognizable object — caller skips it.
+fn parse_one_info(s : String, idx : Int) -> (ExportAnn, Int)? {
+  let n = s.length()
+  if idx >= n || s[idx] != '{' {
+    return None
+  }
+  // Find the matching '}'. Naive but cheap — labels don't have nested
+  // braces inside `infos` entries except potentially in `"shape"` keys
+  // which are just strings. Strings can't contain unescaped `"`, so a
+  // state-aware scan is enough.
+  let mut depth = 0
+  let mut j = idx
+  let mut in_str = false
+  let mut escape = false
+  while j < n {
+    let c = s[j]
+    if in_str {
+      if escape {
+        escape = false
+      } else if c == '\\' {
+        escape = true
+      } else if c == '"' {
+        in_str = false
+      }
+      j = j + 1
+      continue
+    }
+    if c == '"' {
+      in_str = true
+      j = j + 1
+      continue
+    }
+    if c == '{' {
+      depth = depth + 1
+    } else if c == '}' {
+      depth = depth - 1
+      if depth == 0 {
+        break
+      }
+    }
+    j = j + 1
+  }
+  if depth != 0 {
+    return None
+  }
+  let entry_end = j
+  let entry_text = s[idx:entry_end + 1].to_owned()
+  // Extract `type`, `shape`, `points` from the entry text.
+  let type_pos = find_value_after_key(entry_text, 0, "type")
+  let shape_pos = find_value_after_key(entry_text, 0, "shape")
+  let points_pos = find_value_after_key(entry_text, 0, "points")
+  let type_str : String = match type_pos {
+    -1 => ""
+    p =>
+      match read_json_string(entry_text, p) {
+        Some((v, _)) => v
+        None => ""
+      }
+  }
+  if type_str.length() == 0 {
+    return None
+  }
+  let shape_str : String = match shape_pos {
+    -1 => ""
+    p =>
+      match read_json_string(entry_text, p) {
+        Some((v, _)) => v
+        None => ""
+      }
+  }
+  // `points` is either a string `"x,y;x,y;..."` or an array
+  // `[[x,y],[x,y],...]`. We look at the first non-whitespace byte
+  // right after `:` to decide.
+  let pts = match points_pos {
+    -1 => []
+    p => {
+      let mut k = p
+      while k < entry_text.length() &&
+            (entry_text[k] == ' ' ||
+             entry_text[k] == '\t' ||
+             entry_text[k] == '\n' ||
+             entry_text[k] == '\r') {
+        k = k + 1
+      }
+      if k < entry_text.length() && entry_text[k] == '"' {
+        // string form
+        match read_json_string(entry_text, k) {
+          Some((v, _)) => parse_points_string(v)
+          None => []
+        }
+      } else if k < entry_text.length() && entry_text[k] == '[' {
+        // array form — but it may be a string `[[x,y],...]` literally
+        // rather than a real nested array. Re-serialise by JSON-style
+        // scan: count brackets, find each [x,y] sub-array.
+        parse_points_array(entry_text, k)
+      } else {
+        []
+      }
+    }
+  }
+  if pts.length() == 0 {
+    return None
+  }
+  let resolved_shape = if shape_str.length() > 0 {
+    shape_str
+  } else if pts.length() == 1 {
+    "keypoint"
+  } else if pts.length() == 2 {
+    "rect"
+  } else {
+    "polygon"
+  }
+  Some(({ shape: resolved_shape, type_: type_str, points: pts }, entry_end + 1))
+}
+
+///|
+/// Parse `"x,y;x,y;..."` -> array of `(x, y)` doubles. Mirrors the
+/// legacy wire format used by the older C# tool.
+fn parse_points_string(s : String) -> Array[(Double, Double)] {
+  let out : Array[(Double, Double)] = []
+  let n = s.length()
+  let mut i = 0
+  while i < n {
+    let mut j = i
+    while j < n && s[j] != ';' {
+      j = j + 1
+    }
+    let mut k = i
+    while k < j && s[k] != ',' {
+      k = k + 1
+    }
+    if k < j {
+      let xs = s[i:k].to_owned()
+      let ys = s[k + 1:j].to_owned()
+      let x = parse_double_text(xs)
+      let y = parse_double_text(ys)
+      out.push((x, y))
+    }
+    if j >= n {
+      break
+    }
+    i = j + 1
+  }
+  out
+}
+
+///|
+/// Parse `[[x,y],[x,y],...]` starting at the opening `[`. We balance
+/// brackets and skip string contents. Each inner `[...]` becomes one
+/// `(x, y)` point.
+fn parse_points_array(s : String, start : Int) -> Array[(Double, Double)] {
+  let out : Array[(Double, Double)] = []
+  let n = s.length()
+  if start >= n || s[start] != '[' {
+    return out
+  }
+  // Skip the outer `[`. Then we look for every inner `[` pair until
+  // the matching outer `]`.
+  let mut i = start + 1
+  while i < n && s[i] != ']' {
+    // Skip whitespace + commas between entries.
+    while i < n && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == ',' || s[i] == '\r') {
+      i = i + 1
+    }
+    if i >= n || s[i] == ']' {
+      break
+    }
+    // Expect inner `[`.
+    if s[i] != '[' {
+      // Unexpected token — skip to next comma or close.
+      while i < n && s[i] != ',' && s[i] != ']' {
+        i = i + 1
+      }
+      continue
+    }
+    // Walk to matching `]` for this inner array, skipping string contents.
+    let entry_start = i + 1
+    let mut j = i + 1
+    let mut depth = 1
+    let mut in_str = false
+    let mut escape = false
+    while j < n && depth > 0 {
+      let cj = s[j]
+      if in_str {
+        if escape {
+          escape = false
+        } else if cj == '\\' {
+          escape = true
+        } else if cj == '"' {
+          in_str = false
+        }
+        j = j + 1
+        continue
+      }
+      if cj == '"' {
+        in_str = true
+        j = j + 1
+        continue
+      }
+      if cj == '[' {
+        depth = depth + 1
+      } else if cj == ']' {
+        depth = depth - 1
+        if depth == 0 {
+          break
+        }
+      }
+      j = j + 1
+    }
+    if depth != 0 {
+      // Unbalanced — bail out.
+      return out
+    }
+    // Extract content between entry_start and j (exclusive).
+    let inner = s[entry_start:j].to_owned()
+    // Trim leading/trailing whitespace.
+    let mut a = 0
+    let mut b = inner.length()
+    while a < b && (inner[a] == ' ' || inner[a] == '\t') {
+      a = a + 1
+    }
+    while b > a && (inner[b - 1] == ' ' || inner[b - 1] == '\t') {
+      b = b - 1
+    }
+    // Split at first comma.
+    let mut k = a
+    while k < b && inner[k] != ',' {
+      k = k + 1
+    }
+    if k < b {
+      let xs = inner[a:k].to_owned()
+      let ys = inner[k + 1:b].to_owned()
+      let xv = parse_double_text(xs)
+      let yv = parse_double_text(ys)
+      out.push((xv, yv))
+    }
+    i = j + 1
+  }
+  out
+}
+
+///|
+/// Parse the `infos` array of a label JSON file. Returns normalised
+/// `(shape, type, points)` triples — empty on any structural error so
+/// a single bad label can't kill an export run.
+fn parse_export_anns(text : String) -> Array[ExportAnn] {
+  let out : Array[ExportAnn] = []
+  // Strip UTF-8 BOM if present.
+  let trimmed = if text.length() > 0 &&
+    Int::unsafe_to_char(text[0].to_int()) == bom_char {
+    text[1:].to_owned()
+  } else {
+    text
+  }
+  let infos_pos = find_value_after_key(trimmed, 0, "infos")
+  if infos_pos < 0 {
+    return out
+  }
+  // infos must be an array — find the matching '['.
+  let mut j = infos_pos
+  while j < trimmed.length() && trimmed[j] != '[' {
+    j = j + 1
+  }
+  if j >= trimmed.length() {
+    return out
+  }
+  // Walk past the '[' looking for each '{'.
+  let mut i = j + 1
+  let n = trimmed.length()
+  while i < n {
+    let c = trimmed[i]
+    if c == ']' {
+      break
+    }
+    if c == '{' {
+      match parse_one_info(trimmed, i) {
+        Some((ann, next_i)) => {
+          out.push(ann)
+          i = next_i
+          continue
+        }
+        None => i = i + 1
+      }
+    } else {
+      i = i + 1
+    }
+  }
+  out
+}
+
+///|
+/// Compute the axis-aligned bbox `(xmin, ymin, xmax, ymax)` of a
+/// polygon's points. Coordinates are returned as `Double` so they can
+/// be either rounded to int or normalized to 0..1 by the caller.
+fn polygon_bbox(
+  pts : Array[(Double, Double)],
+) -> (Double, Double, Double, Double) {
+  let mut xmin : Double = 1.0e18
+  let mut ymin : Double = 1.0e18
+  let mut xmax : Double = -1.0e18
+  let mut ymax : Double = -1.0e18
+  for p in pts {
+    let (x, y) = p
+    if x < xmin {
+      xmin = x
+    }
+    if x > xmax {
+      xmax = x
+    }
+    if y < ymin {
+      ymin = y
+    }
+    if y > ymax {
+      ymax = y
+    }
+  }
+  (xmin, ymin, xmax, ymax)
+}
+
+///|
+/// XML-escape a string so it's safe to embed inside an element body
+/// or attribute value. We don't bother with `<![CDATA[…]]>` blocks —
+/// the C# reference uses plain `&lt; &gt; &amp; &quot; &apos;`
+/// escapes and that round-trips with every parser we care about.
+fn xml_escape(s : String) -> String {
+  let buf = StringBuilder::new(size_hint=s.length())
+  for c in s {
+    if c == '<' {
+      buf.write_string("&lt;")
+    } else if c == '>' {
+      buf.write_string("&gt;")
+    } else if c == '&' {
+      buf.write_string("&amp;")
+    } else if c == '"' {
+      buf.write_string("&quot;")
+    } else if c == '\'' {
+      buf.write_string("&apos;")
+    } else {
+      buf.write_char(c)
+    }
+  }
+  buf.to_string()
+}
+
+///|
+/// Round a positive double to the nearest integer (half-up).
+fn round_half_up(x : Double) -> Int {
+  let whole = x.to_int()
+  let frac = x - whole.to_double()
+  if frac >= 0.5 {
+    whole + 1
+  } else {
+    whole
+  }
+}
+
+///|
+/// Build the body of a Pascal VOC `.xml` file for one image. `width`
+/// and `height` are the image dimensions in pixels; each `info` is
+/// rendered as `<object><name>...</name><bndbox>...</bndbox></object>`.
+/// Keypoints are skipped (their 1-point bbox would be 0×0 and confuse
+/// every VOC loader).
+fn voc_xml_for(
+  folder : String,
+  filename : String,
+  width : Int,
+  height : Int,
+  anns : Array[ExportAnn],
+) -> String {
+  let buf = StringBuilder::new(size_hint=256 + anns.length() * 96)
+  buf.write_string("<annotation>\n")
+  buf.write_string("  <folder>")
+  buf.write_string(xml_escape(folder))
+  buf.write_string("</folder>\n   <filename>"  )
+  buf.write_string(xml_escape(filename))
+  buf.write_string("</filename>\n")
+
+  buf.write_string(
+    "  <source>\n    <database>MoonBitLabeler</database>\n  </source>\n",
+  )
+  buf.write_string("  <size>\n    <width>")
+  buf.write_string(width.to_string())
+  buf.write_string("</width>\n    <height>")
+  buf.write_string(height.to_string())
+  buf.write_string("</height>\n    <depth>3</depth>\n  </size>\n")
+  buf.write_string("  <segmented>0</segmented>\n")
+  for info in anns {
+    if info.shape == "keypoint" {
+      continue
+    }
+    let (xmin, ymin, xmax, ymax) = polygon_bbox(info.points)
+    let xn = if xmin < 0.0 {
+      0.0
+    } else if xmin > 99999.0 {
+      99999.0
+    } else {
+      xmin
+    }
+    let yn = if ymin < 0.0 {
+      0.0
+    } else if ymin > 99999.0 {
+      99999.0
+    } else {
+      ymin
+    }
+    let xx = if xmax < 0.0 {
+      0.0
+    } else if xmax > 99999.0 {
+      99999.0
+    } else {
+      xmax
+    }
+    let yx = if ymax < 0.0 {
+      0.0
+    } else if ymax > 99999.0 {
+      99999.0
+    } else {
+      ymax
+    }
+    buf.write_string("  <object>\n    <name>")
+    buf.write_string(xml_escape(info.type_))
+    buf.write_string("</name>\n    <pose>Unspecified</pose>\n")
+    buf.write_string("    <truncated>0</truncated>\n")
+    buf.write_string("    <difficult>0</difficult>\n")
+    buf.write_string("    <bndbox>\n      <xmin>")
+    buf.write_string(round_half_up(xn).to_string())
+    buf.write_string("</xmin>\n      <ymin>")
+    buf.write_string(round_half_up(yn).to_string())
+    buf.write_string("</ymin>\n      <xmax>")
+    buf.write_string(round_half_up(xx).to_string())
+    buf.write_string("</xmax>\n      <ymax>")
+    buf.write_string(round_half_up(yx).to_string())
+    buf.write_string("</ymax>\n    </bndbox>\n  </object>\n")
+  }
+  buf.write_string("</annotation>\n")
+  buf.to_string()
+}
+
+///|
+/// Build the body of one YOLO `.txt` file. Each annotation becomes a
+/// single line: `<class_id> <cx> <cy> <w> <h>` with each coordinate
+/// normalised to `[0, 1]` against the image dimensions. Empty output
+/// when the image has no qualifying boxes (a YOLO convention).
+fn yolo_txt_for(
+  class_ids : Map[String, Int],
+  anns : Array[ExportAnn],
+  width : Int,
+  height : Int,
+) -> String {
+  if width <= 0 || height <= 0 {
+    return ""
+  }
+  let buf = StringBuilder::new(size_hint=anns.length() * 32)
+  let w = width.to_double()
+  let h = height.to_double()
+  for info in anns {
+    if info.shape == "keypoint" {
+      continue
+    }
+    let cid = match class_ids.get(info.type_) {
+      Some(v) => v
+      None => continue
+    }
+    let (xmin, ymin, xmax, ymax) = polygon_bbox(info.points)
+    let bw = xmax - xmin
+    let bh = ymax - ymin
+    if bw <= 0.0 || bh <= 0.0 {
+      continue
+    }
+    let cx = (xmin + xmax) / 2.0 / w
+    let cy = (ymin + ymax) / 2.0 / h
+    let nw = bw / w
+    let nh = bh / h
+    buf.write_string(cid.to_string())
+    buf.write_char(' ')
+    buf.write_string(format_yolo_coord(cx))
+    buf.write_char(' ')
+    buf.write_string(format_yolo_coord(cy))
+    buf.write_char(' ')
+    buf.write_string(format_yolo_coord(nw))
+    buf.write_char(' ')
+    buf.write_string(format_yolo_coord(nh))
+    buf.write_char('\n')
+  }
+  buf.to_string()
+}
+
+///|
+/// Format a YOLO normalised coordinate with 6 fractional digits —
+/// enough resolution for sub-pixel boxes without bloating the file.
+fn format_yolo_coord(x : Double) -> String {
+  if x < 0.0 {
+    return "0.000000"
+  }
+  if x > 1.0 {
+    return "1.000000"
+  }
+  let whole = x.to_int()
+  let frac_d = (x - whole.to_double()) * 1_000_000.0
+  let frac_i = if frac_d < 0.0 { 0 } else { frac_d.to_int() }
+  pad_left_zeros(whole.to_string(), frac_i, 6)
+}
+
+///|
+/// Combine an integer part and a 6-digit fractional part into a YOLO
+/// coordinate. The frac must already be in `[0, 999_999]`; we left-
+/// pad it to the requested width.
+fn pad_left_zeros(whole : String, frac : Int, width : Int) -> String {
+  let frac_str = frac.to_string()
+  let n = width - frac_str.length()
+  let mut padded = frac_str
+  if n > 0 {
+    let mut k = 0
+    let buf = StringBuilder::new(size_hint=n)
+    while k < n {
+      buf.write_char('0')
+      k = k + 1
+    }
+    padded = buf.to_string() + frac_str
+  }
+  whole + "." + padded
+}
+
+///| --- export ops ---
+
+///|
+/// Look up the matching image filename (with extension) for a stem in
+/// `image_dir`. Returns "" if no candidate is found. The image may
+/// have any extension recognised by `default_image_extensions`; the
+/// search is case-insensitive on the extension.
+async fn find_image_filename(image_dir : String, stem : String) -> String {
+  let names = @fs.readdir(image_dir, include_hidden=false, sort=false) catch {
+    _ => []
+  }
+  for n in names {
+    let lname = lower(n)
+    if !is_image_ext(lname, default_image_extensions) {
+      continue
+    }
+    let (s, _) = split_stem_ext(n)
+    if s == stem {
+      return n
+    }
+  }
+  ""
+}
+
+///|
+/// Add `value` to `classes_ordered` if not already present (compare
+/// strings; helper used by both export drivers).
+fn dedup_push(classes_ordered : Array[String], value : String) -> Unit {
+  let mut has = false
+  for c in classes_ordered {
+    if c == value {
+      has = true
+      break
+    }
+  }
+  if !has {
+    classes_ordered.push(value)
+  }
+}
+
+///|
+/// Write a string to `path` via the PowerShell + base64 helper, log a
+/// debug line on failure and return `true` on success.
+async fn write_text_or_log(path : String, content : String) -> Bool {
+  let cmd = ps_write_bytes_base64(path, content)
+  let (code, _out) = @process.collect_stdout("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-Command", cmd,
+  ]) catch {
+    _ => return false
+  }
+  code == 0
+}
+
+///|
+/// Driver: walk image/label pairs and write one Pascal VOC `.xml`
+/// per labelled image into `dest_folder`.
+async fn export_voc_internal(
+  image_dir : String,
+  label_dir : String,
+  dest_folder : String,
+) -> ExportReply {
+  ensure_dir(dest_folder)
+  let names = @fs.readdir(label_dir, include_hidden=false, sort=true) catch {
+    _ => []
+  }
+  let pairs : Array[(String, String)] = []
+  for name in names {
+    let lname = lower(name)
+    if !lname.has_suffix(".json") {
+      continue
+    }
+    let (stem, _) = split_stem_ext(name)
+    if stem.length() == 0 {
+      continue
+    }
+    let img = find_image_filename(image_dir, stem)
+    if img == "" {
+      continue
+    }
+    pairs.push((stem, join_path(label_dir, name)))
+  }
+  let mut exported = 0
+  let mut skipped = 0
+  let classes_ordered : Array[String] = []
+  let dbg = "C:\\Users\\hp\\.minimax\\moonbit-labeler-export-voc.log"
+  @fs.write_file(dbg, "=== export_voc start ===\n", create_mode=@fs.CreateOrTruncate) catch {
+    _ => ()
+  }
+  async fn elog(s : String) {
+    @fs.write_file(dbg, s + "\n", append=true, create_mode=@fs.OpenOrCreate) catch {
+      _ => ()
+    }
+  }
+  elog("pairs=" + pairs.length().to_string())
+  for pair in pairs {
+    let (stem, label_path) = pair
+    let img_filename = find_image_filename(image_dir, stem)
+    if img_filename == "" {
+      elog("skip " + stem + " (no image)")
+      skipped = skipped + 1
+      continue
+    }
+    let data = @fs.read_file(label_path) catch {
+      _ => {
+        elog("skip " + stem + " (read fail)")
+        skipped = skipped + 1
+        continue
+      }
+    }
+    let text = data.text() catch {
+      _ => {
+        elog("skip " + stem + " (text decode fail)")
+        skipped = skipped + 1
+        continue
+      }
+    }
+    elog("read " + stem + " bytes=" + text.length().to_string())
+    let anns = parse_export_anns(text)
+    elog("parse " + stem + " -> " + anns.length().to_string() + " anns")
+    if anns.length() == 0 {
+      // Print first 200 chars of the label so we can see what the
+      // parser swallowed.
+      let preview = if text.length() < 200 {
+        text
+      } else {
+        text[0:200].to_owned()
+      }
+      elog("preview: " + preview)
+      skipped = skipped + 1
+      continue
+    }
+    let (w, h) = read_image_dims(join_path(image_dir, img_filename))
+    for a in anns {
+      dedup_push(classes_ordered, a.type_)
+    }
+    let folder_leaf = last_path_component(image_dir)
+    let xml = voc_xml_for(folder_leaf, img_filename, w, h, anns)
+    let out_path = join_path(dest_folder, stem + ".xml")
+    if write_text_or_log(out_path, xml) {
+      exported = exported + 1
+    } else {
+      elog("skip " + stem + " (write fail)")
+      skipped = skipped + 1
+    }
+  }
+  { dest_folder, exported_count: exported, skipped_count: skipped, classes: classes_ordered }
+}
+
+///|
+/// Driver: walk image/label pairs and write one YOLO `.txt` per
+/// labelled image plus a global `classes.txt`.
+async fn export_yolo_internal(
+  image_dir : String,
+  label_dir : String,
+  dest_folder : String,
+) -> ExportReply {
+  ensure_dir(dest_folder)
+  let names = @fs.readdir(label_dir, include_hidden=false, sort=true) catch {
+    _ => []
+  }
+  // Pre-walk to gather (stem -> anns) plus the ordered class list.
+  let classes_ordered : Array[String] = []
+  let pair_anns : Array[(String, Array[ExportAnn])] = []
+  for name in names {
+    let lname = lower(name)
+    if !lname.has_suffix(".json") {
+      continue
+    }
+    let (stem, _) = split_stem_ext(name)
+    if stem.length() == 0 {
+      continue
+    }
+    let img = find_image_filename(image_dir, stem)
+    if img == "" {
+      continue
+    }
+    let data = @fs.read_file(join_path(label_dir, name)) catch {
+      _ => continue
+    }
+    let text = data.text() catch {
+      _ => continue
+    }
+    let anns = parse_export_anns(text)
+    if anns.length() == 0 {
+      continue
+    }
+    for a in anns {
+      dedup_push(classes_ordered, a.type_)
+    }
+    pair_anns.push((stem, anns))
+  }
+  // Map class name -> id.
+  let class_ids : Map[String, Int] = Map([])
+  let mut i = 0
+  while i < classes_ordered.length() {
+    class_ids[classes_ordered[i]] = i
+    i = i + 1
+  }
+  // Build classes.txt first; if it fails we abort without orphan
+  // per-image files (well, sort of — we may still have written empty
+  // per-image txts from earlier ops on a re-run; the user can clear
+  // dest_folder if they want a clean redo).
+  let cls_buf = StringBuilder::new(size_hint=classes_ordered.length() * 16)
+  let mut k = 0
+  while k < classes_ordered.length() {
+    cls_buf.write_string(classes_ordered[k])
+    cls_buf.write_char('\n')
+    k = k + 1
+  }
+  let classes_path = join_path(dest_folder, "classes.txt")
+  if !(write_text_or_log(classes_path, cls_buf.to_string())) {
+    return {
+      dest_folder,
+      exported_count: 0,
+      skipped_count: pair_anns.length(),
+      classes: classes_ordered,
+    }
+  }
+  let mut exported = 0
+  let mut total_skipped = 0
+  for triple in pair_anns {
+    let (stem, anns) = triple
+    let img_filename = find_image_filename(image_dir, stem)
+    if img_filename == "" {
+      total_skipped = total_skipped + 1
+      continue
+    }
+    let image_path_real = join_path(image_dir, img_filename)
+    let (w, h) = read_image_dims(image_path_real)
+    if w <= 0 || h <= 0 {
+      total_skipped = total_skipped + 1
+      continue
+    }
+    let body = yolo_txt_for(class_ids, anns, w, h)
+    let out_path = join_path(dest_folder, stem + ".txt")
+    if write_text_or_log(out_path, body) {
+      exported = exported + 1
+    } else {
+      total_skipped = total_skipped + 1
+    }
+  }
+  { dest_folder, exported_count: exported, skipped_count: total_skipped, classes: classes_ordered }
+}
+
+///|
+/// Last segment of a path, with both `/` and `\` supported.
+fn last_path_component(p : String) -> String {
+  let (_dir, leaf) = split_dir_name(p)
+  leaf
+}
+
+///|
+/// Request to export a folder of labels as Pascal VOC `.xml` files.
+/// `image_path` may be a directory or any file inside it (the file is
+/// only used to resolve the image/label folder pair via the standard
+/// convention). `dest_folder` is the destination directory which is
+/// created if missing.
+pub struct ExportVocRequest {
+  image_path : String
+  dest_folder : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+async fn op_export_voc_folder(req : ExportVocRequest) -> ExportReply {
+  if req.dest_folder == "" {
+    fail("export_voc_folder: dest_folder is empty")
+  }
+  let image_dir = derive_image_dir(req.image_path)
+  if image_dir == "" {
+    fail("export_voc_folder: cannot determine image dir for " + req.image_path)
+  }
+  let label_dir = derive_label_dir_for_scan(image_dir)
+  if label_dir == "" {
+    fail(
+      "export_voc_folder: cannot determine label dir for " +
+      image_dir +
+      " (image dir must follow the Image@<name> convention)",
+    )
+  }
+  export_voc_internal(image_dir, label_dir, req.dest_folder)
+}
+
+///|
+/// Request to export a folder of labels as YOLO `.txt` files plus a
+/// global `classes.txt`. Same input conventions as `export_voc_folder`.
+pub struct ExportYoloRequest {
+  image_path : String
+  dest_folder : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+async fn op_export_yolo_folder(req : ExportYoloRequest) -> ExportReply {
+  if req.dest_folder == "" {
+    fail("export_yolo_folder: dest_folder is empty")
+  }
+  let image_dir = derive_image_dir(req.image_path)
+  if image_dir == "" {
+    fail("export_yolo_folder: cannot determine image dir for " + req.image_path)
+  }
+  let label_dir = derive_label_dir_for_scan(image_dir)
+  if label_dir == "" {
+    fail(
+      "export_yolo_folder: cannot determine label dir for " +
+      image_dir +
+      " (image dir must follow the Image@<name> convention)",
+    )
+  }
+  export_yolo_internal(image_dir, label_dir, req.dest_folder)
+}
+
 ///|
 /// --- extension registration ---
 pub fn extension() -> @proton_extension.Extension {
@@ -2419,6 +3465,8 @@ pub fn extension() -> @proton_extension.Extension {
         @proton_command.AppCommandApiDescriptor::new("list_videos"),
         @proton_command.AppCommandApiDescriptor::new("read_video_info"),
         @proton_command.AppCommandApiDescriptor::new("read_video_frame"),
+        @proton_command.AppCommandApiDescriptor::new("export_voc_folder"),
+        @proton_command.AppCommandApiDescriptor::new("export_yolo_folder"),
       ],
       register_labeler_commands,
     ),
@@ -2451,5 +3499,7 @@ fn register_labeler_commands(
   context.op_async("list_videos", op_list_videos, emits_events=false)
   context.op_async("read_video_info", op_read_video_info, emits_events=false)
   context.op_async("read_video_frame", op_read_video_frame, emits_events=false)
+  context.op_async("export_voc_folder", op_export_voc_folder, emits_events=false)
+  context.op_async("export_yolo_folder", op_export_yolo_folder, emits_events=false)
   Ok(())
 }
