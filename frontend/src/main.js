@@ -11,7 +11,7 @@
 // State machine + IPC + autosave + keyboard + class list stays the same
 // shape as before; canvas.js now uses Canvas 2D (see canvas.js header).
 
-import { parseLabel, normalizeLabel, serializeLabel, emptyLabel } from "./label.js";
+import { parseLabel, serializeLabel, emptyLabel } from "./label.js";
 import { createCanvas } from "./canvas.js";
 import { createVideoController } from "./video.js";
 import {
@@ -503,7 +503,6 @@ function loadLabelFor(item, opts = {}) {
     invokeReadLabel: (path) =>
       invokeLabeler("read_label", { image_path: path }),
     parseLabel,
-    normalizeLabel,
     emptyLabel,
     currentToken: token,
     checkToken: () => state.loadToken,
@@ -798,7 +797,7 @@ async function flushSave() {
   updateDirtyBadge();
   try {
     const item = state.images[state.currentIndex];
-    const content = serializeLabel(state.label);
+    const content = await serializeLabel(state.label);
     await invokeLabeler("write_label", { image_path: item.path, content });
     state.dirty = false;
     state.saveError = null;

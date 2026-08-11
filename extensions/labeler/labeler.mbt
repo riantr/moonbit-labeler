@@ -126,6 +126,44 @@ pub struct WriteLabelReply {
 } derive(ToJson, Eq, Debug)
 
 ///|
+/// Parse a label JSON text and return a normalized, modern-schema JSON
+/// text. This is the shared entry point used by the frontend to avoid
+/// keeping a parallel hand-rolled parser in JS. Accepts both legacy
+/// `points: "x,y;x,y;..."` and modern `points: [[x, y], ...]` shapes,
+/// infers missing `shape` from point count, mints missing `id`s, and
+/// strips UTF-8 BOMs.
+pub struct ParseLabelRequest {
+  text : String
+  /// Substituted into `img_name` when the parsed JSON has none.
+  fallback_img_name : String?
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+pub struct ParseLabelReply {
+  ok : Bool
+  /// Normalized modern-schema JSON text. Empty when ok=false.
+  label_text : String
+  /// Human-readable error message. Empty when ok=true.
+  error : String
+} derive(ToJson, Eq, Debug)
+
+///|
+/// Re-serialize a label JSON text to the modern schema. Rounds pixel
+/// coordinates to integers, drops empty `points` and dangling
+/// bindings, and includes `frames` only when non-empty.
+pub struct SerializeLabelRequest {
+  /// Frontend-built label as JSON text.
+  label_text : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+pub struct SerializeLabelReply {
+  ok : Bool
+  text : String
+  error : String
+} derive(ToJson, Eq, Debug)
+
+///|
 /// Default image extensions when the frontend doesn't pass a list.
 let default_image_extensions : Array[String] = [
   ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif",
@@ -2422,6 +2460,335 @@ async fn read_image_dims(path : String) -> (Int, Int) {
 }
 
 ///|
+/// --- shared label schema (parse / serialize, BOM-tolerant) ---
+///
+/// Single source of truth for the on-disk label JSON shape. The
+/// frontend used to keep its own hand-rolled parser/serializer in
+/// `frontend/src/label.js`; both are now expressed here so that any
+/// future change to the schema is implemented once. Accepts both the
+/// legacy `points: "x,y;x,y;..."` shape (CARS) and the modern
+/// `points: [[x, y], ...]` shape, normalizes `shape` (inferring from
+/// point count when missing), synthesizes missing `id`s, drops
+/// annotations with empty `points`, and removes bindings that don't
+/// reference real infos. UTF-8 BOMs are stripped on read.
+
+///|
+/// Global counter used to mint short unique ids when the on-disk
+/// annotation is missing one.
+let label_id_counter : @ref.Ref[Int] = @ref.new(0)
+
+///|
+/// Mint a short identifier with the given prefix (`obj`, `b`, ...).
+/// Not cryptographically random, but unique enough within a session.
+fn gen_label_id(prefix : String) -> String {
+  let n = label_id_counter.update(fn(c) { c + 1 })
+  prefix + "_" + n.to_string()
+}
+
+///|
+/// Strip a leading UTF-8 BOM (`U+FEFF`) if present.
+fn strip_bom(s : String) -> String {
+  if s.length() > 0 && s[0] == '\u{feff}' {
+    String::unsafe_substring(s, start=1, end=s.length())
+  } else {
+    s
+  }
+}
+
+///|
+/// Pull a `String` field out of a JSON object map. Returns `""` when
+/// the key is missing or the value isn't a string. Used by the schema
+/// normalizer below.
+fn json_get_string(obj : Map[String, Json], key : String) -> String {
+  match obj.get(key) {
+    Some(String(s)) => s
+    _ => ""
+  }
+}
+
+///|
+/// Pull an `Int` from a JSON value, accepting either a JSON number or
+/// a string of digits. Returns `None` when the value can't be parsed.
+fn json_get_int(j : Json) -> Int? {
+  match j {
+    Number(n, ..) => Some(n.to_int())
+    String(s) =>
+      // `@string.parse_int` raises a string-typed error on bad input.
+      // Use a sentinel pattern: the actual value is then masked off in
+      // the result. For label files only small non-negative integers
+      // are ever expected, so the `-1` sentinel can't collide.
+      if s == "" {
+        None
+      } else {
+        let parsed = try @string.parse_int(s) catch {
+          _ => -1
+        }
+        if parsed < 0 {
+          None
+        } else {
+          Some(parsed)
+        }
+      }
+    _ => None
+  }
+}
+
+///|
+/// Read a list of `[[x, y], ...]` points out of a JSON value. Handles
+/// both the modern shape `[[x, y], ...]` and the legacy shape
+/// `"x,y;x,y;..."` (a single string of pairs separated by `;`).
+fn json_get_points(j : Json) -> Array[Array[Double]] {
+  let out : Array[Array[Double]] = []
+  match j {
+    Array(_) => {
+      // Re-encode the JSON array to a string and reuse the existing
+      // hand-rolled scanner. The array path is only a few hundred
+      // bytes per file so the round-trip cost is negligible.
+      let txt = j.stringify()
+      let parsed = parse_points_array(txt, 0)
+      for p in parsed {
+        out.push([p.0, p.1])
+      }
+      out
+    }
+    String(s) => {
+      let parsed = parse_points_string(s)
+      for p in parsed {
+        out.push([p.0, p.1])
+      }
+      out
+    }
+    _ => out
+  }
+}
+
+///|
+/// Encode a list of points as the modern `[[x, y], ...]` JSON array.
+fn points_to_json(pts : Array[Array[Double]]) -> Json {
+  let arr : Array[Json] = []
+  for p in pts {
+    arr.push(Json::array([Json::number(p[0]), Json::number(p[1])]))
+  }
+  Json::array(arr)
+}
+
+///|
+/// Infer the shape name from a point count, matching the C# reference
+/// tool's behaviour: 1 point = keypoint, 2 points = rect, otherwise
+/// polygon.
+fn infer_shape_from_points(pts : Array[Array[Double]]) -> String {
+  match pts.length() {
+    0 => "polygon"
+    1 => "keypoint"
+    2 => "rect"
+    _ => "polygon"
+  }
+}
+
+///|
+/// Build a normalized label JSON object from a raw parsed `Json` value.
+/// `fallback_img_name` is used when the raw object has no `img_name`.
+fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
+  let members : Map[String, Json] = match raw {
+    Object(m) => m
+    _ => Map([])
+  }
+  let img_name = match members.get("img_name") {
+    Some(String(s)) => s
+    _ => fallback_img_name
+  }
+  let raw_infos : Array[Json] = match members.get("infos") {
+    Some(Array(a)) => a
+    _ => []
+  }
+  let raw_bindings : Array[Json] = match members.get("bindings") {
+    Some(Array(a)) => a
+    _ => []
+  }
+  let raw_frames : Array[Json] = match members.get("frames") {
+    Some(Array(a)) => a
+    _ => []
+  }
+  // First pass: normalize infos and collect their ids for binding
+  // validation in the second pass below.
+  let info_ids : Map[String, Bool] = Map([])
+  let infos_out : Array[Json] = []
+  for entry in raw_infos {
+    let obj : Map[String, Json] = match entry {
+      Object(m) => m
+      _ => continue
+    }
+    let pts = json_get_points(obj.get("points").unwrap_or(Json::null()))
+    if pts.length() == 0 {
+      continue
+    }
+    let id = json_get_string(obj, "id")
+    let id = if id == "" { gen_label_id("obj") } else { id }
+    let shape = json_get_string(obj, "shape")
+    let shape = if shape == "" { infer_shape_from_points(pts) } else { shape }
+    let ann_type = json_get_string(obj, "type")
+    let ann_type = if ann_type == "" { "object" } else { ann_type }
+    info_ids.set(id, true)
+    infos_out.push(
+      Json::object(
+        Map::from_array([
+          ("id", Json::string(id)),
+          ("shape", Json::string(shape)),
+          ("type", Json::string(ann_type)),
+          ("points", points_to_json(pts)),
+        ]),
+      ),
+    )
+  }
+  // Second pass: bindings must reference real infos on both sides.
+  let bindings_out : Array[Json] = []
+  for entry in raw_bindings {
+    let obj : Map[String, Json] = match entry {
+      Object(m) => m
+      _ => continue
+    }
+    let from = json_get_string(obj, "from")
+    let to = json_get_string(obj, "to")
+    if from == "" || to == "" || from == to {
+      continue
+    }
+    if !(info_ids.contains(from)) || !(info_ids.contains(to)) {
+      continue
+    }
+    let id = json_get_string(obj, "id")
+    let id = if id == "" { gen_label_id("b") } else { id }
+    let btype = json_get_string(obj, "type")
+    let btype = if btype == "" { "same_group" } else { btype }
+    bindings_out.push(
+      Json::object(
+        Map::from_array([
+          ("id", Json::string(id)),
+          ("from", Json::string(from)),
+          ("to", Json::string(to)),
+          ("type", Json::string(btype)),
+        ]),
+      ),
+    )
+  }
+  // Frames: accept numbers (modern) or comma-separated strings
+  // (legacy "1,2,3"). De-dup and sort ascending.
+  let frames_set : Map[String, Bool] = Map([])
+  let frames_acc : Array[Int] = []
+  for entry in raw_frames {
+    match json_get_int(entry) {
+      Some(n) =>
+        if n >= 0 {
+          let key = n.to_string()
+          if !(frames_set.contains(key)) {
+            frames_set.set(key, true)
+            frames_acc.push(n)
+          }
+        }
+      None => ()
+    }
+  }
+  frames_acc.sort()
+  let frames_out : Array[Json] = []
+  for n in frames_acc {
+    frames_out.push(Json::number(n.to_double()))
+  }
+  // Assemble the final object. `frames` is omitted entirely when empty
+  // so image-mode label files stay byte-identical to pre-video saves.
+  let out_members : Map[String, Json] = Map::from_array([
+    ("img_name", Json::string(img_name)),
+    ("infos", Json::array(infos_out)),
+    ("bindings", Json::array(bindings_out)),
+  ])
+  if frames_out.length() > 0 {
+    out_members.set("frames", Json::array(frames_out))
+  }
+  Json::object(out_members)
+}
+
+///|
+/// Parse a label JSON text and return a normalized, modern-schema JSON
+/// text. Accepts both legacy (`points: "x,y;..."`) and modern
+/// (`points: [[x, y], ...]`) shapes. Returns `(label_text, "")` on
+/// success and raises the underlying parser error on failure so the
+/// op layer can convert it to a structured reply.
+fn parse_label_text(
+  text : String,
+  fallback_img_name : String,
+) -> (String, String) raise {
+  let stripped = strip_bom(text)
+  let raw = @json.parse(stripped) catch {
+    err => raise err
+  }
+  let normalized = normalize_label_json(raw, fallback_img_name)
+  (normalized.stringify(), "")
+}
+
+///|
+/// Re-serialize a label JSON text to the modern schema. Frontend
+/// `serializeLabel()` was the previous owner of this logic; now the
+/// IPC layer round-trips through the same normalizer. Always writes
+/// `id`, `shape`, and `points` as nested arrays; rounds pixel
+/// coordinates to integers; `frames` is included only when non-empty.
+/// Raises the underlying parser error on failure.
+fn serialize_label_text(text : String) -> (String, String) raise {
+  let stripped = strip_bom(text)
+  let raw = @json.parse(stripped) catch {
+    err => raise err
+  }
+  let normalized = normalize_label_json(raw, "")
+  // Round all coordinates to integers to match the on-disk convention
+  // and avoid the editor accumulating floating-point drift across
+  // saves. We walk the `infos[*].points[*]` arrays we just built.
+  let out = match normalized {
+    Object(m) => {
+      let infos : Array[Json] = match m.get("infos") {
+        Some(Array(a)) => a
+        _ => []
+      }
+      let new_infos : Array[Json] = []
+      for entry in infos {
+        let info_obj : Map[String, Json] = match entry {
+          Object(o) => o
+          _ => {
+            new_infos.push(entry)
+            continue
+          }
+        }
+        let points : Array[Json] = match info_obj.get("points") {
+          Some(Array(a)) => a
+          _ => {
+            new_infos.push(entry)
+            continue
+          }
+        }
+        let new_points : Array[Json] = []
+        for p in points {
+          match p {
+            Array(coords) => {
+              let rounded : Array[Json] = []
+              for c in coords {
+                match c {
+                  Number(n, ..) => rounded.push(Json::number(n.round()))
+                  _ => rounded.push(c)
+                }
+              }
+              new_points.push(Json::array(rounded))
+            }
+            _ => new_points.push(p)
+          }
+        }
+        info_obj.set("points", Json::array(new_points))
+        new_infos.push(Json::object(info_obj))
+      }
+      m.set("infos", Json::array(new_infos))
+      Json::object(m)
+    }
+    _ => normalized
+  }
+  (out.stringify(), "")
+}
+
+///|
 /// Look for `"key": <value>` in a JSON text, scanning only after
 /// offset `from`. Returns the index of the value's first byte (right
 /// after `:` and any whitespace) or `-1` if not found. Hand-rolled to
@@ -3352,6 +3719,40 @@ async fn op_export_yolo_folder(req : ExportYoloRequest) -> ExportReply {
 }
 
 ///|
+/// Parse a label JSON text via the shared schema normalizer. See
+/// `parse_label_text` for the actual logic.
+#warnings("-unused_async")
+async fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply {
+  let fallback = match req.fallback_img_name {
+    Some(s) => s
+    None => ""
+  }
+  let (text, err) = try parse_label_text(req.text, fallback) catch {
+    e => ("", "parse_label failed: " + e.to_string())
+  }
+  if err != "" {
+    { ok: false, label_text: "", error: err }
+  } else {
+    { ok: true, label_text: text, error: "" }
+  }
+}
+
+///|
+/// Re-serialize a label JSON text via the shared schema normalizer.
+/// See `serialize_label_text` for the actual logic.
+#warnings("-unused_async")
+async fn op_serialize_label(req : SerializeLabelRequest) -> SerializeLabelReply {
+  let (text, err) = try serialize_label_text(req.label_text) catch {
+    e => ("", "serialize_label failed: " + e.to_string())
+  }
+  if err != "" {
+    { ok: false, text: "", error: err }
+  } else {
+    { ok: true, text, error: "" }
+  }
+}
+
+///|
 /// --- extension registration ---
 pub fn extension() -> @proton_extension.Extension {
   @proton_extension.from_command_spec(
@@ -3379,6 +3780,8 @@ pub fn extension() -> @proton_extension.Extension {
         @proton_command.AppCommandApiDescriptor::new("read_video_frame"),
         @proton_command.AppCommandApiDescriptor::new("export_voc_folder"),
         @proton_command.AppCommandApiDescriptor::new("export_yolo_folder"),
+        @proton_command.AppCommandApiDescriptor::new("parse_label"),
+        @proton_command.AppCommandApiDescriptor::new("serialize_label"),
       ],
       register_labeler_commands,
     ),
@@ -3413,5 +3816,7 @@ fn register_labeler_commands(
   context.op_async("read_video_frame", op_read_video_frame, emits_events=false)
   context.op_async("export_voc_folder", op_export_voc_folder, emits_events=false)
   context.op_async("export_yolo_folder", op_export_yolo_folder, emits_events=false)
+  context.op_async("parse_label", op_parse_label, emits_events=false)
+  context.op_async("serialize_label", op_serialize_label, emits_events=false)
   Ok(())
 }

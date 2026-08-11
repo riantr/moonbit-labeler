@@ -142,11 +142,11 @@ export function createVideoController(deps) {
         const reply = await invokeLabeler("read_label", { image_path: item.path });
         if (token !== _frameLoadToken) return; // a newer nav preempted us
         if (reply?.found && reply.content) {
-          const { parseLabel, normalizeLabel } = await import("./label.js");
-          const parsed = parseLabel(reply.content);
-          disk = parsed
-            ? normalizeLabel(parsed, item.name)
-            : { img_name: item.name, infos: [], bindings: [], frames: [] };
+          const { parseLabel } = await import("./label.js");
+          disk = await parseLabel(reply.content, item.name);
+          if (!disk) {
+            disk = { img_name: item.name, infos: [], bindings: [], frames: [] };
+          }
         } else {
           disk = { img_name: item.name, infos: [], bindings: [], frames: [] };
         }
@@ -282,7 +282,7 @@ export function createVideoController(deps) {
       infos: mergedInfos,
       bindings: mergedBindings,
     };
-    const content = serializeLabel(out);
+    const content = await serializeLabel(out);
     await invokeLabeler("write_label", {
       image_path: st.currentVideo.path,
       content,

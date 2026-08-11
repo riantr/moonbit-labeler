@@ -185,8 +185,7 @@ async function handleImageError(item, deps) {
 export async function loadLabelFor(item, deps) {
   const {
     invokeReadLabel,      // (path) => Promise<{found, content, label_path} | null>
-    parseLabel,           // (text) => object | null
-    normalizeLabel,       // (parsed, name) => label
+    parseLabel,           // async (text, fallbackImgName) => normalized label | null
     emptyLabel,           // () => empty label object
     currentToken,         // number — caller's load counter
     checkToken,           // () => number — caller's current token
@@ -200,15 +199,17 @@ export async function loadLabelFor(item, deps) {
     const reply = await invokeReadLabel(item.path);
     ipcStop.stop({ found: !!reply?.found, bytes: reply?.content?.length || 0 });
     if (token !== checkToken()) return;
-    let parsed = null;
+    let label = null;
     if (reply?.found && reply?.content) {
-      parsed = parseLabel(reply.content);
+      // parseLabel is now async — it goes through the MoonBit IPC layer
+      // and already returns a fully normalized label.
+      label = await parseLabel(reply.content, item.name);
     }
-    const label = parsed
-      ? normalizeLabel(parsed, item.name)
-      : { img_name: item.name, infos: [], bindings: [] };
+    if (!label) {
+      label = { img_name: item.name, infos: [], bindings: [] };
+    }
     if (onLabel) {
-      onLabel(parsed, label, reply?.label_path || "", !!reply?.found);
+      onLabel(label, label, reply?.label_path || "", !!reply?.found);
     }
     if (reply?.found && onMarkLabeled) onMarkLabeled(item.path);
   } catch (err) {
