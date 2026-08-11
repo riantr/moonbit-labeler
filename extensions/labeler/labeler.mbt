@@ -360,20 +360,13 @@ async fn ensure_dir(path : String) -> Unit {
   if @fs.exists(path) && @fs.kind(path) == @fs.Directory {
     return
   }
-  // PowerShell is the most reliable on Windows for paths that contain
-  // characters like `@`. `New-Item -Force` is equivalent to `mkdir -p`.
-  let (code, ps_out) = @process.collect_stdout("powershell.exe", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
-    "New-Item -ItemType Directory -Path '" +
-    ps_escape(path) +
-    "' -Force | Out-Null",
-  ]) catch {
-    _ => (0, "")
+  // `@fs.mkdir(..., recursive=true)` is the modern MoonBit path. It
+  // was probed to work on `Image@CARS.Part.01`-style paths (with `@`
+  // in the directory name) under moon 0.4.43, so the PowerShell
+  // `New-Item -Force` round-trip is no longer needed here.
+  @fs.mkdir(path, recursive=true) catch {
+    _ => ()
   }
-  let _ = ps_out
-  let _ = code
 }
 
 ///| --- string helpers ---
@@ -1749,7 +1742,7 @@ async fn video_frame_tmp_path() -> String {
       _ => ()
     }
   }
-  let stamp = now_millis_unix().to_string()
+  let stamp = next_tmp_stamp().to_string()
   dir + "\\frame-" + stamp + ".jpg"
 }
 
@@ -2171,20 +2164,6 @@ fn parse_int_range(s : String, start : Int, end : Int) -> Int {
 }
 
 ///|
-/// Parse a positive int from a UTF-8 byte view.
-fn parse_int_bytes(bytes : Bytes) -> Int {
-  let mut result = 0
-  for i in 0..<bytes.length() {
-    let c = bytes[i]
-    if c < b'0' || c > b'9' {
-      break
-    }
-    result = result * 10 + (c - b'0').to_int()
-  }
-  result
-}
-
-///|
 /// Parse a simple positive decimal directly from MoonBit characters.
 fn parse_double_text(s : String) -> Double {
   let mut whole = 0.0
@@ -2221,19 +2200,19 @@ fn parse_double_text(s : String) -> Double {
 }
 
 ///|
-/// Cheap approximation of the current Unix time in milliseconds. We
-/// don't need accuracy — the value only feeds the temp-file name.
-async fn now_millis_unix() -> Int {
-  let (code, out_data) = @process.collect_stdout("powershell.exe", [
-    "-NoProfile", "-NonInteractive", "-Command", "[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()",
-  ]) catch {
-    _ => return 0
-  }
-  if code != 0 {
-    return 0
-  }
-  let out = out_data.text() catch { _ => return 0 }
-  parse_int_bytes(@encoding.encode(@encoding.UTF8, trim_string(out)))
+/// Cheap monotonically-increasing counter for unique temp-file names.
+/// We used to shell out to PowerShell to get the current Unix time in
+/// milliseconds, but MoonBit 0.4.43 doesn't ship a time package and
+/// the PowerShell call was the only remaining `DateTimeOffset` use. A
+/// monotonic counter is just as unique within a session and avoids
+/// the process spawn.
+let tmp_stamp_counter : @ref.Ref[Int] = @ref.new(0)
+
+///|
+/// Mint a fresh temp-file stamp. Pure-MoonBit, no PowerShell.
+fn next_tmp_stamp() -> Int {
+  tmp_stamp_counter.val = tmp_stamp_counter.val + 1
+  tmp_stamp_counter.val
 }
 
 ///|
@@ -2481,8 +2460,8 @@ let label_id_counter : @ref.Ref[Int] = @ref.new(0)
 /// Mint a short identifier with the given prefix (`obj`, `b`, ...).
 /// Not cryptographically random, but unique enough within a session.
 fn gen_label_id(prefix : String) -> String {
-  let n = label_id_counter.update(fn(c) { c + 1 })
-  prefix + "_" + n.to_string()
+  label_id_counter.val = label_id_counter.val + 1
+  prefix + "_" + label_id_counter.val.to_string()
 }
 
 ///|
