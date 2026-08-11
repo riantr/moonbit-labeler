@@ -12,6 +12,7 @@
 // shape as before; canvas.js now uses Canvas 2D (see canvas.js header).
 
 import { parseLabel, serializeLabel, emptyLabel } from "./label.js";
+import { pickFolder, pickFile } from "./webkit-pickers.js";
 import { createCanvas } from "./canvas.js";
 import { createVideoController } from "./video.js";
 import {
@@ -1205,16 +1206,13 @@ async function browseFolder() {
   const original = els.browseBtn.textContent;
   els.browseBtn.textContent = "…";
   try {
-    const reply = await invokeLabeler("pick_folder", {
-      title: "选择图片文件夹",
-      initial: els.folderInput.value.trim() || null,
-    });
+    const reply = await pickFolder();
     if (reply?.path) {
       els.folderInput.value = reply.path;
       els.folderForm.dispatchEvent(new Event("submit", { cancelable: true }));
     }
   } catch (err) {
-    console.error("pick_folder failed:", err);
+    console.error("pickFolder failed:", err);
     showEmptyHint(`选择文件夹失败: ${err}`);
   } finally {
     els.browseBtn.disabled = prev;
@@ -1239,12 +1237,9 @@ async function runExportFolder(kind) {
   const whichName = kind === "voc" ? "Pascal VOC XML" : "YOLO TXT";
   let pick;
   try {
-    pick = await invokeLabeler("pick_folder", {
-      title: `选择 ${whichName} 输出文件夹`,
-      initial: state.folder || null,
-    });
+    pick = await pickFolder();
   } catch (err) {
-    console.error("pick_folder (export) failed:", err);
+    console.error("pickFolder (export) failed:", err);
     flashHint(`选择输出文件夹失败: ${err}`, "info");
     return;
   }
@@ -1656,12 +1651,9 @@ async function runMenuAction(action) {
       break;
     case "load-classes-from-file":
       try {
-        const pickReply = await invokeLabeler("pick_file", {
-          title: "选择类别文件",
-          initial: state.folder || null,
-          filter:
-            "Class files (*.json;*.txt)|*.json;*.txt|JSON files (*.json)|*.json|Text files (*.txt)|*.txt|All files (*.*)|*.*",
-        });
+        const pickReply = await pickFile(
+          ".json,.txt,application/json,text/plain",
+        );
         if (pickReply?.cancelled || !pickReply?.path) {
           flashHint("已取消", "info");
           break;
