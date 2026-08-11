@@ -246,7 +246,7 @@ pub struct LoadClassesReply {
 
 ///|
 /// Request to read a class list from an arbitrary file path (typically
-/// picked via `pick_file`).
+/// picked via the frontend's `<input type="file">` element).
 pub struct LoadClassesFromFileRequest {
   path : String
 } derive(FromJson, ToJson, Eq, Debug)
@@ -514,57 +514,6 @@ fn mime_for(name : String) -> String {
   } else {
     "application/octet-stream"
   }
-}
-
-///| --- native folder picker (Windows) ---
-///
-/// Shows a native Windows folder selection dialog by shelling out to
-/// PowerShell's `FolderBrowserDialog`. The selected path is written to a
-/// temp file (UTF-8) by the script and read back here — that sidesteps
-/// both PowerShell's stdout encoding (UTF-16 LE on PS 5.1) and the need
-/// to base64-encode the path.
-
-///|
-/// Request to show a native folder picker dialog.
-pub struct PickFolderRequest {
-  title : String
-  initial : String?
-} derive(FromJson, ToJson, Eq, Debug)
-
-///|
-/// Request to show a native file picker dialog.
-pub struct PickFileRequest {
-  title : String
-  initial : String?
-  filter : String // e.g. "JSON files (*.json)|*.json|All files (*.*)|*.*"
-} derive(FromJson, ToJson, Eq, Debug)
-
-///|
-/// Reply with the picked file path (empty if the user cancelled).
-pub struct PickFileReply {
-  path : String
-  cancelled : Bool
-} derive(ToJson, Eq, Debug)
-
-///|
-pub struct PickFolderReply {
-  path : String
-  cancelled : Bool
-} derive(ToJson, Eq, Debug)
-
-///|
-/// Escape a string for use inside a PowerShell single-quoted literal
-/// (`'` becomes `''`).
-fn ps_escape(s : String) -> String {
-  let buf = StringBuilder::new(size_hint=s.length() + 4)
-  for c in s {
-    if c == '\'' {
-      buf.write_string("''")
-    } else {
-      buf.write_char(c)
-    }
-  }
-  buf.to_string()
 }
 
 ///|
@@ -1027,221 +976,6 @@ async fn op_write_label(req : WriteLabelRequest) -> WriteLabelReply {
     err => fail("write_label failed: " + err.to_string())
   }
   { image_path: req.image_path, label_path, bytes: req.content.length() }
-}
-
-///|
-/// Show a native file picker via PowerShell's `OpenFileDialog` and
-/// return the selected absolute path. Same temp-file handoff as
-/// `op_pick_folder` to sidestep PowerShell stdout encoding issues.
-async fn op_pick_file(req : PickFileRequest) -> PickFileReply {
-  let debug_log = "C:\\Windows\\Temp\\moonbit-labeler-pick-file.log"
-  @fs.write_file(debug_log, "", create_mode=@fs.CreateOrTruncate) catch {
-    _ => ()
-  }
-  let initial_text = match req.initial {
-    Some(p) => p
-    None => ""
-  }
-  @fs.write_file(
-    debug_log,
-    "req.title=" + req.title + ", initial=" + initial_text + "\n",
-    append=true,
-    create_mode=@fs.OpenOrCreate,
-  ) catch {
-    _ => ()
-  }
-  let title = ps_escape(req.title)
-  let filter = ps_escape(req.filter)
-  let initial_clause = match req.initial {
-    Some(p) if p.length() > 0 =>
-      // InitialDirectory expects a folder, not a file. If the user
-      // passed a file path, point at its parent.
-      "$parent = [System.IO.Path]::GetDirectoryName('" +
-      ps_escape(p) +
-      "');\n" +
-      "if ($parent) { $f.InitialDirectory = $parent; }\n" +
-      "$leaf = [System.IO.Path]::GetFileName('" +
-      ps_escape(p) +
-      "');\n" +
-      "if ($leaf) { $f.FileName = $leaf; }\n"
-    _ => ""
-  }
-  let temp_path = "C:\\Windows\\Temp\\moonbit-labeler-pick-file.txt"
-  let script = "Add-Type -AssemblyName System.Windows.Forms;\n" +
-    "$f = New-Object System.Windows.Forms.OpenFileDialog;\n" +
-    "$f.Title = '" +
-    title +
-    "';\n" +
-    "$f.Filter = '" +
-    filter +
-    "';\n" +
-    initial_clause +
-    "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {\n" +
-    "  [System.IO.File]::WriteAllText('" +
-    ps_escape(temp_path) +
-    "', $f.FileName, [System.Text.Encoding]::UTF8)\n" +
-    "}\n"
-  if @fs.exists(temp_path) {
-    @fs.remove(temp_path) catch {
-      _ => ()
-    }
-  }
-  let (exit_code, _stdout) = @process.collect_stdout("powershell.exe", [
-    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script,
-  ]) catch {
-    err => fail("pick_file spawn failed: " + err.to_string())
-  }
-  if exit_code != 0 {
-    fail("pick_file exited with code \{exit_code}")
-  }
-  if !@fs.exists(temp_path) {
-    return { path: "", cancelled: true }
-  }
-  let data = @fs.read_file(temp_path) catch {
-    err => fail("pick_file read result failed: " + err.to_string())
-  }
-  let raw = data.text() catch {
-    err => fail("pick_file decode failed: " + err.to_string())
-  }
-  @fs.remove(temp_path) catch {
-    _ => ()
-  }
-  { path: trim_string(raw), cancelled: false }
-}
-
-///|
-/// Show a native folder picker via PowerShell's `FolderBrowserDialog` and
-/// return the selected absolute path. The path is written to a temp file
-/// (UTF-8) by the script and read back here, which avoids both PowerShell
-/// stdout encoding issues (UTF-16 LE on PS 5.1) and base64 round-tripping.
-async fn op_pick_folder(req : PickFolderRequest) -> PickFolderReply {
-  let debug_log = "C:\\Windows\\Temp\\moonbit-labeler-pick-folder.log"
-  @fs.write_file(debug_log, "", create_mode=@fs.CreateOrTruncate) catch {
-    _ => ()
-  }
-  @fs.write_file(
-    debug_log,
-    "=== pick_folder start ===\n",
-    append=true,
-    create_mode=@fs.OpenOrCreate,
-  ) catch {
-    _ => ()
-  }
-  let initial_text = match req.initial {
-    Some(p) => p
-    None => ""
-  }
-  @fs.write_file(
-    debug_log,
-    "req.title=" + req.title + ", initial=" + initial_text + "\n",
-    append=true,
-    create_mode=@fs.OpenOrCreate,
-  ) catch {
-    _ => ()
-  }
-  let title = ps_escape(req.title)
-  let initial_clause = match req.initial {
-    Some(p) if p.length() > 0 => "$f.SelectedPath = '" + ps_escape(p) + "';\n"
-    _ => ""
-  }
-  let temp_path = "C:\\Windows\\Temp\\moonbit-labeler-pick-folder.txt"
-  let script = "Add-Type -AssemblyName System.Windows.Forms;\n" +
-    "$f = New-Object System.Windows.Forms.FolderBrowserDialog;\n" +
-    "$f.Description = '" +
-    title +
-    "';\n" +
-    "$f.ShowNewFolderButton = $true;\n" +
-    initial_clause +
-    "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {\n" +
-    "  [System.IO.File]::WriteAllText('" +
-    ps_escape(temp_path) +
-    "', $f.SelectedPath, [System.Text.Encoding]::UTF8)\n" +
-    "}\n"
-  @fs.write_file(
-    debug_log,
-    "script built, length=" + script.length().to_string() + "\n",
-    append=true,
-    create_mode=@fs.OpenOrCreate,
-  ) catch {
-    _ => ()
-  }
-  if @fs.exists(temp_path) {
-    @fs.remove(temp_path) catch {
-      _ => ()
-    }
-  }
-  @fs.write_file(
-    debug_log,
-    "spawning powershell.exe\n",
-    append=true,
-    create_mode=@fs.OpenOrCreate,
-  ) catch {
-    _ => ()
-  }
-  let (exit_code, _stdout) = @process.collect_stdout("powershell.exe", [
-    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script,
-  ]) catch {
-    err => {
-      @fs.write_file(
-        debug_log,
-        "spawn failed: " + err.to_string() + "\n",
-        append=true,
-        create_mode=@fs.OpenOrCreate,
-      ) catch {
-        _ => ()
-      }
-      fail("pick_folder spawn failed: " + err.to_string())
-    }
-  }
-  @fs.write_file(
-    debug_log,
-    "powershell exit_code=" + exit_code.to_string() + "\n",
-    append=true,
-    create_mode=@fs.OpenOrCreate,
-  ) catch {
-    _ => ()
-  }
-  if exit_code != 0 {
-    fail("pick_folder exited with code \{exit_code}")
-  }
-  if !@fs.exists(temp_path) {
-    @fs.write_file(
-      debug_log,
-      "no result file -> cancelled\n",
-      append=true,
-      create_mode=@fs.OpenOrCreate,
-    ) catch {
-      _ => ()
-    }
-    return { path: "", cancelled: true }
-  }
-  let data = @fs.read_file(temp_path) catch {
-    err => fail("pick_folder read result failed: " + err.to_string())
-  }
-  let raw = data.text() catch {
-    err => fail("pick_folder decode failed: " + err.to_string())
-  }
-  @fs.write_file(
-    debug_log,
-    "read result, len=" + raw.length().to_string() + "\n",
-    append=true,
-    create_mode=@fs.OpenOrCreate,
-  ) catch {
-    _ => ()
-  }
-  @fs.remove(temp_path) catch {
-    _ => ()
-  }
-  let trimmed = trim_string(raw)
-  @fs.write_file(
-    debug_log,
-    "returning path=" + trimmed + "\n",
-    append=true,
-    create_mode=@fs.OpenOrCreate,
-  ) catch {
-    _ => ()
-  }
-  { path: trimmed, cancelled: false }
 }
 
 ///|
@@ -2318,33 +2052,6 @@ fn format_double(x : Double) -> String {
     whole.to_string() + "." + (frac_i / 10).to_string()
   } else {
     whole.to_string() + "." + frac_i.to_string()
-  }
-}
-
-///|
-/// Trim leading + trailing ASCII whitespace (incl. \r, \n, \t).
-fn trim_string(s : String) -> String {
-  let n = s.length()
-  let mut start = 0
-  while start < n {
-    let c = s[start]
-    if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
-      break
-    }
-    start = start + 1
-  }
-  let mut end = n
-  while end > start {
-    let c = s[end - 1]
-    if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
-      break
-    }
-    end = end - 1
-  }
-  if start == 0 && end == n {
-    s
-  } else {
-    String::from_array(s.to_array()[start:end])
   }
 }
 
@@ -3748,8 +3455,6 @@ pub fn extension() -> @proton_extension.Extension {
         @proton_command.AppCommandApiDescriptor::new("write_text"),
         @proton_command.AppCommandApiDescriptor::new("read_label"),
         @proton_command.AppCommandApiDescriptor::new("write_label"),
-        @proton_command.AppCommandApiDescriptor::new("pick_folder"),
-        @proton_command.AppCommandApiDescriptor::new("pick_file"),
         @proton_command.AppCommandApiDescriptor::new("scan_classes"),
         @proton_command.AppCommandApiDescriptor::new("save_classes"),
         @proton_command.AppCommandApiDescriptor::new("load_classes"),
@@ -3780,8 +3485,6 @@ fn register_labeler_commands(
   context.op_async("write_text", op_write_text, emits_events=false)
   context.op_async("read_label", op_read_label, emits_events=false)
   context.op_async("write_label", op_write_label, emits_events=false)
-  context.op_async("pick_folder", op_pick_folder, emits_events=false)
-  context.op_async("pick_file", op_pick_file, emits_events=false)
   context.op_async("scan_classes", op_scan_classes, emits_events=false)
   context.op_async("save_classes", op_save_classes, emits_events=false)
   context.op_async("load_classes", op_load_classes, emits_events=false)
