@@ -537,39 +537,6 @@ fn ps_escape(s : String) -> String {
 }
 
 ///|
-/// Build a PowerShell `WriteAllBytes` command that decodes a base64
-/// string and writes it to a UTF-8 (no-BOM) file. We avoid passing the
-/// raw content as a PowerShell single-quoted literal because PS
-/// silently strips `"` from inside `'...'` literals, producing broken
-/// JSON. Base64 round-tripping is the safe path for any user-supplied
-/// text.
-///
-/// Two PS-5.1-specific gotchas:
-///
-/// 1. MoonBit `String` is internally stored as UTF-16 LE on the native
-///    target, so `content.to_bytes()` would give UTF-16 LE bytes (every
-///    ASCII byte followed by `0x00`). `WriteAllBytes` then writes those
-///    bytes literally and we get a UTF-16-LE file on disk. We must
-///    encode to UTF-8 explicitly via `@encoding.encode(UTF8, content)`
-///    so the on-disk file is a normal UTF-8 JSON document.
-///
-/// 2. `[Convert]::FromBase64String(...)` in PS 5.1 returns `Object[]`
-///    of `char` values, not `byte[]`. `WriteAllBytes` then iterates
-///    the array and writes the low byte of each `char` — fine for
-///    ASCII, but the cast `[byte[]](...)` is needed to force `byte[]`
-///    storage so the runtime doesn't re-encode the values as UTF-16 LE
-///    on the way to the file.
-fn ps_write_bytes_base64(path : String, content : String) -> String {
-  let utf8 = @encoding.encode(@encoding.UTF8, content)
-  let b64 = @base64.encode(utf8, url_safe=false)
-  "[System.IO.File]::WriteAllBytes('" +
-  ps_escape(path) +
-  "', [byte[]]([Convert]::FromBase64String('" +
-  b64 +
-  "')))"
-}
-
-///|
 /// --- ops ---
 async fn op_list_images(req : ListImagesRequest) -> ListImagesReply {
   let exts = match req.extensions {
@@ -598,78 +565,65 @@ async fn op_read_image(req : ReadImageRequest) -> ReadImageReply {
 }
 
 ///|
-/// Resolve a unique temp JPEG path under `%TEMP%/moonbit-labeler-thumbs/`.
-/// Mirrors `video_frame_tmp_path()` but lives in a sibling dir so we
-/// don't race with concurrent video frame extracts.
-async fn thumb_tmp_path() -> String {
-  let dir = "C:\\Windows\\Temp\\moonbit-labeler-thumbs"
-  if !(@fs.exists(dir) catch { _ => false }) {
-    @fs.mkdir(dir, recursive=true) catch {
-      _ => ()
-    }
-  }
-  let stamp = now_millis_unix().to_string()
-  dir + "\\thumb-" + stamp + ".jpg"
-}
-
-///|
-/// Read a downscaled thumbnail. We use ffmpeg rather than a native
-/// image library because (a) it's already on PATH (used by the video
-/// path) and (b) it handles JPEG, PNG, BMP, WebP, GIF uniformly without
-/// us having to bring in Pillow-style deps. The `-vf scale=` filter
-/// preserves aspect ratio; `-1` on the second dim tells ffmpeg to
-/// compute it. Output JPEG quality is `q:v 5` by default — visually
-/// fine for a 128px sidebar thumb, ~3-5 KB per file vs ~250 KB for
-/// the original full-res JPG.
+/// Read a downscaled thumbnail. Pure-MoonBit pipeline: decode the
+/// source (JPEG / PNG / BMP / GIF / QOI / TGA via buildliming),
+/// bilinear-resize to fit inside `max_edge`, re-encode as BMP, base64
+/// the result for the frontend to drop into a data: URL.
+///
+/// The output is BMP rather than JPEG because buildliming's encoder
+/// set is BMP / QOI (no JPEG encoder). BMP is browser-native — the
+/// frontend feeds it to <img>/createImageBitmap and never notices
+/// the difference. At 128px the BMP payload is typically <20 KB,
+/// comparable to what ffmpeg's `q:v 5` JPEG produced.
 async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply {
   let max_edge = match req.max_edge {
     Some(v) if v >= 32 && v <= 1024 => v
     _ => 128
   }
-  let q = match req.quality {
-    Some(v) if v >= 1 && v <= 31 => v
-    _ => 5
-  }
-  let tmp = thumb_tmp_path()
-  let scale = "scale=" + max_edge.to_string() + ":-1"
-  let (code, _out) = @process.collect_stdout("ffmpeg.exe", [
-    "-loglevel",
-    "error",
-    "-i",
-    req.path,
-    "-vf",
-    scale,
-    "-frames:v",
-    "1",
-    "-q:v",
-    q.to_string(),
-    "-y",
-    tmp,
-  ]) catch {
-    err => fail("read_thumb ffmpeg spawn failed: " + err.to_string())
-  }
-  if code != 0 {
-    @fs.remove(tmp) catch {
-      _ => ()
-    }
-    // Don't fail — surface as an empty reply so the frontend's
-    // loadThumbFallback can fall back to read_image.
-    return { path: req.path, base64: "", mime: "image/jpeg" }
-  }
-  let data = @fs.read_file(tmp) catch {
+  // Read the source as bytes; let buildliming auto-detect the format.
+  let data = @fs.read_file(req.path) catch {
     err => {
-      @fs.remove(tmp) catch {
-        _ => ()
-      }
-      fail("read_thumb read failed: " + err.to_string())
+      // Surface as empty reply so the frontend's loadThumbFallback
+      // can fall back to read_image (full-res file:// URL).
+      let _ = err
+      return { path: req.path, base64: "", mime: "image/bmp" }
     }
   }
-  let bytes = data.binary()
-  let base64 = base64_encode(bytes)
-  @fs.remove(tmp) catch {
-    _ => ()
+  let raw = data.binary()
+  let img = decode_for(req.path, raw) catch {
+    _ => return { path: req.path, base64: "", mime: "image/bmp" }
   }
-  { path: req.path, base64, mime: "image/jpeg" }
+  let w = img.width
+  let h = img.height
+  if w <= 0 || h <= 0 {
+    return { path: req.path, base64: "", mime: "image/bmp" }
+  }
+  // Compute the new size preserving aspect ratio. `max_edge` is the
+  // longest-side cap; the other dimension scales proportionally.
+  let nw = if w >= h {
+    max_edge
+  } else {
+    (w.to_double() * max_edge.to_double() / h.to_double()).to_int()
+  }
+  let nh = if h >= w {
+    max_edge
+  } else {
+    (h.to_double() * max_edge.to_double() / w.to_double()).to_int()
+  }
+  let nw_final = if nw < 1 { 1 } else { nw }
+  let nh_final = if nh < 1 { 1 } else { nh }
+  // Skip resize when the source is already smaller than the cap —
+  // saves the bilinear pass entirely.
+  let resized = if w <= max_edge && h <= max_edge {
+    img
+  } else {
+    img.resize_bilinear(nw_final, nh_final)
+  }
+  let bmp = @image.encode_bmp(resized) catch {
+    err =>
+      fail("read_thumb encode_bmp failed: " + err.to_string())
+  }
+  { path: req.path, base64: base64_encode(bmp), mime: "image/bmp" }
 }
 
 ///| --- buildliming/moonbit_image integration (bypass path) ---
@@ -809,22 +763,17 @@ async fn op_read_text(req : ReadTextRequest) -> ReadTextReply {
 
 ///|
 async fn op_write_text(req : WriteTextRequest) -> WriteTextReply {
-  // PowerShell-based file write via base64. See op_write_label for
-  // the rationale — PowerShell single-quoted string literals
-  // silently strip `"` from inside `'...'`, so JSON / text with
-  // double-quotes would be written broken. base64 round-trips the
-  // bytes intact.
-  let (code, ps_out) = @process.collect_stdout("powershell.exe", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
-    ps_write_bytes_base64(req.path, req.content),
-  ]) catch {
-    err => fail("write_text spawn failed: " + err.to_string())
-  }
-  if code != 0 {
-    let ps_text = ps_out.text() catch { _ => "<decode err>" }
-    fail("write_text exited with code \{code}: " + ps_text)
+  // Direct MoonBit @fs.write_file, UTF-8 encoded. (Earlier revisions
+  // routed through PowerShell + base64 to dodge a PS 5.1 quoting bug
+  // and a long-since-fixed async-fs path bug; the current async fs
+  // handles UTF-8 String writes correctly even for paths containing
+  // `@`, so the indirection is no longer needed.)
+  @fs.write_file(
+    req.path,
+    req.content,
+    create_mode=@fs.CreateOrTruncate,
+  ) catch {
+    err => fail("write_text failed: " + err.to_string())
   }
   { path: req.path, bytes: req.content.length() }
 }
@@ -1035,28 +984,16 @@ async fn op_write_label(req : WriteLabelRequest) -> WriteLabelReply {
       _ => ()
     }
   }
-  // Use PowerShell to write the file directly. The MoonBit async fs
-  // has trouble with paths that contain `@` (e.g. Label@<dataset>) —
-  // it returns "system cannot find the path specified" even when the
-  // directory clearly exists. Going through PowerShell bypasses the
-  // buggy path-handling code path.
-  //
-  // We also use base64 to encode the file content because PowerShell
-  // single-quoted string literals silently strip `"` from inside
-  // `'...'` literals — so passing JSON directly as a string literal
-  // would produce a broken file with no quotes. base64 round-trips
-  // the bytes intact.
-  let (code, ps_out) = @process.collect_stdout("powershell.exe", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
-    ps_write_bytes_base64(label_path, req.content),
-  ]) catch {
-    err => fail("write_label spawn failed: " + err.to_string())
-  }
-  if code != 0 {
-    let ps_text = ps_out.text() catch { _ => "<decode err>" }
-    fail("write_label exited with code \{code}: " + ps_text)
+  // Direct MoonBit @fs.write_file, UTF-8 encoded. The async fs in
+  // moon 0.4.43+ handles paths with `@` correctly, and the String ->
+  // UTF-8 -> Bytes conversion preserves `"` and `\` without escape
+  // round-trips.
+  @fs.write_file(
+    label_path,
+    req.content,
+    create_mode=@fs.CreateOrTruncate,
+  ) catch {
+    err => fail("write_label failed: " + err.to_string())
   }
   { image_path: req.image_path, label_path, bytes: req.content.length() }
 }
@@ -1411,48 +1348,16 @@ async fn op_save_classes(req : SaveClassesRequest) -> SaveClassesReply {
   }
   buf.write_string("\n  ]\n}\n")
   let dest = join_path(image_dir, "classes.json")
-  // Write the file directly via PowerShell + base64. The earlier
-  // approaches (PowerShell WriteAllText with a string literal, then
-  // tmp-file + cmd.exe move) both failed: PowerShell single-quoted
-  // literals silently strip `"` from inside `'...'` (producing broken
-  // JSON), and cmd's `move` chokes on paths containing `@` (e.g.
-  // Image@CARS). base64 round-trip carries the bytes intact.
-  let ps_cmd = ps_write_bytes_base64(dest, buf.to_string())
-  let dbg = "C:\\Windows\\Temp\\moonbit-labeler-save-classes.log"
+  // Direct MoonBit @fs.write_file, UTF-8 encoded. The previous
+  // PowerShell + base64 path was a workaround for a long-fixed
+  // async-fs path bug (paths containing `@`) and a PS 5.1 quoting
+  // bug. The current async fs handles both correctly.
   @fs.write_file(
-    dbg,
-    "dest=" +
-    dest +
-    "\nbuf bytes=" +
-    buf.to_string().length().to_string() +
-    "\ncmd=" +
-    ps_cmd +
-    "\n",
+    dest,
+    buf.to_string(),
     create_mode=@fs.CreateOrTruncate,
   ) catch {
-    _ => ()
-  }
-  let (code, ps_out) = @process.collect_stdout("powershell.exe", [
-    "-NoProfile", "-NonInteractive", "-Command", ps_cmd,
-  ]) catch {
     err => fail("save_classes write failed: " + err.to_string())
-  }
-  if code != 0 {
-    // Best-effort: drop a one-liner to the temp dir for debugging, but
-    // don't fail the whole op just because the log write itself
-    // didn't go through.
-    let dbg = "C:\\Windows\\Temp\\moonbit-labeler-save-classes.log"
-    @fs.write_file(
-      dbg,
-      "dest=" + dest + "\nwrite exit=" + code.to_string() + "\n",
-      create_mode=@fs.CreateOrTruncate,
-    ) catch {
-      _ => ()
-    }
-    let ps_text = ps_out.text() catch { _ => "<decode err>" }
-    fail(
-      "save_classes write exited with code " + code.to_string() + ": " + ps_text,
-    )
   }
   { path: dest, written: req.classes.length() }
 }
@@ -3180,16 +3085,13 @@ fn dedup_push(classes_ordered : Array[String], value : String) -> Unit {
 }
 
 ///|
-/// Write a string to `path` via the PowerShell + base64 helper, log a
-/// debug line on failure and return `true` on success.
+/// Write a string to `path` via direct MoonBit `@fs.write_file` (UTF-8
+/// encoded). Returns `true` on success, `false` on any fs error.
 async fn write_text_or_log(path : String, content : String) -> Bool {
-  let cmd = ps_write_bytes_base64(path, content)
-  let (code, _out) = @process.collect_stdout("powershell.exe", [
-    "-NoProfile", "-NonInteractive", "-Command", cmd,
-  ]) catch {
+  @fs.write_file(path, content, create_mode=@fs.CreateOrTruncate) catch {
     _ => return false
   }
-  code == 0
+  true
 }
 
 ///|

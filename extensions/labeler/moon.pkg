@@ -2,7 +2,6 @@ import {
   "moonbitlang/async/fs",
   "moonbitlang/async/process",
   "moonbitlang/core/json",
-  "moonbitlang/x/codec/base64",
   "moonbitlang/x/encoding",
   "justjavac/proton/command" @proton_command,
   "justjavac/proton/extension" @proton_extension,
