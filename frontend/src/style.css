@@ -228,7 +228,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .workspace {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 280px 1fr;
   min-height: 0;
 }
 
@@ -273,7 +273,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .class-list li {
   display: grid;
-  grid-template-columns: 24px 12px 1fr auto;
+  grid-template-columns: 24px 12px minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
