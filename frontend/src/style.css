@@ -27,9 +27,12 @@
 
 * { box-sizing: border-box; }
 
-html, body, #app {
+html, body {
   height: 100%;
   margin: 0;
+}
+
+html, body, #app {
   font-family: "Segoe UI", system-ui, sans-serif;
   color: var(--ink);
   background: var(--bg);
@@ -38,6 +41,8 @@ html, body, #app {
 #app {
   display: grid;
   grid-template-rows: 48px 32px 1fr 28px;
+  height: 100vh;
+  width: 100vw;
 }
 
 .titlebar {
@@ -228,8 +233,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .workspace {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: minmax(360px, 30%) 1fr;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
 }
 
 .sidebar {
@@ -238,6 +245,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 320px;
+  width: 100%;
+  overflow: hidden;
 }
 .sidebar-head {
   display: flex;
@@ -272,10 +282,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 
 .class-list li {
-  display: grid;
-  grid-template-columns: 24px 12px minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
@@ -283,13 +292,23 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   user-select: none;
 }
 
+.class-list li .key { flex: 0 0 auto; }
 .class-list li .swatch {
-  width: 10px;
-  height: 10px;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
   border-radius: 2px;
   border: 1px solid rgba(0, 0, 0, 0.25);
   display: inline-block;
 }
+.class-list li .name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.class-list li .count { flex: 0 0 auto; }
 
 .class-list li:hover {
   background: var(--hover);
@@ -319,11 +338,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   border-color: var(--accent);
 }
 
-.class-list li .name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* .class-list li .name 已移到 .class-list li .name 上方块，集中声明 — */
 
 .class-list li .count {
   color: var(--muted);
