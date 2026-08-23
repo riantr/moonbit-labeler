@@ -403,7 +403,7 @@ function showEmptyHint(text) {
 // adapt main.js's state mutations + IPC handles into the deps
 // object the module expects.
 
-function hideEmptyHint() {
+// function hideEmptyHint() {
   els.emptyHint.hidden = true;
 }
 

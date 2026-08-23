@@ -1,4 +1,4 @@
-﻿///| ---------------------------------------------------------------
+///| ---------------------------------------------------------------
 /// MoonBit Labeler — backend extension
 ///
 /// Exposes filesystem operations the frontend needs to:
@@ -600,8 +600,7 @@ async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply {
     img.resize_bilinear(nw_final, nh_final)
   }
   let bmp = @image.encode_bmp(resized) catch {
-    err =>
-      fail("read_thumb encode_bmp failed: " + err.to_string())
+    err => fail("read_thumb encode_bmp failed: " + err.to_string())
   }
   { path: req.path, base64: base64_encode(bmp), mime: "image/bmp" }
 }
@@ -748,11 +747,7 @@ async fn op_write_text(req : WriteTextRequest) -> WriteTextReply {
   // and a long-since-fixed async-fs path bug; the current async fs
   // handles UTF-8 String writes correctly even for paths containing
   // `@`, so the indirection is no longer needed.)
-  @fs.write_file(
-    req.path,
-    req.content,
-    create_mode=@fs.CreateOrTruncate,
-  ) catch {
+  @fs.write_file(req.path, req.content, create_mode=@fs.CreateOrTruncate) catch {
     err => fail("write_text failed: " + err.to_string())
   }
   { path: req.path, bytes: req.content.length() }
@@ -968,11 +963,7 @@ async fn op_write_label(req : WriteLabelRequest) -> WriteLabelReply {
   // moon 0.4.43+ handles paths with `@` correctly, and the String ->
   // UTF-8 -> Bytes conversion preserves `"` and `\` without escape
   // round-trips.
-  @fs.write_file(
-    label_path,
-    req.content,
-    create_mode=@fs.CreateOrTruncate,
-  ) catch {
+  @fs.write_file(label_path, req.content, create_mode=@fs.CreateOrTruncate) catch {
     err => fail("write_label failed: " + err.to_string())
   }
   { image_path: req.image_path, label_path, bytes: req.content.length() }
@@ -1117,11 +1108,7 @@ async fn op_save_classes(req : SaveClassesRequest) -> SaveClassesReply {
   // PowerShell + base64 path was a workaround for a long-fixed
   // async-fs path bug (paths containing `@`) and a PS 5.1 quoting
   // bug. The current async fs handles both correctly.
-  @fs.write_file(
-    dest,
-    buf.to_string(),
-    create_mode=@fs.CreateOrTruncate,
-  ) catch {
+  @fs.write_file(dest, buf.to_string(), create_mode=@fs.CreateOrTruncate) catch {
     err => fail("save_classes write failed: " + err.to_string())
   }
   { path: dest, written: req.classes.length() }
@@ -2065,9 +2052,7 @@ async fn read_image_dims(path : String) -> (Int, Int) {
   if path == "" {
     return (0, 0)
   }
-  let data = @fs.read_file(path) catch {
-    _ => return (0, 0)
-  }
+  let data = @fs.read_file(path) catch { _ => return (0, 0) }
   let bytes = data.binary()
   if bytes.length() < 24 {
     return (0, 0)
@@ -2206,9 +2191,7 @@ fn json_get_int(j : Json) -> Int? {
       if s == "" {
         None
       } else {
-        let parsed = try @string.parse_int(s) catch {
-          _ => -1
-        }
+        let parsed = @string.parse_int(s) catch { _ => -1 }
         if parsed < 0 {
           None
         } else {
@@ -2338,7 +2321,7 @@ fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
     if from == "" || to == "" || from == to {
       continue
     }
-    if !(info_ids.contains(from)) || !(info_ids.contains(to)) {
+    if !info_ids.contains(from) || !info_ids.contains(to) {
       continue
     }
     let id = json_get_string(obj, "id")
@@ -2365,7 +2348,7 @@ fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
       Some(n) =>
         if n >= 0 {
           let key = n.to_string()
-          if !(frames_set.contains(key)) {
+          if !frames_set.contains(key) {
             frames_set.set(key, true)
             frames_acc.push(n)
           }
@@ -2402,9 +2385,7 @@ fn parse_label_text(
   fallback_img_name : String,
 ) -> (String, String) raise {
   let stripped = strip_bom(text)
-  let raw = @json.parse(stripped) catch {
-    err => raise err
-  }
+  let raw = @json.parse(stripped) catch { err => raise err }
   let normalized = normalize_label_json(raw, fallback_img_name)
   (normalized.stringify(), "")
 }
@@ -2418,9 +2399,7 @@ fn parse_label_text(
 /// Raises the underlying parser error on failure.
 fn serialize_label_text(text : String) -> (String, String) raise {
   let stripped = strip_bom(text)
-  let raw = @json.parse(stripped) catch {
-    err => raise err
-  }
+  let raw = @json.parse(stripped) catch { err => raise err }
   let normalized = normalize_label_json(raw, "")
   // Round all coordinates to integers to match the on-disk convention
   // and avoid the editor accumulating floating-point drift across
@@ -2652,10 +2631,12 @@ fn parse_one_info(s : String, idx : Int) -> (ExportAnn, Int)? {
     p => {
       let mut k = p
       while k < entry_text.length() &&
-            (entry_text[k] == ' ' ||
-             entry_text[k] == '\t' ||
-             entry_text[k] == '\n' ||
-             entry_text[k] == '\r') {
+            (
+              entry_text[k] == ' ' ||
+              entry_text[k] == '\t' ||
+              entry_text[k] == '\n' ||
+              entry_text[k] == '\r'
+            ) {
         k = k + 1
       }
       if k < entry_text.length() && entry_text[k] == '"' {
@@ -2735,7 +2716,14 @@ fn parse_points_array(s : String, start : Int) -> Array[(Double, Double)] {
   let mut i = start + 1
   while i < n && s[i] != ']' {
     // Skip whitespace + commas between entries.
-    while i < n && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == ',' || s[i] == '\r') {
+    while i < n &&
+          (
+            s[i] == ' ' ||
+            s[i] == '\t' ||
+            s[i] == '\n' ||
+            s[i] == ',' ||
+            s[i] == '\r'
+          ) {
       i = i + 1
     }
     if i >= n || s[i] == ']' {
@@ -2947,7 +2935,7 @@ fn voc_xml_for(
   buf.write_string("<annotation>\n")
   buf.write_string("  <folder>")
   buf.write_string(xml_escape(folder))
-  buf.write_string("</folder>\n   <filename>"  )
+  buf.write_string("</folder>\n   <filename>")
   buf.write_string(xml_escape(filename))
   buf.write_string("</filename>\n")
 
@@ -3179,7 +3167,11 @@ async fn export_voc_internal(
   let mut skipped = 0
   let classes_ordered : Array[String] = []
   let dbg = "C:\\Users\\hp\\.minimax\\moonbit-labeler-export-voc.log"
-  @fs.write_file(dbg, "=== export_voc start ===\n", create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_file(
+    dbg,
+    "=== export_voc start ===\n",
+    create_mode=@fs.CreateOrTruncate,
+  ) catch {
     _ => ()
   }
   async fn elog(s : String) {
@@ -3239,7 +3231,12 @@ async fn export_voc_internal(
       skipped = skipped + 1
     }
   }
-  { dest_folder, exported_count: exported, skipped_count: skipped, classes: classes_ordered }
+  {
+    dest_folder,
+    exported_count: exported,
+    skipped_count: skipped,
+    classes: classes_ordered,
+  }
 }
 
 ///|
@@ -3270,12 +3267,8 @@ async fn export_yolo_internal(
     if img == "" {
       continue
     }
-    let data = @fs.read_file(join_path(label_dir, name)) catch {
-      _ => continue
-    }
-    let text = data.text() catch {
-      _ => continue
-    }
+    let data = @fs.read_file(join_path(label_dir, name)) catch { _ => continue }
+    let text = data.text() catch { _ => continue }
     let anns = parse_export_anns(text)
     if anns.length() == 0 {
       continue
@@ -3304,7 +3297,7 @@ async fn export_yolo_internal(
     k = k + 1
   }
   let classes_path = join_path(dest_folder, "classes.txt")
-  if !(write_text_or_log(classes_path, cls_buf.to_string())) {
+  if !write_text_or_log(classes_path, cls_buf.to_string()) {
     return {
       dest_folder,
       exported_count: 0,
@@ -3335,7 +3328,12 @@ async fn export_yolo_internal(
       total_skipped = total_skipped + 1
     }
   }
-  { dest_folder, exported_count: exported, skipped_count: total_skipped, classes: classes_ordered }
+  {
+    dest_folder,
+    exported_count: exported,
+    skipped_count: total_skipped,
+    classes: classes_ordered,
+  }
 }
 
 ///|
@@ -3413,7 +3411,7 @@ async fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply {
     Some(s) => s
     None => ""
   }
-  let (text, err) = try parse_label_text(req.text, fallback) catch {
+  let (text, err) = parse_label_text(req.text, fallback) catch {
     e => ("", "parse_label failed: " + e.to_string())
   }
   if err != "" {
@@ -3428,7 +3426,7 @@ async fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply {
 /// See `serialize_label_text` for the actual logic.
 #warnings("-unused_async")
 async fn op_serialize_label(req : SerializeLabelRequest) -> SerializeLabelReply {
-  let (text, err) = try serialize_label_text(req.label_text) catch {
+  let (text, err) = serialize_label_text(req.label_text) catch {
     e => ("", "serialize_label failed: " + e.to_string())
   }
   if err != "" {
@@ -3496,8 +3494,16 @@ fn register_labeler_commands(
   context.op_async("list_videos", op_list_videos, emits_events=false)
   context.op_async("read_video_info", op_read_video_info, emits_events=false)
   context.op_async("read_video_frame", op_read_video_frame, emits_events=false)
-  context.op_async("export_voc_folder", op_export_voc_folder, emits_events=false)
-  context.op_async("export_yolo_folder", op_export_yolo_folder, emits_events=false)
+  context.op_async(
+    "export_voc_folder",
+    op_export_voc_folder,
+    emits_events=false,
+  )
+  context.op_async(
+    "export_yolo_folder",
+    op_export_yolo_folder,
+    emits_events=false,
+  )
   context.op_async("parse_label", op_parse_label, emits_events=false)
   context.op_async("serialize_label", op_serialize_label, emits_events=false)
   Ok(())

@@ -50,17 +50,50 @@ function fileToPath(file, basePath) {
   return rel || "";
 }
 
+/// True when `p` looks like an absolute filesystem path on Windows
+/// (i.e. starts with a drive letter) or on POSIX (i.e. starts with
+/// the path separator). webkitdirectory picks on CEF 147 strip
+/// `file.path` down to a relative folder name, so this is how we
+/// detect "we got a usable absolute path" vs. "we need a fallback".
+function isAbsolutePath(p) {
+  if (!p) return false;
+  if (/^[a-zA-Z]:[\\/]/.test(p)) return true;            // Windows: C:\ or D:/
+  if (p.startsWith("/") || p.startsWith("\\\\")) return true; // POSIX / UNC
+  return false;
+}
+
 /// Open the system folder picker. Resolves to `{ path, cancelled }`
 /// where `path` is the chosen folder's absolute path (empty string
 /// when cancelled).
+///
+/// Strategy:
+///   1. Try `webkitdirectory` first (folder tree UX — user can
+///      navigate a tree, not just drill into a file).
+///   2. If the resulting path is absolute (Chromium / most browsers
+///      populate `file.path` correctly), use it.
+///   3. Otherwise (CEF 147 strips `file.path` in webkitdirectory
+///      mode — we only get a bare folder name like "data"), fall
+///      back to a single-file pick. CEF populates `file.path`
+///      reliably for a single-file pick, so we strip the filename
+///      to land on the absolute parent folder.
+///
+/// The fallback is one extra dialog tap for CEF users but keeps the
+/// function semantically a "folder picker" (the answer is always a
+/// folder, never a file).
 export function pickFolder() {
   return new Promise((resolve) => {
-    const input = makeInput({ webkitdirectory: true });
+    // `active` tracks whichever input is currently mounted: the
+    // initial webkitdirectory input, or the single-file fallback
+    // we open when webkitdirectory strips `file.path` (CEF 147).
+    // The change / cancel / focus handlers all reference `active`
+    // instead of capturing specific inputs in their closures, so
+    // the cleanup logic doesn't have to be re-wired per dialog.
+    let active = makeInput({ webkitdirectory: true });
     let done = false;
     const finish = (result) => {
       if (done) return;
       done = true;
-      if (input.parentNode) input.parentNode.removeChild(input);
+      if (active.parentNode) active.parentNode.removeChild(active);
       window.removeEventListener("focus", onFocus);
       resolve(result);
     };
@@ -70,29 +103,43 @@ export function pickFolder() {
       // window focus returning to us without a file selection.
       setTimeout(() => {
         if (done) return;
-        if (!input.files || input.files.length === 0) {
+        if (!active.files || active.files.length === 0) {
           finish({ path: "", cancelled: true });
         }
       }, 600);
     };
-    input.addEventListener("change", () => {
-      const f = input.files && input.files[0];
+    const onChange = () => {
+      const f = active.files && active.files[0];
       if (!f) {
         finish({ path: "", cancelled: true });
         return;
       }
-      // For webkitdirectory picks, the first file's `path` is a file
-      // inside the chosen folder. Strip back to the directory.
       const full = fileToPath(f, "");
       const sepIdx = Math.max(full.lastIndexOf("\\"), full.lastIndexOf("/"));
       const folder = sepIdx > 0 ? full.slice(0, sepIdx) : full;
-      finish({ path: folder, cancelled: false });
-    });
-    input.addEventListener("cancel", () => {
-      finish({ path: "", cancelled: true });
-    });
+      if (isAbsolutePath(folder)) {
+        // Chromium path: webkitdirectory gave us an absolute path.
+        finish({ path: folder, cancelled: false });
+        return;
+      }
+      // CEF 147 path: webkitdirectory stripped `file.path`; the
+      // folder is just a relative name. Swap in a single-file
+      // input so we can recover the absolute parent directory.
+      if (active.parentNode) active.parentNode.removeChild(active);
+      active = makeInput({});
+      active.addEventListener("change", onChange);
+      active.addEventListener("cancel", () =>
+        finish({ path: "", cancelled: true }),
+      );
+      window.addEventListener("focus", onFocus, { once: true });
+      active.click();
+    };
+    active.addEventListener("change", onChange);
+    active.addEventListener("cancel", () =>
+      finish({ path: "", cancelled: true }),
+    );
     window.addEventListener("focus", onFocus, { once: true });
-    input.click();
+    active.click();
   });
 }
 

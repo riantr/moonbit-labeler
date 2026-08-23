@@ -4,6 +4,14 @@ target/
 .mooncakes/
 .moonagent/
 .proton/
+# Proton native prebuilts extracted for `proton_cli build` on Windows.
+# The actual artifact lives in target/proton-dist/ after `proton_cli package`.
+proton/
+# CEF download log from `proton_cli cef setup` (151 MB tarball trace).
+cef_setup.log
+# Local build-driver script + scratch log; not part of the project.
+build_with_msvc.bat
+build.log
 frontend/dist/
 frontend/node_modules/
 # Sample / dataset images — user data, large, varies per deployment.
