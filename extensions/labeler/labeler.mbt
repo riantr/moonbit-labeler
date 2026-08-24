@@ -422,20 +422,29 @@ fn is_video_ext(name : String, exts : Array[String]) -> Bool {
 
 ///|
 /// Returns the file extension including the leading `.`, or `""`.
+/// Walks the string char-by-char so the function is independent of
+/// the moonbitlang/x encoding package (avoids a moon toolchain
+/// compatibility surface for what is really a Unicode-aware byte
+/// index scan).
 fn ext_of(name : String) -> String {
-  let bytes = @encoding.encode(@encoding.UTF8, name)
   let mut dot = -1
-  for i in 0..<bytes.length() {
-    if bytes[i] == b'.' {
+  let mut i = 0
+  for c in name {
+    if c == '.' {
       dot = i
     }
+    i = i + 1
   }
   if dot < 0 {
     ""
   } else {
-    let buf = StringBuilder::new(size_hint=bytes.length() - dot)
-    for i in dot..<bytes.length() {
-      buf.write_char(Int::unsafe_to_char(bytes[i].to_int()))
+    let buf = StringBuilder::new(size_hint=name.length() - dot)
+    let mut k = 0
+    for c in name {
+      if k >= dot {
+        buf.write_char(c)
+      }
+      k = k + 1
     }
     buf.to_string()
   }
@@ -518,6 +527,12 @@ fn mime_for(name : String) -> String {
 
 ///|
 /// --- ops ---
+// Each op_* handler is intended to be wired into an external IPC layer
+// (HTTP server, Proton extension, WASM bridge, ...) by the consumer of
+// this library. When the package is checked in isolation — without such
+// a layer registering them — every op_* is reported as unused. Suppress
+// that warning so the library is usable standalone.
+#warnings("-unused_value")
 async fn op_list_images(req : ListImagesRequest) -> ListImagesReply {
   let exts = match req.extensions {
     Some(list) if list.length() > 0 => list
@@ -536,6 +551,7 @@ async fn op_list_images(req : ListImagesRequest) -> ListImagesReply {
 }
 
 ///|
+#warnings("-unused_value")
 async fn op_read_image(req : ReadImageRequest) -> ReadImageReply {
   let data = @fs.read_file(req.path) catch {
     err => fail("read_image failed: " + err.to_string())
@@ -555,6 +571,7 @@ async fn op_read_image(req : ReadImageRequest) -> ReadImageReply {
 /// frontend feeds it to <img>/createImageBitmap and never notices
 /// the difference. At 128px the BMP payload is typically <20 KB,
 /// comparable to what ffmpeg's `q:v 5` JPEG produced.
+#warnings("-unused_value")
 async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply {
   let max_edge = match req.max_edge {
     Some(v) if v >= 32 && v <= 1024 => v
@@ -639,6 +656,7 @@ pub struct DecodeImageRequest {
 } derive(FromJson, ToJson, Eq, Debug)
 
 ///|
+#warnings("-unused_value")
 async fn op_decode_image(req : DecodeImageRequest) -> ReadImageReply {
   let data = @fs.read_file(req.path) catch {
     err => fail("decode_image read failed: " + err.to_string())
@@ -672,6 +690,7 @@ pub struct ResizeImageRequest {
 } derive(FromJson, ToJson, Eq, Debug)
 
 ///|
+#warnings("-unused_value")
 async fn op_resize_image(req : ResizeImageRequest) -> ReadImageReply {
   let max_edge = match req.max_edge {
     Some(v) if v >= 16 && v <= 4096 => v
@@ -722,6 +741,7 @@ fn decode_for(path : String, raw : Bytes) -> @image.Image raise {
 }
 
 ///|
+#warnings("-unused_value")
 async fn op_read_text(req : ReadTextRequest) -> ReadTextReply {
   if !@fs.exists(req.path) {
     return { path: req.path, content: "", found: false }
@@ -741,6 +761,7 @@ async fn op_read_text(req : ReadTextRequest) -> ReadTextReply {
 }
 
 ///|
+#warnings("-unused_value")
 async fn op_write_text(req : WriteTextRequest) -> WriteTextReply {
   // Direct MoonBit @fs.write_file, UTF-8 encoded. (Earlier revisions
   // routed through PowerShell + base64 to dodge a PS 5.1 quoting bug
@@ -895,6 +916,7 @@ fn video_path_to_label_path(video_path : String) -> String {
 }
 
 ///|
+#warnings("-unused_value")
 async fn op_read_label(req : ReadLabelRequest) -> ReadLabelReply {
   // Detect whether the request refers to a video or an image. We use the
   // directory-leaf prefix as a strong signal but fall back to extension
@@ -938,6 +960,7 @@ async fn op_read_label(req : ReadLabelRequest) -> ReadLabelReply {
 }
 
 ///|
+#warnings("-unused_value")
 async fn op_write_label(req : WriteLabelRequest) -> WriteLabelReply {
   let (dir, basename) = split_dir_name(req.image_path)
   let (_, dir_leaf) = split_dir_name(dir)
@@ -974,6 +997,7 @@ async fn op_write_label(req : WriteLabelRequest) -> WriteLabelReply {
 /// sibling `Label@<name>` directory. Counts are sorted descending. If the
 /// label directory does not exist or is empty, returns the
 /// `fallback_classes` so the UI still has something to pick from.
+#warnings("-unused_value")
 async fn op_scan_classes(req : ScanClassesRequest) -> ScanClassesReply {
   // image_path can be either a directory (e.g. `D:/x/Image@Foo`) or a file
   // (e.g. `D:/x/Image@Foo/1800003_0.jpg`). Handle both: if it's a directory
@@ -1078,6 +1102,7 @@ fn aggregate_label_entries(items : Array[(String, String)]) -> Array[ClassInfo] 
 ///|
 /// Persist a curated class list to `<image_folder>/classes.json` so the
 /// user can reload it across sessions and share it with other folders.
+#warnings("-unused_value")
 async fn op_save_classes(req : SaveClassesRequest) -> SaveClassesReply {
   let image_dir = derive_image_dir(req.image_path)
   if image_dir == "" {
@@ -1119,6 +1144,7 @@ async fn op_save_classes(req : SaveClassesRequest) -> SaveClassesReply {
 ///   1. `<image_folder>/classes.json`  (curated, persists author intent)
 ///   2. sibling `Label@<name>/` directory scan  (auto-discovered)
 ///   3. `fallback_classes`               (seed list for an empty folder)
+#warnings("-unused_value")
 async fn op_load_classes(req : LoadClassesRequest) -> LoadClassesReply {
   let image_dir = derive_image_dir(req.image_path)
   if image_dir == "" {
@@ -1173,6 +1199,7 @@ async fn op_load_classes(req : LoadClassesRequest) -> LoadClassesReply {
 /// Load a class list from an arbitrary `classes.json` path picked by
 /// the user (e.g. via a native file dialog). Same reply shape as
 /// `op_load_classes` so the frontend can render the result uniformly.
+#warnings("-unused_value")
 async fn op_load_classes_from_file(
   req : LoadClassesFromFileRequest,
 ) -> LoadClassesReply {
@@ -1468,6 +1495,7 @@ async fn video_frame_tmp_path() -> String {
 }
 
 ///|
+#warnings("-unused_value")
 async fn op_list_videos(req : ListVideosRequest) -> ListVideosReply {
   let exts = match req.extensions {
     Some(list) if list.length() > 0 => list
@@ -1498,6 +1526,7 @@ async fn op_list_videos(req : ListVideosRequest) -> ListVideosReply {
 /// We only need: container duration, first video stream width/height/codec,
 /// and a sensible fps. Any parsing error is reported as `ok: false` with
 /// empty/zero fields, which the UI can detect and fall back to defaults.
+#warnings("-unused_value")
 async fn op_read_video_info(req : ReadVideoInfoRequest) -> ReadVideoInfoReply {
   let dbg = "C:\\Windows\\Temp\\moonbit-labeler-video-info.log"
   @fs.write_file(dbg, "", create_mode=@fs.CreateOrTruncate) catch {
@@ -1938,6 +1967,7 @@ fn next_tmp_stamp() -> Int {
 
 ///|
 /// Extract a single frame as a base64-encoded JPEG via ffmpeg.
+#warnings("-unused_value")
 async fn op_read_video_frame(
   req : ReadVideoFrameRequest,
 ) -> ReadVideoFrameReply {
@@ -3355,6 +3385,7 @@ pub struct ExportVocRequest {
 } derive(FromJson, ToJson, Eq, Debug)
 
 ///|
+#warnings("-unused_value")
 async fn op_export_voc_folder(req : ExportVocRequest) -> ExportReply {
   if req.dest_folder == "" {
     fail("export_voc_folder: dest_folder is empty")
@@ -3383,6 +3414,7 @@ pub struct ExportYoloRequest {
 } derive(FromJson, ToJson, Eq, Debug)
 
 ///|
+#warnings("-unused_value")
 async fn op_export_yolo_folder(req : ExportYoloRequest) -> ExportReply {
   if req.dest_folder == "" {
     fail("export_yolo_folder: dest_folder is empty")
@@ -3405,8 +3437,7 @@ async fn op_export_yolo_folder(req : ExportYoloRequest) -> ExportReply {
 ///|
 /// Parse a label JSON text via the shared schema normalizer. See
 /// `parse_label_text` for the actual logic.
-#warnings("-unused_async")
-async fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply {
+fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply {
   let fallback = match req.fallback_img_name {
     Some(s) => s
     None => ""
@@ -3424,8 +3455,7 @@ async fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply {
 ///|
 /// Re-serialize a label JSON text via the shared schema normalizer.
 /// See `serialize_label_text` for the actual logic.
-#warnings("-unused_async")
-async fn op_serialize_label(req : SerializeLabelRequest) -> SerializeLabelReply {
+fn op_serialize_label(req : SerializeLabelRequest) -> SerializeLabelReply {
   let (text, err) = serialize_label_text(req.label_text) catch {
     e => ("", "serialize_label failed: " + e.to_string())
   }
@@ -3436,75 +3466,3 @@ async fn op_serialize_label(req : SerializeLabelRequest) -> SerializeLabelReply 
   }
 }
 
-///|
-/// --- extension registration ---
-pub fn extension() -> @proton_extension.Extension {
-  @proton_extension.from_command_spec(
-    @proton_command.AppCommandExtensionSpec::new(
-      "moonbit_labeler/labeler",
-      "labeler",
-      [
-        @proton_command.AppCommandApiDescriptor::new("list_images"),
-        @proton_command.AppCommandApiDescriptor::new("read_image"),
-        @proton_command.AppCommandApiDescriptor::new("read_thumb"),
-        @proton_command.AppCommandApiDescriptor::new("decode_image"),
-        @proton_command.AppCommandApiDescriptor::new("resize_image"),
-        @proton_command.AppCommandApiDescriptor::new("read_text"),
-        @proton_command.AppCommandApiDescriptor::new("write_text"),
-        @proton_command.AppCommandApiDescriptor::new("read_label"),
-        @proton_command.AppCommandApiDescriptor::new("write_label"),
-        @proton_command.AppCommandApiDescriptor::new("scan_classes"),
-        @proton_command.AppCommandApiDescriptor::new("save_classes"),
-        @proton_command.AppCommandApiDescriptor::new("load_classes"),
-        @proton_command.AppCommandApiDescriptor::new("load_classes_from_file"),
-        @proton_command.AppCommandApiDescriptor::new("list_videos"),
-        @proton_command.AppCommandApiDescriptor::new("read_video_info"),
-        @proton_command.AppCommandApiDescriptor::new("read_video_frame"),
-        @proton_command.AppCommandApiDescriptor::new("export_voc_folder"),
-        @proton_command.AppCommandApiDescriptor::new("export_yolo_folder"),
-        @proton_command.AppCommandApiDescriptor::new("parse_label"),
-        @proton_command.AppCommandApiDescriptor::new("serialize_label"),
-      ],
-      register_labeler_commands,
-    ),
-  )
-}
-
-///|
-fn register_labeler_commands(
-  context : @proton_command.AppCommandExtensionContext,
-) -> Result[Unit, String] {
-  context.op_async("list_images", op_list_images, emits_events=false)
-  context.op_async("read_image", op_read_image, emits_events=false)
-  context.op_async("read_thumb", op_read_thumb, emits_events=false)
-  context.op_async("decode_image", op_decode_image, emits_events=false)
-  context.op_async("resize_image", op_resize_image, emits_events=false)
-  context.op_async("read_text", op_read_text, emits_events=false)
-  context.op_async("write_text", op_write_text, emits_events=false)
-  context.op_async("read_label", op_read_label, emits_events=false)
-  context.op_async("write_label", op_write_label, emits_events=false)
-  context.op_async("scan_classes", op_scan_classes, emits_events=false)
-  context.op_async("save_classes", op_save_classes, emits_events=false)
-  context.op_async("load_classes", op_load_classes, emits_events=false)
-  context.op_async(
-    "load_classes_from_file",
-    op_load_classes_from_file,
-    emits_events=false,
-  )
-  context.op_async("list_videos", op_list_videos, emits_events=false)
-  context.op_async("read_video_info", op_read_video_info, emits_events=false)
-  context.op_async("read_video_frame", op_read_video_frame, emits_events=false)
-  context.op_async(
-    "export_voc_folder",
-    op_export_voc_folder,
-    emits_events=false,
-  )
-  context.op_async(
-    "export_yolo_folder",
-    op_export_yolo_folder,
-    emits_events=false,
-  )
-  context.op_async("parse_label", op_parse_label, emits_events=false)
-  context.op_async("serialize_label", op_serialize_label, emits_events=false)
-  Ok(())
-}

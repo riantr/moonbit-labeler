@@ -194,19 +194,6 @@ test "blend composites foreground over background by alpha" {
 }
 
 ///|
-fn close_to(c : Color, r : Int, g : Int, b : Int, tol : Int) -> Bool {
-  fn abs(x : Int) -> Int {
-    if x < 0 {
-      -x
-    } else {
-      x
-    }
-  }
-
-  abs(c.r - r) <= tol && abs(c.g - g) <= tol && abs(c.b - b) <= tol
-}
-
-///|
 test "HSL conversion is exact at the primary-color endpoints" {
   // The integer HSL pipeline (to_hsl + from_hsl) quantises hue and
   // saturation via a 0..100 scale, so mid-spectrum colors can lose

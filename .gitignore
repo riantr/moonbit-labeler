@@ -17,6 +17,8 @@ qa_test.bat
 qa/
 # One-off command output (debugging captures; not source).
 check_output.txt
+check_out.txt
+publish_out.txt
 frontend/dist/
 frontend/node_modules/
 # Sample / dataset images — user data, large, varies per deployment.

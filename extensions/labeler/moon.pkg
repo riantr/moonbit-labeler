@@ -4,9 +4,6 @@ import {
   "moonbitlang/core/json",
   "moonbitlang/core/ref",
   "moonbitlang/core/string",
-  "moonbitlang/x/encoding",
-  "justjavac/proton/command" @proton_command,
-  "justjavac/proton/extension" @proton_extension,
   "riantr/moonbit_labeler/extensions/image",
 }
 
