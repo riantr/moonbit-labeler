@@ -132,36 +132,6 @@ pub struct WriteLabelReply {
 /// `points: "x,y;x,y;..."` and modern `points: [[x, y], ...]` shapes,
 /// infers missing `shape` from point count, mints missing `id`s, and
 /// strips UTF-8 BOMs.
-pub struct ParseLabelRequest {
-  text : String
-  /// Substituted into `img_name` when the parsed JSON has none.
-  fallback_img_name : String?
-} derive(FromJson, ToJson, Eq, Debug)
-
-///|
-pub struct ParseLabelReply {
-  ok : Bool
-  /// Normalized modern-schema JSON text. Empty when ok=false.
-  label_text : String
-  /// Human-readable error message. Empty when ok=true.
-  error : String
-} derive(ToJson, Eq, Debug)
-
-///|
-/// Re-serialize a label JSON text to the modern schema. Rounds pixel
-/// coordinates to integers, drops empty `points` and dangling
-/// bindings, and includes `frames` only when non-empty.
-pub struct SerializeLabelRequest {
-  /// Frontend-built label as JSON text.
-  label_text : String
-} derive(FromJson, ToJson, Eq, Debug)
-
-///|
-pub struct SerializeLabelReply {
-  ok : Bool
-  text : String
-  error : String
-} derive(ToJson, Eq, Debug)
 
 ///|
 /// Default image extensions when the frontend doesn't pass a list.
@@ -373,7 +343,7 @@ async fn ensure_dir(path : String) -> Unit {
 
 ///|
 fn lower(s : String) -> String {
-  let buf = StringBuilder::new(size_hint=s.length())
+  let buf = StringBuilder()
   for c in s {
     if c >= 'A' && c <= 'Z' {
       buf.write_char(Int::unsafe_to_char(c.to_int() + 32))
@@ -387,7 +357,7 @@ fn lower(s : String) -> String {
 ///|
 /// Upper-case helper for color normalization (color hex).
 fn upper(s : String) -> String {
-  let buf = StringBuilder::new(size_hint=s.length())
+  let buf = StringBuilder()
   for c in s {
     if c >= 'a' && c <= 'z' {
       buf.write_char(Int::unsafe_to_char(c.to_int() - 32))
@@ -438,7 +408,7 @@ fn ext_of(name : String) -> String {
   if dot < 0 {
     ""
   } else {
-    let buf = StringBuilder::new(size_hint=name.length() - dot)
+    let buf = StringBuilder()
     let mut k = 0
     for c in name {
       if k >= dot {
@@ -468,7 +438,7 @@ fn base64_encode(data : Bytes) -> String {
     'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
     'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/',
   ]
-  let buf = StringBuilder::new(size_hint=(data.length() + 2) / 3 * 4)
+  let buf = StringBuilder()
   let mut i = 0
   while i + 2 < data.length() {
     let b0 = data[i].to_int()
@@ -1110,7 +1080,7 @@ async fn op_save_classes(req : SaveClassesRequest) -> SaveClassesReply {
   }
   // Build JSON. We escape a few characters minimally: class names are
   // alphanumeric + underscore, but be safe in case users type " or \.
-  let buf = StringBuilder::new(size_hint=64 + req.classes.length() * 16)
+  let buf = StringBuilder()
   buf.write_string("{\n  \"classes\": [\n")
   let mut first = true
   for c in req.classes {
@@ -1304,7 +1274,7 @@ fn parse_curated_json(text : String) -> Array[CuratedClass] {
     return out
   }
   j = j + 1
-  let buf = StringBuilder::new(size_hint=8)
+  let buf = StringBuilder()
   let mut in_str = false
   let mut escape = false
   while j < n {
@@ -1399,7 +1369,7 @@ fn slice_trim(text : String, s : Int, e : Int) -> String {
   while b > a && (text[b - 1] == ' ' || text[b - 1] == '\t') {
     b = b - 1
   }
-  let buf = StringBuilder::new(size_hint=b - a)
+  let buf = StringBuilder()
   let mut k = a
   while k < b {
     buf.write_char(Int::unsafe_to_char(text[k].to_int()))
@@ -2410,12 +2380,12 @@ fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
 /// (`points: [[x, y], ...]`) shapes. Returns `(label_text, "")` on
 /// success and raises the underlying parser error on failure so the
 /// op layer can convert it to a structured reply.
-fn parse_label_text(
+pub fn parse_label_text(
   text : String,
   fallback_img_name : String,
 ) -> (String, String) raise {
   let stripped = strip_bom(text)
-  let raw = @json.parse(stripped) catch { err => raise err }
+  let raw = @json.parse(stripped)
   let normalized = normalize_label_json(raw, fallback_img_name)
   (normalized.stringify(), "")
 }
@@ -2427,9 +2397,9 @@ fn parse_label_text(
 /// `id`, `shape`, and `points` as nested arrays; rounds pixel
 /// coordinates to integers; `frames` is included only when non-empty.
 /// Raises the underlying parser error on failure.
-fn serialize_label_text(text : String) -> (String, String) raise {
+pub fn serialize_label_text(text : String) -> (String, String) raise {
   let stripped = strip_bom(text)
-  let raw = @json.parse(stripped) catch { err => raise err }
+  let raw = @json.parse(stripped)
   let normalized = normalize_label_json(raw, "")
   // Round all coordinates to integers to match the on-disk convention
   // and avoid the editor accumulating floating-point drift across
@@ -2536,7 +2506,7 @@ fn read_json_string(s : String, idx : Int) -> (String, Int)? {
     return None
   }
   let mut j = idx + 1
-  let buf = StringBuilder::new(size_hint=16)
+  let buf = StringBuilder()
   while j < n {
     let c = s[j]
     if c == '\\' {
@@ -2917,7 +2887,7 @@ fn polygon_bbox(
 /// the C# reference uses plain `&lt; &gt; &amp; &quot; &apos;`
 /// escapes and that round-trips with every parser we care about.
 fn xml_escape(s : String) -> String {
-  let buf = StringBuilder::new(size_hint=s.length())
+  let buf = StringBuilder()
   for c in s {
     if c == '<' {
       buf.write_string("&lt;")
@@ -2961,7 +2931,7 @@ fn voc_xml_for(
   height : Int,
   anns : Array[ExportAnn],
 ) -> String {
-  let buf = StringBuilder::new(size_hint=256 + anns.length() * 96)
+  let buf = StringBuilder()
   buf.write_string("<annotation>\n")
   buf.write_string("  <folder>")
   buf.write_string(xml_escape(folder))
@@ -3044,7 +3014,7 @@ fn yolo_txt_for(
   if width <= 0 || height <= 0 {
     return ""
   }
-  let buf = StringBuilder::new(size_hint=anns.length() * 32)
+  let buf = StringBuilder()
   let w = width.to_double()
   let h = height.to_double()
   for info in anns {
@@ -3105,7 +3075,7 @@ fn pad_left_zeros(whole : String, frac : Int, width : Int) -> String {
   let mut padded = frac_str
   if n > 0 {
     let mut k = 0
-    let buf = StringBuilder::new(size_hint=n)
+    let buf = StringBuilder()
     while k < n {
       buf.write_char('0')
       k = k + 1
@@ -3319,7 +3289,7 @@ async fn export_yolo_internal(
   // per-image files (well, sort of — we may still have written empty
   // per-image txts from earlier ops on a re-run; the user can clear
   // dest_folder if they want a clean redo).
-  let cls_buf = StringBuilder::new(size_hint=classes_ordered.length() * 16)
+  let cls_buf = StringBuilder()
   let mut k = 0
   while k < classes_ordered.length() {
     cls_buf.write_string(classes_ordered[k])
@@ -3432,37 +3402,5 @@ async fn op_export_yolo_folder(req : ExportYoloRequest) -> ExportReply {
     )
   }
   export_yolo_internal(image_dir, label_dir, req.dest_folder)
-}
-
-///|
-/// Parse a label JSON text via the shared schema normalizer. See
-/// `parse_label_text` for the actual logic.
-fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply {
-  let fallback = match req.fallback_img_name {
-    Some(s) => s
-    None => ""
-  }
-  let (text, err) = parse_label_text(req.text, fallback) catch {
-    e => ("", "parse_label failed: " + e.to_string())
-  }
-  if err != "" {
-    { ok: false, label_text: "", error: err }
-  } else {
-    { ok: true, label_text: text, error: "" }
-  }
-}
-
-///|
-/// Re-serialize a label JSON text via the shared schema normalizer.
-/// See `serialize_label_text` for the actual logic.
-fn op_serialize_label(req : SerializeLabelRequest) -> SerializeLabelReply {
-  let (text, err) = serialize_label_text(req.label_text) catch {
-    e => ("", "serialize_label failed: " + e.to_string())
-  }
-  if err != "" {
-    { ok: false, text: "", error: err }
-  } else {
-    { ok: true, text, error: "" }
-  }
 }
 

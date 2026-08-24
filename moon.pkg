@@ -1,0 +1,20 @@
+// riantr/moonbit_labeler — the app's main entry point and bundle of
+// shared library code. See README.mbt.md for the project layout.
+//
+// The actual implementation lives in:
+//   * app/                  — Proton IPC shell (executable, requires proton)
+//   * extensions/image/     — image codec library
+//   * extensions/labeler/   — labeling backend (uses image)
+//   * extensions/counter/   — small counter example used by the app
+
+import {
+  "moonbitlang/core/ref",
+  "riantr/moonbit_labeler/extensions/image",
+  "riantr/moonbit_labeler/extensions/labeler",
+}
+
+supported_targets = "native"
+
+options(
+  "native-stub": [ "app/native_stub.c" ],
+)

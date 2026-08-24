@@ -37,3 +37,28 @@ data/Label*/
 .tmp-*.mjs
 .tmp-*
 tmp_force_check/
+# Debug log captures from PowerShell / bash sessions (format, git, etc.)
+# — these are diagnostic dumps, not source.
+*.log
+fmt*.txt
+gh*.txt
+unit.txt
+sast.txt
+gh_chk.txt
+push*_out.txt
+check_out*.txt
+publish_out.txt
+# npm audit reports (transient, not source)
+frontend/audit.json
+# Trashed / moved-out files kept around for safety; clean up periodically.
+tests/.trash/
+# Empty stub directories from abandoned refactor attempts.
+benchmarks/
+# staging-moonbit-image/ is a separate package (riantr/moonbit_image
+# workspace) tracked from its own dir if/when it gets a repo. For
+# now it's a local-only staging area for the next mooncakes publish.
+staging-moonbit-image/
+# Disabled stub files from the stdio-mode-as-subpackage attempt.
+# Exception: app/moon.pkg.disabled IS tracked (publish-workaround).
+*.disabled
+!app/moon.pkg.disabled

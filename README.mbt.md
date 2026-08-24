@@ -48,7 +48,7 @@ proton_cli build -- --release
 
 The `bundle` block in `moon.proton` controls package creation:
 
-```moonbit
+```moonbit nocheck
 bundle = {
   active: true,
   targets: ["app", "zip"],
