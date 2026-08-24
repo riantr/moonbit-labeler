@@ -12,6 +12,11 @@ cef_setup.log
 # Local build-driver script + scratch log; not part of the project.
 build_with_msvc.bat
 build.log
+# QA helper scripts/reports (local pipeline, not source).
+qa_test.bat
+qa/
+# One-off command output (debugging captures; not source).
+check_output.txt
 frontend/dist/
 frontend/node_modules/
 # Sample / dataset images — user data, large, varies per deployment.

@@ -7,7 +7,7 @@ import {
   "moonbitlang/x/encoding",
   "justjavac/proton/command" @proton_command,
   "justjavac/proton/extension" @proton_extension,
-  "moonbit_labeler/extensions/image",
+  "riantr/moonbit_labeler/extensions/image",
 }
 
 supported_targets = "native"

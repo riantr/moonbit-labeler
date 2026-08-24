@@ -404,8 +404,8 @@ function showEmptyHint(text) {
 // object the module expects.
 
 // function hideEmptyHint() {
-  els.emptyHint.hidden = true;
-}
+//   els.emptyHint.hidden = true;
+// }
 
 function showImage(item, opts = {}) {
   showEmptyHint("加载图片...");
@@ -1207,9 +1207,22 @@ async function browseFolder() {
   els.browseBtn.textContent = "…";
   try {
     const reply = await pickFolder();
+    console.log("[browseFolder] reply:", JSON.stringify(reply),
+                " folderInput exists:", !!els.folderInput);
+    // Temporary Phase-1 diagnostic: surface the picker reply on
+    // screen so we can see what CEF handed us without DevTools.
+    if (els.emptyHint) {
+      els.emptyHint.textContent = "DIAG pickFolder: " +
+        JSON.stringify(reply);
+      els.emptyHint.hidden = false;
+    }
     if (reply?.path) {
       els.folderInput.value = reply.path;
+      console.log("[browseFolder] set folderInput.value =", reply.path,
+                  " input.value now =", els.folderInput.value);
       els.folderForm.dispatchEvent(new Event("submit", { cancelable: true }));
+    } else {
+      console.warn("[browseFolder] empty reply.path; not filling input");
     }
   } catch (err) {
     console.error("pickFolder failed:", err);

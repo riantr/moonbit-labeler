@@ -37,9 +37,12 @@ function makeInput({ webkitdirectory = false, accept = "" } = {}) {
 /// caller (`basePath` argument).
 function fileToPath(file, basePath) {
   if (file.path && file.path.length > 0) {
+    console.log("[fileToPath] using file.path =", file.path);
     return file.path;
   }
   const rel = file.webkitRelativePath || file.name;
+  console.log("[fileToPath] file.path empty; using rel =", rel,
+              " basePath =", basePath);
   if (basePath && rel) {
     const sep = basePath.includes("\\") ? "\\" : "/";
     const trimmed = basePath.endsWith(sep)
@@ -95,6 +98,7 @@ export function pickFolder() {
       done = true;
       if (active.parentNode) active.parentNode.removeChild(active);
       window.removeEventListener("focus", onFocus);
+      console.log("[pickFolder] result:", JSON.stringify(result));
       resolve(result);
     };
     const onFocus = () => {
@@ -110,6 +114,11 @@ export function pickFolder() {
     };
     const onChange = () => {
       const f = active.files && active.files[0];
+      console.log("[pickFolder] onChange: active.files.length=",
+                  active.files ? active.files.length : 0,
+                  " first file:",
+                  f ? { name: f.name, path: f.path,
+                        rel: f.webkitRelativePath } : null);
       if (!f) {
         finish({ path: "", cancelled: true });
         return;
@@ -117,6 +126,8 @@ export function pickFolder() {
       const full = fileToPath(f, "");
       const sepIdx = Math.max(full.lastIndexOf("\\"), full.lastIndexOf("/"));
       const folder = sepIdx > 0 ? full.slice(0, sepIdx) : full;
+      console.log("[pickFolder] derived folder:", folder,
+                  " isAbsolute:", isAbsolutePath(folder));
       if (isAbsolutePath(folder)) {
         // Chromium path: webkitdirectory gave us an absolute path.
         finish({ path: folder, cancelled: false });

@@ -1,4 +1,4 @@
-name = "moonbit_labeler"
+name = "riantr/moonbit_labeler"
 
 version = "0.1.0"
 
@@ -10,7 +10,7 @@ import {
 
 readme = "README.mbt.md"
 
-repository = ""
+repository = "https://github.com/riantr/moonbit-labeler"
 
 license = "Apache-2.0"
 
