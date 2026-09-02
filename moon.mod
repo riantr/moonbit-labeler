@@ -4,6 +4,8 @@ version = "0.2.0"
 
 import {
   "moonbitlang/async@0.19.4",
+  "moonbit-community/proton@0.2.5",
+  "moonbit-community/proton_contract@0.2.5",
 }
 
 readme = "README.mbt.md"

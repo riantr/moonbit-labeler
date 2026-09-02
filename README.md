@@ -44,10 +44,17 @@ and CARS-dataset legacy schemas.
 | Layer | Choice | Why |
 |---|---|---|
 | Backend | MoonBit 0.4.43 + async runtime | Native AOT compile, no GC pauses in the hot path |
-| UI shell | Proton 0.1.12 + CEF 147 | Self-contained portable exe, no Electron |
+| UI shell | Proton 0.2.5 + CEF 150.0.19 | Self-contained portable exe, no Electron |
 | Image codec | vendored [buildliming/moonbit_image](extensions/image/) (MIT) | Faster than `mizchi/image` for our workload |
 | Frontend | Vanilla JS + Vite | No framework lock-in, fast cold reload |
 | IPC | MoonBit `@proton_command` JSON ops | Type-safe request/response structs |
+
+### Runtime versions
+
+The Stack table is the target configuration. To install the matching runtime locally, run
+`proton_cli cef setup` and verify against `.proton/runtime.json` (`proton_version` /
+`cef_version`). Older local installs (e.g. Proton 0.1.12) keep the project working but
+don't match the documented target.
 
 ## Project layout
 
