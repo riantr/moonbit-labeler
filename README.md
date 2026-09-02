@@ -47,7 +47,7 @@ and CARS-dataset legacy schemas.
 | UI shell | Proton 0.2.5 + CEF 150.0.19 | Self-contained portable exe, no Electron |
 | Image codec | vendored [buildliming/moonbit_image](extensions/image/) (MIT) | Faster than `mizchi/image` for our workload |
 | Frontend | Vanilla JS + Vite | No framework lock-in, fast cold reload |
-| IPC | MoonBit `@proton_command` JSON ops | Type-safe request/response structs |
+| IPC | MoonBit `@proton_contract.Command` + `@proton_extension.typed` | Type-safe Request/Reply structs, bound via `CommandRegistrar` |
 
 ### Runtime versions
 
@@ -61,12 +61,13 @@ don't match the documented target.
 ```
 .
 ├── app/
-│   └── main.mbt                       # @proton.config(...).extension().run_or_abort()
+│   └── main.mbt                       # 0.2.5 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
 ├── extensions/
-│   ├── labeler/                       # 21 IPC ops + the image/label/VOC/YOLO pipeline
-│   │   ├── labeler.mbt                # ~3,400 lines
-│   │   ├── moon.pkg
-│   │   └── write_probe.mbt            # (deprecated ops, kept for test)
+│   ├── labeler/                       # 18 IPC ops + the image/label/VOC/YOLO pipeline
+│   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
+│   │   ├── extension.mbt               # 0.2.5 extension registration (CommandRegistrar::bind for all 18 ops)
+│   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
+│   │   └── moon.pkg
 │   └── image/                         # vendored buildliming/moonbit_image (14 .mbt files)
 ├── frontend/
 │   ├── dist/                          # Vite build output (inlined into the exe)
@@ -83,8 +84,8 @@ don't match the documented target.
 │       └── style.css                  # all CSS in one place
 ├── data/                              # local sample dataset (Image@CARS.Part.01)
 ├── docs/VIDEO_LABELING.md
-├── moon.mod                           # deps: moonbitlang/x@0.4.43
-├── moon.proton                        # window 1280x800, entry=frontend/dist/index.html
+├── proton.project.json                # 0.2.5 canonical app config (identifier, backend, frontend, package)
+├── moon.mod                           # deps: moonbit-community/proton@0.2.5 + proton_contract@0.2.5
 └── README.mbt.md                      # generated Proton README (do not edit)
 ```
 
@@ -130,17 +131,17 @@ for the project command list.
 ```sh
 moon fmt
 moon check --target native --diagnostic-limit 80
-proton_cli package app       # full build -> target/proton-dist/moonbit-labeler/
-proton_cli dev               # hot-reload dev mode
+proton_cli package            # full build -> target/proton-dist/moonbit-labeler/moonbit-labeler.exe
+proton_cli dev                # hot-reload dev mode (reads proton.project.json)
 ```
 
 The first build downloads ~150 MB of CEF binaries; subsequent builds are
 incremental. If the Proton runtime is missing, run `proton_cli cef setup`.
 
 The packaged binary is at
-`target/proton-dist/moonbit-labeler/moonbit-labeler.exe` and the matching
-ZIP is `target/proton-dist/moonbit-labeler.zip`. The ZIP is self-contained
-— drop it on any Windows machine, unzip, double-click the exe, done.
+`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`. (The `zip` format
+in `proton.project.json` produces a sibling `moonbit-labeler-0.2.5.zip` —
+self-contained, drop on any Windows machine, unzip, double-click the exe.)
 
 ## Keyboard shortcuts
 
@@ -160,8 +161,10 @@ ZIP is `target/proton-dist/moonbit-labeler.zip`. The ZIP is self-contained
 
 ## IPC surface
 
-The MoonBit side registers ops through `@proton_command`. Each op is
-invoked from JS as `window.__MoonBit__.core.invokeOp("ext:labeler/<op>", payload)`.
+The MoonBit side registers ops through `@proton_contract.Command` (declared
+in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
+`labeler.mbt` via `CommandRegistrar::bind`). Each op is invoked from JS as
+`window.__MoonBit__.core.invokeOp("ext:labeler/<op>", payload)`.
 
 | Op | Direction | Purpose |
 |---|---|---|

@@ -4,8 +4,6 @@ import {
   "moonbitlang/core/json",
   "moonbitlang/core/ref",
   "moonbitlang/core/string",
-  "moonbit-community/proton",
-  "moonbit-community/proton/command" @proton_command,
   "moonbit-community/proton/extension" @proton_extension,
   "moonbit-community/proton_contract",
   "riantr/moonbit_labeler/extensions/image",

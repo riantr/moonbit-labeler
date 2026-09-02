@@ -1,0 +1,23 @@
+{
+  "identifier": "com.mavis.moonbit-labeler",
+  "backend": {
+    "path": ".",
+    "package": "app"
+  },
+  "frontend": {
+    "path": "frontend",
+    "dev_url": "http://127.0.0.1:5173",
+    "dist": "dist",
+    "before_dev": "npm run dev -- --host 127.0.0.1 --strictPort",
+    "before_build": "npm run build"
+  },
+  "package": {
+    "product_name": "MoonBit Labeler",
+    "version": "0.2.5",
+    "formats": [
+      "app",
+      "zip"
+    ],
+    "output": "target/proton-dist"
+  }
+}

@@ -21,19 +21,27 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - Format MoonBit:                `moon fmt`
 - Type-check (native):           `moon check --target native --diagnostic-limit 80`
 - Dev (hot reload, Vite + CEF):  `proton_cli dev`
+  (reads `proton.project.json` for the frontend dev server config)
 - Build release:                 `proton_cli build`
-- Inspect package plan:          `proton_cli package app --dry-run`
-- Produce portable exe + zip:    `proton_cli package app`
+- Inspect package plan:          `proton_cli package --dry-run`
+- Produce portable exe + zip:    `proton_cli package`
   → output: `target/proton-dist/moonbit-labeler/moonbit-labeler.exe` + `.zip`
+  (formats + output dir come from the `package` block in `proton.project.json`)
 - Frontend only:                 `cd frontend && npm run dev` / `npm run build`
-- Headless JSON-RPC bridge:      run the entry with `--stdio` as the first arg
-  (see `app/main.mbt`)
+- Headless JSON-RPC bridge:      source preserved in `app/stdio_main.mbt.disabled`
+  (0.1.12-era bridge for non-CEF GUIs; needs port to 0.2.5 `moonbitlang/async` API
+  before the `--stdio` branch in `app/main.mbt` can be re-enabled)
 
 ## Project layout
 
-- `app/`                   — runnable entry. `main.mbt` picks Proton/CEF vs `--stdio` JSON-RPC.
-- `extensions/labeler/`    — 21 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
-  and the pure-MoonBit `dispatch_op(op, payload) -> Json raise` entry point.
+- `app/`                   — runnable entry. `main.mbt` is the Proton/CEF launcher (uses the
+  0.2.5 `App` builder API: `@proton.file(...).identifier(...).capability(...).run_or_abort()`).
+  The 0.1.12 `--stdio` branch has been removed; the headless JSON-RPC bridge source
+  is preserved in `app/stdio_main.mbt.disabled` for a future port.
+- `extensions/labeler/`    — 18 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
+  and the pure-MoonBit `dispatch_op(op, payload) -> Json raise` entry point. In
+  `extension.mbt`, each op is declared as a `@proton_contract.Command[Request, Reply]`
+  and bound to the existing `op_*` handler via a `CommandRegistrar`.
 - `extensions/image/`      — vendored `buildliming/moonbit_image` (MIT, 14 .mbt files). Do not
   modify unless bumping the upstream pin.
 - `frontend/`              — Vite + vanilla-JS UI. `src/main.js` orchestrates IPC + canvas + state;
@@ -46,15 +54,20 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - `tests/`, `qa/`          — black-box tests. `*_blackbox_test.mbt` at the repo root + Gherkin
   feature `image_codecs.feature`; frontend QA in `frontend/qa/webkit_picker_blackbox.test.mjs`.
 - `target/proton-dist/`    — packaged exe + zip (gitignored).
-- `moon.proton`            — window 1280x800, entry=`frontend/dist/index.html`, Vite dev_url.
-- `moon.mod`               — `riantr/moonbit_labeler` v0.2.0, depends on `moonbitlang/async@0.19.4`.
+- `proton.project.json`    — 0.2.5 canonical app config: identifier, backend package path,
+  frontend dev/build commands, product name + version + output dir + formats.
+  (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration.)
+- `moon.mod`               — `riantr/moonbit_labeler` v0.2.5, depends on `moonbit-community/proton@0.2.5`,
+  `proton_contract@0.2.5`, and `moonbitlang/async@0.19.4`.
 
 ## Code style
 
 - MoonBit source under `app/` and `extensions/labeler/`. Vendored code under `extensions/image/`
   stays untouched except when bumping the upstream pin.
-- IPC ops are registered via `@proton_command` in `extensions/labeler/labeler.mbt`. A new op must
-  be added to the table in [README.md](README.md#ipc-surface) and exercised from `frontend/src/`.
+- IPC ops are declared in `extensions/labeler/extension.mbt` as
+  `@proton_contract.Command[Request, Reply]` values and bound to handlers inside
+  `@proton_extension.typed(...)`. A new op must be added to the table in
+  [README.md](README.md#ipc-surface) and exercised from `frontend/src/`.
 - Frontend is vanilla-JS ES modules — no framework, no TypeScript. Match the existing
   `frontend/src/*.js` style (named exports, IIFE-free, no transpilation).
 - Run `moon fmt` before committing; CI does not currently re-format.
@@ -87,8 +100,9 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   to pull the 0.2.5 runtime. Older local installs keep the project working but don't match
   the documented target until upgraded.
 - **Do not reintroduce the old WebSocket app runtime route.** All IPC goes through
-  `@proton_command` ops (`ext:labeler/<op>`) or the headless `--stdio` JSON-RPC bridge
-  defined in `app/stdio_main.mbt` + `app/main.mbt`.
+  `@proton_contract.Command` ops (`ext:labeler/<op>`, registered via
+  `@proton_extension.typed(...)` in `extensions/labeler/extension.mbt`) or the headless
+  `--stdio` JSON-RPC bridge (currently disabled in `app/stdio_main.mbt.disabled`).
 
 ## Security
 
