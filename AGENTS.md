@@ -27,6 +27,21 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - Produce portable exe + zip:    `proton_cli package`
   → output: `target/proton-dist/moonbit-labeler/moonbit-labeler.exe` + `.zip`
   (formats + output dir come from the `package` block in `proton.project.json`)
+
+> **Upstream bug in `proton_cli` 0.2.5 zip step (Windows).** The internal
+> `create_windows_zip` in `proton_package@0.2.5/lib/windows.mbt` passes
+> `destination + ".staging"` to `Compress-Archive -DestinationPath`, but
+> `Compress-Archive` only accepts paths ending in `.zip` (it uses the extension
+> to pick the archive format). Result: PowerShell exits 1 with a non-UTF-8
+> error message; the Moon side sees the UTF-8 decode fail and prints
+> `error: create Windows zip failed: exit code 1: non-UTF-8 output`. The `app/`
+> directory is fully staged before the zip step, so the artifact is not lost.
+> **Workaround:** pass `--format app` to skip the broken zip step, then zip
+> manually with PowerShell `Compress-Archive -LiteralPath <app> -DestinationPath
+> <app>.zip -Force`. The wrapper `_build/package-app.bat` (gitignored) does
+> exactly this; run it instead of raw `proton_cli package` for releases.
+> Track upstream fix: replace `let staging = destination + ".staging"` with
+> `let staging = destination + ".staging.zip"` in `proton_package/lib/windows.mbt`.
 - Frontend only:                 `cd frontend && npm run dev` / `npm run build`
 - Headless JSON-RPC bridge:      source preserved in `app/stdio_main.mbt.disabled`
   (0.1.12-era bridge for non-CEF GUIs; needs port to 0.2.5 `moonbitlang/async` API
