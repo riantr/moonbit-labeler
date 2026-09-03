@@ -43,16 +43,18 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > Track upstream fix: replace `let staging = destination + ".staging"` with
 > `let staging = destination + ".staging.zip"` in `proton_package/lib/windows.mbt`.
 - Frontend only:                 `cd frontend && npm run dev` / `npm run build`
-- Headless JSON-RPC bridge:      source preserved in `app/stdio_main.mbt.disabled`
-  (0.1.12-era bridge for non-CEF GUIs; needs port to 0.2.5 `moonbitlang/async` API
-  before the `--stdio` branch in `app/main.mbt` can be re-enabled)
+- Headless JSON-RPC bridge:      `moonbit-labeler.exe --stdio` (CEF-free; same 18 ops over stdin/stdout)
+  See "Stdio JSON-RPC bridge" below for the wire protocol.
 
 ## Project layout
 
-- `app/`                   — runnable entry. `main.mbt` is the Proton/CEF launcher (uses the
-  0.2.5 `App` builder API: `@proton.file(...).identifier(...).capability(...).run_or_abort()`).
-  The 0.1.12 `--stdio` branch has been removed; the headless JSON-RPC bridge source
-  is preserved in `app/stdio_main.mbt.disabled` for a future port.
+- `app/`                   — runnable entry. `main.mbt` routes to one of two modes:
+  - CEF/Proton (default): `@proton.file(...).identifier(...).capability(...).run_or_abort()` —
+    the 0.2.5 `App` builder API that loads `frontend/dist/index.html` into a CEF webview.
+  - `--stdio` (headless): dispatches the same 18 ops as JSON-RPC over stdin/stdout (see
+    "Stdio JSON-RPC bridge" below). Selected by passing `--stdio` as the first arg.
+  `stdio_main.mbt` holds the stdio loop. Both modes share the `@labeler.dispatch_op`
+  entry point in `extensions/labeler/dispatch.mbt`.
 - `extensions/labeler/`    — 18 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
   and the pure-MoonBit `dispatch_op(op, payload) -> Json raise` entry point. In
   `extension.mbt`, each op is declared as a `@proton_contract.Command[Request, Reply]`
@@ -117,7 +119,42 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - **Do not reintroduce the old WebSocket app runtime route.** All IPC goes through
   `@proton_contract.Command` ops (`ext:labeler/<op>`, registered via
   `@proton_extension.typed(...)` in `extensions/labeler/extension.mbt`) or the headless
-  `--stdio` JSON-RPC bridge (currently disabled in `app/stdio_main.mbt.disabled`).
+  `--stdio` JSON-RPC bridge in `app/stdio_main.mbt`.
+
+## Stdio JSON-RPC bridge
+
+The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as
+a CEF-free JSON-RPC server when launched with `--stdio`. Same 18 ops, same Request/Reply
+structs, same JSON wire format as the CEF path — useful for embedding the labeler backend
+in a Python Qt shell, scripts, or debug tooling.
+
+```
+$ echo '{"id":1,"op":"list_images","payload":{"path":"data/Image@skin","extensions":["jpg"]}}' \
+    | ./moonbit-labeler.exe --stdio
+{"type":"ready","ops":["list_images", ...18 ops...]}
+{"id":1,"ok":true,"result":{"folder":"data/Image@skin","images":[...]}}
+{"type":"bye"}
+```
+
+Wire format (one JSON object per line, newline-delimited):
+
+- Banner on startup: `{"type":"ready","ops":[...18 op names...]}`
+- Request: `{"id": <int|null>, "op": "<name>", "payload": <op-specific-json>}`
+- Response: `{"id": ..., "ok": true,  "result": <json>, "error": null}`
+  or:       `{"id": ..., "ok": false, "result": null, "error": "<message>"}`
+- Trailer on EOF: `{"type":"bye"}`
+
+Implementation: `app/stdio_main.mbt` (`pub async fn run_stdio()`) reads one line per
+request via `@stdio.stdin.read_until("\n")` (trait method on `@io.Reader`), dispatches via
+`@labeler.dispatch_op(op, payload)`, and writes one response line via
+`@stdio.stdout.write(...)` (trait method on `@io.Writer`). The response is a struct
+`Response` with `derive(ToJson)` — 0.2.5 made the `Object`/`Null`/`String` Json variant
+constructors read-only outside `core/json`, so the public way to build a Json object is
+either an object literal `{ "k": v, ... }` or a `derive(ToJson)` struct. Both keys
+(`result` and `error`) are always present in the wire output, with one of them `null`.
+
+The CLI arg detection lives in `app/main.mbt::is_stdio_mode(args)`:
+`@env.args().contains("--stdio")` selects the stdio path; otherwise the CEF builder runs.
 
 ## Security
 
