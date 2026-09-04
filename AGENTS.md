@@ -45,6 +45,9 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - Frontend only:                 `cd frontend && npm run dev` / `npm run build`
 - Headless JSON-RPC bridge:      `moonbit-labeler.exe --stdio` (CEF-free; same 18 ops over stdin/stdout)
   See "Stdio JSON-RPC bridge" below for the wire protocol.
+- Launch packaged exe:           `_build/run.bat [--cef|--stdio]`
+  (auto mode: CEF if `target/proton-dist/moonbit-labeler/libcef.dll` is present,
+  otherwise attempts `--stdio`; see "Launch wrapper" below for caveats)
 
 ## Project layout
 
@@ -155,6 +158,42 @@ either an object literal `{ "k": v, ... }` or a `derive(ToJson)` struct. Both ke
 
 The CLI arg detection lives in `app/main.mbt::is_stdio_mode(args)`:
 `@env.args().contains("--stdio")` selects the stdio path; otherwise the CEF builder runs.
+
+## Launch wrapper
+
+`_build/run.bat` is the front door for the packaged exe. It picks between the
+CEF/Proton GUI and the headless JSON-RPC bridge depending on CLI flag and
+CEF runtime presence:
+
+```
+run.bat              auto: CEF if libcef.dll is present, else --stdio
+run.bat --cef        always try CEF (will fail loudly if DLLs are missing)
+run.bat --stdio      always run the headless JSON-RPC bridge
+```
+
+**Why the auto fallback exists.** The Proton/ProtonCLI build is the normal
+delivery path and produces a working GUI. When that pipeline is broken
+(CLI segfaults, CEF download is incomplete, the user is on a headless
+host, or a downstream driver just wants the JSON-RPC bridge) the launcher
+picks the right mode without requiring a rebuild.
+
+**The "partial-fallback" caveat.** `moonbit-labeler.exe` is statically
+linked against `libcef.dll` (it appears in the import table regardless
+of which entry branch we take — the CEF symbols are pulled in by the
+`@proton.file(...)` call site in `app/main.mbt`). So when the CEF
+runtime is missing, BOTH the CEF path AND the `--stdio` path fail with
+`STATUS_DLL_NOT_FOUND` (exit -1073741515 / 0xC0000135). The launcher
+detects this and surfaces a clear actionable error instead of letting
+the raw Windows code propagate. The "fallback" is therefore best read
+as "the launcher's intent is to prefer CEF when available and to give
+a clean diagnostic otherwise" — not as a true CEF-free stdio.
+
+**True CEF-free stdio** requires a separate build target that doesn't
+import the Proton runtime at all (a second `app_stdio/moon.pkg` whose
+entry imports only `labeler` + `async` + `core/{env,json}`). That
+binary could be ~3 MB (no CEF runtime) and run on any Windows host
+without setup. Tracked as a follow-up; the one-binary design is good
+enough for the current single-host dev workflow.
 
 ## Security
 
