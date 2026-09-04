@@ -1211,11 +1211,9 @@ async function browseFolder() {
                 " folderInput exists:", !!els.folderInput);
     // Temporary Phase-1 diagnostic: surface the picker reply on
     // screen so we can see what CEF handed us without DevTools.
-    if (els.emptyHint) {
-      els.emptyHint.textContent = "DIAG pickFolder: " +
-        JSON.stringify(reply);
-      els.emptyHint.hidden = false;
-    }
+    // (Phase-1 DIAG overlay removed — picker now always returns
+    // an absolute path on CEF 150; no need to surface the raw
+    // reply on screen for debugging.)
     if (reply?.path) {
       els.folderInput.value = reply.path;
       console.log("[browseFolder] set folderInput.value =", reply.path,
