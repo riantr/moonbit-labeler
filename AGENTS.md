@@ -116,6 +116,19 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - Repo-root black-box drivers (`component_blackbox_test.mbt`, `gherkin_blackbox_test.mbt`) and
   the Gherkin feature `image_codecs.feature` exercise the full labeler + image pipelines.
 - Frontend black-box: `node frontend/qa/webkit_picker_blackbox.test.mjs`.
+- **CEF smoke test (post-build, pre-PR):** the CEF runtime exposes a Chromium
+  DevTools Protocol endpoint. `_build/launch-detached.ps1` starts the
+  packaged exe with `PROTON_REMOTE_DEBUGGING_PORT=59944`; then
+  `node _build/devtools-screenshot-2.mjs 59946 _build/screenshot.png` (or
+  any free port) connects over CDP, dumps `readyState` / `folderInput.value`
+  / console errors / first-paint screenshot. This is the only
+  end-to-end check for "the packaged exe actually starts and renders
+  the frontend" — without it, the cwd-relative path bug (see
+  Commands > Upstream bugs above) and the `has-image`/`fitView`
+  canvas chain (see commit log) would silently regress. Use this
+  before opening a PR that touches `app/main.mbt`, the
+  `frontend/dist` asset pipeline, the canvas controller, or the
+  `@proton.file(...)` entry.
 - Manual smoke: `proton_cli dev`, then exercise the canvas + sidebar end-to-end. Do this before
   opening a PR that touches IPC ops, canvas rendering, or the on-disk label format.
 - All tests must pass before opening a PR.
