@@ -151,22 +151,29 @@ export function pickFolder(accept = "image/*") {
   });
 }
 
-/// Open a native folder dialog via the CEF CommandWindow
-/// (`choose_directory`). This is the proper 0.2.5 way: the CEF
-/// runtime drives the OS dialog and hands us back the absolute
-/// path directly, with no webkit-file-picker trick required. Only
-/// available when the page is hosted inside a CEF window (the op
-/// requires a `CommandContext.window` on the Moon side).
+/// Open a native folder dialog via PowerShell's
+/// `System.Windows.Forms.FolderBrowserDialog`. Spawned as a one-shot
+/// subprocess from the Moon side (see `op_pick_folder` in
+/// `extensions/labeler/labeler.mbt`); the chosen path is written to
+/// stdout and the Moon side returns it as the reply. This sidesteps
+/// both CEF 150 quirks: the broken `IFileOpenDialog` + `FOS_PICKFOLDERS`
+/// backend and the sandboxed renderer that no longer populates
+/// `File.path` on the webkit file picker.
 ///
-/// `initialDir` is optional. Empty string means "use the framework
-/// default".
+/// `initialDir` is the directory the dialog should start at. Empty
+/// string means "let the dialog start at its framework default"
+/// (Windows usually picks the last-used folder). Always passed as a
+/// string — never `null` — because the Moon side's derived
+/// `FromJson` for `PickFolderRequest { initial_dir : String }` rejects
+/// `null` with `ProtonBridgeError: invalid payload`, and we'd lose
+/// the picker entirely on a fresh launch where the input is empty.
 export async function pickFolderViaBackend(initialDir = "") {
   const bridge = window.__MoonBit__?.core;
   if (!bridge?.invokeOp) {
     throw new Error("MoonBit IPC bridge not available");
   }
   const reply = await bridge.invokeOp("ext:labeler/pick_folder", {
-    initial_dir: initialDir || null,
+    initial_dir: initialDir,
   });
   if (!reply || typeof reply.path !== "string") {
     throw new Error(`pick_folder: bad reply shape: ${JSON.stringify(reply)}`);

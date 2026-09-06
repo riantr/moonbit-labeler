@@ -1276,7 +1276,7 @@ async function browseFolder(accept = "image/*") {
       console.log("[browseFolder] set folderInput.value =", reply.path,
                   " input.value now =", els.folderInput.value,
                   " input attr now =", els.folderInput.getAttribute("value"));
-      addRecent(reply.path);
+      writeRecent(reply.path);
       els.folderForm.dispatchEvent(new Event("submit", { cancelable: true }));
     } else {
       console.warn("[browseFolder] empty reply.path; not filling input");
