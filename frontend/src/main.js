@@ -12,7 +12,7 @@
 // shape as before; canvas.js now uses Canvas 2D (see canvas.js header).
 
 import { parseLabel, serializeLabel, emptyLabel } from "./label.js";
-import { pickFolder, pickFile } from "./webkit-pickers.js";
+import { pickFolder, pickFolderViaBackend, pickFile } from "./webkit-pickers.js";
 import { createCanvas } from "./canvas.js";
 import { createVideoController } from "./video.js";
 import {
@@ -1206,14 +1206,23 @@ async function browseFolder(accept = "image/*") {
   const original = els.browseBtn.textContent;
   els.browseBtn.textContent = "…";
   try {
-    const reply = await pickFolder(accept);
+    // Prefer the native CEF pick_folder op (drives
+    // CommandWindow.choose_directory -> OS folder dialog and hands
+    // back the absolute path). Fall back to the webkit file-picker
+    // trick if the op is unavailable (e.g. older CEF build, no IPC
+    // bridge during a brief window after launch).
+    let reply = null;
+    let usedBackend = false;
+    try {
+      reply = await pickFolderViaBackend("");
+      usedBackend = true;
+    } catch (err) {
+      console.warn("[browseFolder] backend pick_folder failed, " +
+                  "falling back to webkit file picker:", err);
+      reply = await pickFolder(accept);
+    }
     console.log("[browseFolder] reply:", JSON.stringify(reply),
-                " folderInput exists:", !!els.folderInput);
-    // Temporary Phase-1 diagnostic: surface the picker reply on
-    // screen so we can see what CEF handed us without DevTools.
-    // (Phase-1 DIAG overlay removed — picker now always returns
-    // an absolute path on CEF 150; no need to surface the raw
-    // reply on screen for debugging.)
+                " usedBackend:", usedBackend);
     if (reply?.path) {
       els.folderInput.value = reply.path;
       console.log("[browseFolder] set folderInput.value =", reply.path,

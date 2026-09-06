@@ -94,6 +94,16 @@ pub async fn dispatch_op(op : String, payload : Json) -> Json raise {
       let req : ExportYoloRequest = @json.from_json(payload)
       op_export_yolo_folder(req).to_json()
     }
+    "pick_folder" =>
+      // The pick_folder op requires a CEF CommandWindow (calls the
+      // native folder dialog). In stdio mode we have no GUI, so
+      // there's no window to drive — return a clear "not available"
+      // error rather than letting it bubble as an unknown op.
+      raise Failure::Failure(
+        "pick_folder is not available in stdio mode (CEF only); " +
+        "use the webkit-pickers.js file-picker trick or run the exe " +
+        "in CEF mode for the native dialog.",
+      )
     _ => raise Failure::Failure("unknown op: " + op)
   }
 }

@@ -151,6 +151,29 @@ export function pickFolder(accept = "image/*") {
   });
 }
 
+/// Open a native folder dialog via the CEF CommandWindow
+/// (`choose_directory`). This is the proper 0.2.5 way: the CEF
+/// runtime drives the OS dialog and hands us back the absolute
+/// path directly, with no webkit-file-picker trick required. Only
+/// available when the page is hosted inside a CEF window (the op
+/// requires a `CommandContext.window` on the Moon side).
+///
+/// `initialDir` is optional. Empty string means "use the framework
+/// default".
+export async function pickFolderViaBackend(initialDir = "") {
+  const bridge = window.__MoonBit__?.core;
+  if (!bridge?.invokeOp) {
+    throw new Error("MoonBit IPC bridge not available");
+  }
+  const reply = await bridge.invokeOp("ext:labeler/pick_folder", {
+    initial_dir: initialDir || null,
+  });
+  if (!reply || typeof reply.path !== "string") {
+    throw new Error(`pick_folder: bad reply shape: ${JSON.stringify(reply)}`);
+  }
+  return { path: reply.path, cancelled: !!reply.cancelled };
+}
+
 /// Open the system file picker. `accept` is an `accept` string
 /// ("image/*", ".json", ...). Resolves to `{ path, cancelled }`.
 export function pickFile(accept = "") {

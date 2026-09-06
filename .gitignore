@@ -62,3 +62,5 @@ staging-moonbit-image/
 # Exception: app/moon.pkg.disabled IS tracked (publish-workaround).
 *.disabled
 !app/moon.pkg.disabled
+
+# moon info / moon build generates these; not part of source.**/pkg.generated.mbti

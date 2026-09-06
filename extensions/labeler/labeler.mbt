@@ -3404,3 +3404,57 @@ async fn op_export_yolo_folder(req : ExportYoloRequest) -> ExportReply {
   export_yolo_internal(image_dir, label_dir, req.dest_folder)
 }
 
+
+
+///|
+/// Open a native folder picker dialog (Windows: IFileDialog via CEF;
+/// Linux/macOS: platform equivalent) and resolve to the absolute path
+/// of the chosen folder. Empty `path` means the user cancelled.
+///
+/// This is the proper 0.2.5 way to do folder picking: the CEF runtime
+/// drives the native dialog and returns the absolute path directly,
+/// no webkit-file-picker trick required. The JS side calls
+/// `app.core.invokeOp("ext:labeler/pick_folder", { initial_dir })` and
+/// reads back `{ path, cancelled }`.
+///
+/// `initial_dir` is optional; when set, the dialog opens at that
+/// directory. Pass `""` to start at the framework default.
+pub struct PickFolderRequest {
+  initial_dir : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+pub struct PickFolderReply {
+  path : String
+  cancelled : Bool
+} derive(ToJson, Eq, Debug)
+
+///|
+/// Open the native folder dialog. Called by the typed registrar with a
+/// request context that exposes the platform `CommandWindow`; the
+/// `choose_directory` method on that window drives the OS dialog and
+/// returns the absolute path the user picked, or `None` if they
+/// cancelled.
+///
+/// In stdio mode (no CEF window attached) the context's window is
+/// `None`; we surface a clear "cancelled" reply instead of raising so
+/// downstream code can keep the previous folder selected.
+async fn op_pick_folder(
+  ctx : @core.AppCommandRequestContext,
+  req : PickFolderRequest,
+) -> PickFolderReply raise {
+  let title = "Select image folder"
+  // Initial dir is optional; pass `None` to use the framework default.
+  let initial = if req.initial_dir == "" { None } else { Some(req.initial_dir) }
+  // CommandWindow is `Option<CommandWindow>` (None for detached /
+  // stdio contexts). For CEF mode it's always Some. Use match to
+  // unwrap; if the context has no window, surface cancelled=true.
+  let chosen = match ctx.window() {
+    Some(window) => window.choose_directory(Some(title), initial)
+    None => None
+  }
+  match chosen {
+    Some(p) => { path: p, cancelled: false }
+    None => { path: "", cancelled: true }
+  }
+}

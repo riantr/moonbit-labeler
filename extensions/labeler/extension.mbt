@@ -89,6 +89,9 @@ pub fn extension() -> @proton_extension.Extension {
   let cmd_export_yolo_folder : @proton_contract.Command[ExportYoloRequest, ExportReply] = contract.command(
     "export_yolo_folder",
   )
+  let cmd_pick_folder : @proton_contract.Command[PickFolderRequest, PickFolderReply] = contract.command(
+    "pick_folder",
+  )
   let routes = [
     cmd_list_images.contract_route(),
     cmd_read_image.contract_route(),
@@ -108,6 +111,7 @@ pub fn extension() -> @proton_extension.Extension {
     cmd_read_video_frame.contract_route(),
     cmd_export_voc_folder.contract_route(),
     cmd_export_yolo_folder.contract_route(),
+    cmd_pick_folder.contract_route(),
   ]
   @proton_extension.typed(
     contract,
@@ -147,6 +151,14 @@ pub fn extension() -> @proton_extension.Extension {
       registrar.bind(
         cmd_export_yolo_folder,
         fn(_ctx, req) { op_export_yolo_folder(req) },
+      )
+      // pick_folder needs the CEF CommandWindow from the request
+      // context to drive the native folder dialog. Other ops discard
+      // the context (their handler is stateless); this one is the
+      // exception.
+      registrar.bind(
+        cmd_pick_folder,
+        fn(ctx, req) { op_pick_folder(ctx, req) },
       )
     },
   )
