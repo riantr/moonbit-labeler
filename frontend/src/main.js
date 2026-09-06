@@ -449,7 +449,18 @@ function showImage(item, opts = {}) {
       // transparent except for the annotation shapes it draws on top.
       // Both share the same coordinate origin so pan/zoom/click
       // coordinate mapping is trivial.
-      requestAnimationFrame(layoutCanvas);
+      requestAnimationFrame(() => {
+        layoutCanvas();
+        // selectImage() sets the <img> rect to 0x0 (a synchronous
+        // "wipe the visible bitmap" step). We must fit the canvas view
+        // AFTER the layout so the labeler:viewchange event fires and
+        // syncNativeImageView sets the <img>'s real width/height/left/top.
+        // Without this the user sees a black canvas (bitmap is loaded but
+        // CSS-sized to 0x0). The ResizeObserver path already calls
+        // fitView, but no resize event fires on a fresh image load, so
+        // we need an explicit fit here.
+        if (canvasApi) canvasApi.fitView();
+      });
     },
     onFirstPaint: opts.onFirstPaint,
     onError: (reason) => showEmptyHint(reason),
