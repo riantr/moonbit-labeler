@@ -33,9 +33,23 @@ import * as Log from "./log.js";
 // path segment while leaving the slashes alone.
 // ============================================================
 export function fileUrl(path) {
+  // Normalize Windows backslashes to forward slashes for the
+  // URL only (path stays as the original input for the IPC op).
   let p = path.replace(/\\/g, "/");
-  let encoded = p.split("/").map(encodeURIComponent).join("/");
-  if (/^[a-zA-Z]:\//.test(p)) return "file:///" + encoded;
+  let parts = p.split("/");
+  // Pull the 'D:' drive-letter prefix off before encoding, so
+  // encodeURIComponent doesn't turn ':' into '%3A' (which produces
+  // 'file:///D%3A/...' that Chromium rejects). Re-add it manually
+  // with the '/' separator in the final assembly.
+  let isWindows = /^[a-zA-Z]:$/.test(parts[0]);
+  let drivePrefix = "";
+  let rest = parts;
+  if (isWindows) {
+    drivePrefix = parts[0];
+    rest = parts.slice(1);
+  }
+  let encoded = rest.map(encodeURIComponent).join("/");
+  if (isWindows) return "file:///" + drivePrefix + "/" + encoded;
   if (p.startsWith("/")) return "file://" + encoded;
   return "file:///" + encoded;
 }
