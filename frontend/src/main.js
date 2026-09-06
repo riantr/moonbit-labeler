@@ -1223,20 +1223,30 @@ async function browseFolder(accept = "image/*") {
   const original = els.browseBtn.textContent;
   els.browseBtn.textContent = "…";
   try {
-    // Prefer the native CEF pick_folder op (drives
-    // CommandWindow.choose_directory -> OS folder dialog and hands
-    // back the absolute path). Fall back to the webkit file-picker
-    // trick if the op is unavailable (e.g. older CEF build, no IPC
-    // bridge during a brief window after launch).
+    // Webkit file picker only. The Proton 0.2.5 native
+    // choose_directory on CEF 150 ends up showing an OpenFileDialog
+    // instead of a folder dialog (the FOS_PICKFOLDERS path is
+    // flaky; the user picked a file, but we wanted a folder). The
+    // webkit fallback works reliably: the user picks any file in
+    // the target folder, CEF returns its absolute path via f.path,
+    // and we strip the filename to derive the parent folder.
+    //
+    // The backend op (pickFolderViaBackend) is kept as a fallback
+    // for environments where it works (older CEF builds before the
+    // FOS_PICKFOLDERS regression); for now we lead with webkit.
     let reply = null;
     let usedBackend = false;
     try {
-      reply = await pickFolderViaBackend("");
-      usedBackend = true;
-    } catch (err) {
-      console.warn("[browseFolder] backend pick_folder failed, " +
-                  "falling back to webkit file picker:", err);
       reply = await pickFolder(accept);
+    } catch (err) {
+      console.warn("[browseFolder] webkit pickFolder failed, " +
+                  "falling back to backend:", err);
+      try {
+        reply = await pickFolderViaBackend("");
+        usedBackend = true;
+      } catch (err2) {
+        console.error("[browseFolder] both pickers failed:", err2);
+      }
     }
     console.log("[browseFolder] reply:", JSON.stringify(reply),
                 " usedBackend:", usedBackend);
