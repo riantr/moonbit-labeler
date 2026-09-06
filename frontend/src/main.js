@@ -1199,14 +1199,14 @@ function bindToolbar() {
   updateUndoRedoButtons();
 }
 
-async function browseFolder() {
+async function browseFolder(accept = "image/*") {
   if (!els.browseBtn) return;
   const prev = els.browseBtn.disabled;
   els.browseBtn.disabled = true;
   const original = els.browseBtn.textContent;
   els.browseBtn.textContent = "…";
   try {
-    const reply = await pickFolder();
+    const reply = await pickFolder(accept);
     console.log("[browseFolder] reply:", JSON.stringify(reply),
                 " folderInput exists:", !!els.folderInput);
     // Temporary Phase-1 diagnostic: surface the picker reply on
@@ -1566,8 +1566,19 @@ function applySettings() {
 /** Dispatch table for every menu action. */
 async function runMenuAction(action) {
   switch (action) {
+    case "open-image":
+      // "Open Image..." menu item. Same flow as the top-bar browse
+      // button: file picker with image filter, user picks an
+      // image, we derive the parent folder and load it.
+      await browseFolder("image/*");
+      break;
     case "open-folder":
-      els.browseBtn?.click();
+      // "Open Folder..." menu item. No file-type filter, so the
+      // user can pick any file inside the target folder (useful
+      // when the folder is empty, has no images yet, or contains
+      // sub-folders to drill into). We still derive the parent
+      // folder from the picked file's absolute path.
+      await browseFolder("");
       break;
     case "reload":
       if (state.folder) listImages(state.folder);

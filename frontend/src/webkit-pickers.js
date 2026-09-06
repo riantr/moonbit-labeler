@@ -65,27 +65,38 @@ function isAbsolutePath(p) {
   return false;
 }
 
-/// Open a dialog that lets the user pick the image folder, then
-/// resolves to `{ path, cancelled }` where `path` is the chosen
-/// folder's absolute path (empty string when cancelled).
+/// Open a dialog that lets the user pick a folder (via the
+/// file-picker trick: pick any file inside the target folder, we
+/// derive the parent directory), then resolves to `{ path, cancelled }`
+/// where `path` is the chosen folder's absolute path (empty string
+/// when cancelled).
+///
+/// `accept` is the file picker filter:
+///   - `"image/*"` (the default) — the "Open Image" menu item. The
+///     dialog only shows image files, so the user can navigate to
+///     any image inside their target folder and confirm.
+///   - `""` — the "Open Folder" menu item. No filter, so the user
+///     can pick any file in the target folder (useful when the
+///     folder is empty, has no images yet, or contains sub-folders
+///     you want to drill into).
 ///
 /// Strategy (revised for CEF 150 — the 0.1.12 webkitdirectory tree
 /// picker still strips `File.path` down to a bare folder name, so we
 /// cannot recover an absolute path from the directory pick itself):
-///   1. Open a regular file picker (`<input type=file">` with an
-///      `image/*` accept filter).
+///   1. Open a regular file picker (`<input type=file">` with the
+///      requested accept filter).
 ///   2. User picks any file *inside* the folder they want to load.
 ///   3. CEF populates `File.path` with the absolute file path.
 ///   4. We strip the filename to land on the absolute parent
 ///      directory and return that.
 ///
-/// The UX is "pick a file in your image folder" — clear and works in
-/// one step on every CEF version we ship. The downstream caller
+/// The UX is "pick a file in your folder" — clear and works in one
+/// step on every CEF version we ship. The downstream caller
 /// (`browseFolder()` in main.js) fills the absolute path into the
 /// top-right text input and dispatches the form submit.
-export function pickFolder() {
+export function pickFolder(accept = "image/*") {
   return new Promise((resolve) => {
-    const input = makeInput({ accept: "image/*" });
+    const input = makeInput({ accept });
     let done = false;
     const finish = (result) => {
       if (done) return;
