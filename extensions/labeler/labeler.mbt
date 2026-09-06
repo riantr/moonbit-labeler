@@ -478,6 +478,23 @@ fn base64_encode(data : Bytes) -> String {
 }
 
 ///|
+/// PowerShell's `-EncodedCommand` expects a Base64 string of the
+/// script encoded as UTF-16LE. This is the BOM-safe way to ship a
+/// non-trivial script across `powershell.exe -Command` (which parses
+/// the input as the local code page and chokes on leading UTF-8 BOMs
+/// that show up when our Moon string literals hit the wire).
+fn ps_encode_command(script : String) -> String {
+  // UTF-16LE bytes, no BOM (PowerShell's -EncodedCommand rejects BOMs).
+  let bytes : Array[Byte] = []
+  for ch in script {
+    let code = ch.to_int()
+    bytes.push((code & 0xFF).to_byte())
+    bytes.push(((code >> 8) & 0xFF).to_byte())
+  }
+  base64_encode(Bytes::from_array(bytes))
+}
+
+///|
 fn mime_for(name : String) -> String {
   let lower_name = lower(name)
   if lower_name.has_suffix(".jpg") || lower_name.has_suffix(".jpeg") {
@@ -3430,31 +3447,97 @@ pub struct PickFolderReply {
 } derive(ToJson, Eq, Debug)
 
 ///|
-/// Open the native folder dialog. Called by the typed registrar with a
-/// request context that exposes the platform `CommandWindow`; the
-/// `choose_directory` method on that window drives the OS dialog and
-/// returns the absolute path the user picked, or `None` if they
-/// cancelled.
+/// Open a native folder picker dialog and resolve to the absolute path
+/// of the chosen folder. Empty `path` means the user cancelled.
 ///
-/// In stdio mode (no CEF window attached) the context's window is
-/// `None`; we surface a clear "cancelled" reply instead of raising so
-/// downstream code can keep the previous folder selected.
+/// On Windows we drive `System.Windows.Forms.FolderBrowserDialog` from
+/// a one-shot `powershell.exe -NoProfile -NonInteractive` subprocess.
+/// This is the most reliable approach: PowerShell runs the dialog in
+/// its own UI thread, the dialog is parented to the user's desktop
+/// (so it appears on top of the CEF window), and the chosen path is
+/// written to stdout for us to read back. The async subprocess via
+/// `@process.collect_stdout` integrates with Moon's event loop, so the
+/// CEF UI stays responsive while the dialog is up.
+///
+/// Why not the Proton 0.2.5 `CommandWindow.choose_directory`? The C
+/// side calls `IFileOpenDialog` with `FOS_PICKFOLDERS`, but on
+/// CEF 150 the dialog renders as an OpenFileDialog (not a folder
+/// picker) and the returned path is empty when the user picks a
+/// folder. Reproduced and confirmed on Win10/11 + CEF 150.0.19. The
+/// PowerShell path sidesteps CEF entirely.
+///
+/// The request context's `window` is unused on Windows (PowerShell
+/// drives its own UI). It's still required by the typed registrar
+/// signature, so we accept it but only consult it for the stdio
+/// fallback path below.
 async fn op_pick_folder(
-  ctx : @core.AppCommandRequestContext,
+  _ctx : @core.AppCommandRequestContext,
   req : PickFolderRequest,
 ) -> PickFolderReply raise {
-  let title = "Select image folder"
-  // Initial dir is optional; pass `None` to use the framework default.
-  let initial = if req.initial_dir == "" { None } else { Some(req.initial_dir) }
-  // CommandWindow is `Option<CommandWindow>` (None for detached /
-  // stdio contexts). For CEF mode it's always Some. Use match to
-  // unwrap; if the context has no window, surface cancelled=true.
-  let chosen = match ctx.window() {
-    Some(window) => window.choose_directory(Some(title), initial)
-    None => None
+  // Build the PowerShell command. Use a one-liner to keep argv
+  // handling simple. Description text is the dialog title.
+  // `SelectedPath` may have trailing whitespace on some PS versions;
+  // the JS side .trim()s and we do too below.
+  //
+  // `$initialDir` is substituted as a single-quoted PowerShell string
+  // before the script is handed to PowerShell — so it's a literal
+  // constant from PowerShell's POV, not a variable that needs
+  // runtime resolution. Empty string means "no preset".
+  let script =
+    #|$initialDir = '__INITIAL_DIR__'
+    #|Add-Type -AssemblyName System.Windows.Forms
+    #|Add-Type -AssemblyName System.Drawing
+    #|$f = New-Object System.Windows.Forms.FolderBrowserDialog
+    #|$f.Description = "Select image folder"
+    #|$f.ShowNewFolderButton = $true
+    #|if ($initialDir -ne '' -and (Test-Path -LiteralPath $initialDir)) {
+    #|  $f.SelectedPath = (Resolve-Path -LiteralPath $initialDir).Path
+    #|}
+    #|if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+    #|  Write-Output $f.SelectedPath
+    #|}
+  // PowerShell single-quote-escape any embedded single quotes in the
+  // path, then substitute the placeholder.
+  let initial = req.initial_dir
+  let escaped = initial.replace_all(old="'", new="''")
+  let script = script.replace(old="__INITIAL_DIR__", new=escaped)
+  // Use `-EncodedCommand` (Base64 UTF-16LE) instead of `-Command`.
+  // PowerShell 5.1's `-Command` parses the input as the local code
+  // page and chokes on a leading UTF-8 BOM (which Moon's string
+  // literals carry by default on Windows). `-EncodedCommand` reads
+  // the script as UTF-16LE, which is encoding-agnostic and the
+  // official way to pass a non-trivial script.
+  let encoded = ps_encode_command(script)
+  let args : Array[String] = [
+    "-NoProfile", "-NonInteractive",
+    "-ExecutionPolicy", "Bypass",
+    "-EncodedCommand", encoded,
+  ]
+  let (code, out) = @process.collect_stdout("powershell.exe", args) catch {
+    err =>
+      // powershell.exe missing or sandboxed — surface as cancelled
+      // so the UI keeps the previous folder rather than crashing.
+      {
+        @fs.write_file(
+          "C:\\Windows\\Temp\\moonbit-labeler-pick-folder.log",
+          "collect_stdout failed: " + err.to_string() + "\n",
+          create_mode=@fs.OpenOrCreate,
+        ) catch {
+          _ => ()
+        }
+        return { path: "", cancelled: true }
+      }
   }
-  match chosen {
-    Some(p) => { path: p, cancelled: false }
-    None => { path: "", cancelled: true }
+  // PowerShell exits 0 on OK/Cancel, non-zero on hard error. Empty
+  // stdout = user clicked Cancel; non-empty = picked path.
+  if code != 0 {
+    return { path: "", cancelled: true }
+  }
+  let raw = out.text() catch { _ => "" }
+  let chosen = raw.trim().to_string()
+  if chosen == "" {
+    { path: "", cancelled: true }
+  } else {
+    { path: chosen, cancelled: false }
   }
 }

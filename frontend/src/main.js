@@ -1227,27 +1227,38 @@ async function browseFolder(accept = "image/*") {
   const original = els.browseBtn.textContent;
   els.browseBtn.textContent = "…";
   try {
-    // Webkit file picker only. The Proton 0.2.5 native
-    // choose_directory on CEF 150 ends up showing an OpenFileDialog
-    // instead of a folder dialog (the FOS_PICKFOLDERS path is
-    // flaky; the user picked a file, but we wanted a folder). The
-    // webkit fallback works reliably: the user picks any file in
-    // the target folder, CEF returns its absolute path via f.path,
-    // and we strip the filename to derive the parent folder.
+    // Strategy: lead with the PowerShell-backed folder dialog
+    // (ext:labeler/pick_folder). This is the only path that returns a
+    // usable absolute folder on CEF 150 today:
+    //   - Proton 0.2.5's CommandWindow.choose_directory (C-side
+    //     IFileOpenDialog + FOS_PICKFOLDERS) shows an OpenFileDialog
+    //     on Win10/11 + CEF 150.0.19, not a folder picker.
+    //   - The webkit <input type="file"> trick opens a file dialog,
+    //     CEF populates File.path with the picked FILE's absolute
+    //     path (which we'd then strip to derive the parent folder),
+    //     but on CEF 150 the File.path property is empty — the
+    //     sandboxed renderer no longer exposes local filesystem
+    //     paths through the file picker. So pickFolder() returns
+    //     {path: ""} and the input never gets filled.
+    // The backend op sidesteps both: PowerShell.exe runs
+    // FolderBrowserDialog in its own UI thread and writes the
+    // chosen path to stdout; we read it back and return it.
     //
-    // The backend op (pickFolderViaBackend) is kept as a fallback
-    // for environments where it works (older CEF builds before the
-    // FOS_PICKFOLDERS regression); for now we lead with webkit.
+    // The webkit fallback is kept for environments where PowerShell
+    // isn't reachable (e.g. macOS/Linux builds, sandboxed Windows)
+    // AND the CEF version still populates File.path. On CEF 150 the
+    // fallback will surface the same "empty path" warning we had
+    // before, but it doesn't make things worse.
     let reply = null;
     let usedBackend = false;
     try {
-      reply = await pickFolder(accept);
+      reply = await pickFolderViaBackend(els.folderInput.value || "");
+      usedBackend = true;
     } catch (err) {
-      console.warn("[browseFolder] webkit pickFolder failed, " +
-                  "falling back to backend:", err);
+      console.warn("[browseFolder] backend pickFolder failed, " +
+                  "falling back to webkit:", err);
       try {
-        reply = await pickFolderViaBackend("");
-        usedBackend = true;
+        reply = await pickFolder(accept);
       } catch (err2) {
         console.error("[browseFolder] both pickers failed:", err2);
       }
