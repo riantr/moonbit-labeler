@@ -42,6 +42,24 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > exactly this; run it instead of raw `proton_cli package` for releases.
 > Track upstream fix: replace `let staging = destination + ".staging"` with
 > `let staging = destination + ".staging.zip"` in `proton_package/lib/windows.mbt`.
+
+> **Upstream bug in `proton_app` 0.2.5 entry path resolution (Windows).** The
+> helper `resolve_entry_path()` in `proton_app@0.2.5/facade_entry.mbt` does
+> `@mbpath.Path(path).resolve()` — that's cwd-relative, not resource-relative.
+> So `@proton.file("frontend/dist/index.html")` looks at
+> `<launch-cwd>/frontend/dist/index.html`, NOT `<dist>/Resources/frontend/dist/index.html`
+> where the package step actually staged the file. Symptoms: exe starts then
+> aborts with
+> `failed to read HTML entry <launch-cwd>/frontend/dist/index.html: @os_error.OSError: @fs.realpath(): ...: The system cannot find the path specified.`
+> followed by a null-pointer cascade in the async runtime.
+> `resolve_asset_path()` (used by `AppEntry::Asset`) does the right thing:
+> it joins `runtime_resource_dir()` for relative paths. **Workaround:** the
+> wrapper script mirrors `Resources/frontend/dist/` → `frontend/dist/`
+> inside the staged app dir, so the cwd-relative lookup succeeds. This
+> works for any launch cwd that lives under (or below) the staged app dir.
+> Track upstream fix: copy the `runtime_resource_dir()` branch from
+> `resolve_asset_path` into `resolve_entry_path` in
+> `moonbit-community/proton/proton_app/facade_entry.mbt`.
 - Frontend only:                 `cd frontend && npm run dev` / `npm run build`
 - Headless JSON-RPC bridge:      `moonbit-labeler.exe --stdio` (CEF-free; same 18 ops over stdin/stdout)
   See "Stdio JSON-RPC bridge" below for the wire protocol.

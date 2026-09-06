@@ -28,8 +28,12 @@ import * as Log from "./log.js";
 
 const $ = (sel) => document.querySelector(sel);
 
-const DEFAULT_IMAGE_FOLDER =
-  "D:/src/Marvis/MoonBitLabeler/data/Image@CARS.Part.01";
+// Auto-loaded only if no recent folders are remembered (localStorage).
+// Empty string means "no auto-load" — the user picks a folder via Browse.
+// The earlier hard-coded D:/src/Marvis/... path was a stale dev path that
+// no longer resolved on any of our test hosts; leaving auto-load on by
+// default just produced a red error toast on every cold start.
+const DEFAULT_IMAGE_FOLDER = "";
 const RECENT_KEY = "moonbit-labeler/recent-folders";
 const MAX_RECENT = 6;
 const AUTOSAVE_MS_INITIAL = 600;
@@ -1430,6 +1434,14 @@ async function invokeLabeler(op, payload) {
 
 async function listImages(folder) {
   setFolder(folder);
+  if (!folder) {
+    // Cold start with no recent + no default. Skip the IPC calls (which
+    // would error on an empty path) and just show the empty hint.
+    setMedia({});
+    showEmptyHint("请选择图片文件夹以开始标注");
+    updateStatus(null, 0, 0);
+    return;
+  }
   let images = [];
   let videos = [];
   // The three IPCs here all run sequentially. We want them separately
