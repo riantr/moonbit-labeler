@@ -433,11 +433,17 @@ function showImage(item, opts = {}) {
   els.image.style.transform = "";
   return loadImageInto(item, {
     img: els.image,
+    imgBox: els.imageBox,
     selectToken: token,
     checkToken: () => state.selectToken,
     onLoad: (natural) => {
       if (token !== state.selectToken) return;
       state.imgNatural = natural;
+      // Flip the parent flex container to display:flex (default is
+      // display:none until has-image). Without this the <img> stays
+      // hidden even though it's loaded. onFrameLoaded does this for
+      // video mode; mirror it here for image mode.
+      if (els.imageBox) els.imageBox.classList.add("has-image");
       // The <img> element itself renders the bitmap (via object-fit:
       // contain inside the aspect-locked frame). The canvas overlay is
       // transparent except for the annotation shapes it draws on top.
