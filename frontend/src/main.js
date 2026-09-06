@@ -1241,9 +1241,17 @@ async function browseFolder(accept = "image/*") {
     console.log("[browseFolder] reply:", JSON.stringify(reply),
                 " usedBackend:", usedBackend);
     if (reply?.path) {
+      // Set value via BOTH the property AND the attribute. CEF 150
+      // has a bug where setting input.value right after the dialog
+      // closes occasionally leaves the input visually empty even
+      // though the property was updated. Setting the attribute and
+      // re-reading the value forces a sync.
       els.folderInput.value = reply.path;
+      els.folderInput.setAttribute("value", reply.path);
       console.log("[browseFolder] set folderInput.value =", reply.path,
-                  " input.value now =", els.folderInput.value);
+                  " input.value now =", els.folderInput.value,
+                  " input attr now =", els.folderInput.getAttribute("value"));
+      addRecent(reply.path);
       els.folderForm.dispatchEvent(new Event("submit", { cancelable: true }));
     } else {
       console.warn("[browseFolder] empty reply.path; not filling input");
@@ -1896,6 +1904,9 @@ function waitForBridge(attempt = 0) {
     initVideoController();
     const initial = pickInitialFolder();
     els.folderInput.value = initial;
+    els.folderInput.setAttribute("value", initial);
+    console.log("[init] set folderInput.value =", initial,
+                " input.value now =", els.folderInput.value);
     listImages(initial);
     return;
   }
