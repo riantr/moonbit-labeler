@@ -603,7 +603,7 @@ async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply {
   } else {
     img.resize_bilinear(nw_final, nh_final)
   }
-  let bmp = @image.encode_bmp(resized) catch {
+  let bmp = @moonbit_image.encode_bmp(resized) catch {
     err => fail("read_thumb encode_bmp failed: " + err.to_string())
   }
   { path: req.path, base64: base64_encode(bmp), mime: "image/bmp" }
@@ -655,7 +655,7 @@ async fn op_decode_image(req : DecodeImageRequest) -> ReadImageReply {
   // Re-encode to BMP so the frontend can drop the bytes into a
   // data: URL. The frontend then draws the BMP into a canvas at
   // any size it likes via object-fit: contain.
-  let bmp = @image.encode_bmp(img) catch {
+  let bmp = @moonbit_image.encode_bmp(img) catch {
     err => fail("decode_image encode_bmp failed: " + err.to_string())
   }
   { path: req.path, base64: base64_encode(bmp), mime: "image/bmp" }
@@ -704,7 +704,7 @@ async fn op_resize_image(req : ResizeImageRequest) -> ReadImageReply {
     // thumbnail sizes isn't worth carrying a second kernel for.
     _ => img.resize_bilinear(nw, nh)
   }
-  let bmp = @image.encode_bmp(resized) catch {
+  let bmp = @moonbit_image.encode_bmp(resized) catch {
     err => fail("resize_image encode_bmp failed: " + err.to_string())
   }
   { path: req.path, base64: base64_encode(bmp), mime: "image/bmp" }
@@ -714,15 +714,15 @@ async fn op_resize_image(req : ResizeImageRequest) -> ReadImageReply {
 /// Pick the right decoder by file extension. Errors are raised as
 /// `Failure` (the buildliming error type); we let the caller wrap
 /// them.
-fn decode_for(path : String, raw : Bytes) -> @image.Image raise {
+fn decode_for(path : String, raw : Bytes) -> @moonbit_image.Image raise {
   let ext = ext_of(path).to_lower()
   match ext {
-    ".png" => @image.decode_png(raw)
-    ".jpg" | ".jpeg" => @image.decode_jpeg(raw)
-    ".bmp" => @image.decode_bmp(raw)
-    ".gif" => @image.decode_gif(raw)
-    ".qoi" => @image.decode_qoi(raw)
-    ".tga" => @image.decode_tga(raw)
+    ".png" => @moonbit_image.decode_png(raw)
+    ".jpg" | ".jpeg" => @moonbit_image.decode_jpeg(raw)
+    ".bmp" => @moonbit_image.decode_bmp(raw)
+    ".gif" => @moonbit_image.decode_gif(raw)
+    ".qoi" => @moonbit_image.decode_qoi(raw)
+    ".tga" => @moonbit_image.decode_tga(raw)
     _ => fail("decode_image: unsupported format '" + ext + "'")
   }
 }

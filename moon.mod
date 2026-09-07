@@ -6,6 +6,7 @@ import {
   "moonbitlang/async@0.19.4",
   "moonbit-community/proton@0.2.5",
   "moonbit-community/proton_contract@0.2.5",
+  "riantr/moonbit_image@0.3.3",
 }
 
 readme = "README.mbt.md"
