@@ -407,9 +407,17 @@ function showEmptyHint(text) {
 // adapt main.js's state mutations + IPC handles into the deps
 // object the module expects.
 
-// function hideEmptyHint() {
-//   els.emptyHint.hidden = true;
-// }
+// Hide the empty-state hint (the "加载图片..." / "请选择图片文件夹..."
+// text in the canvas area). Called by image-loader.js on every
+// successful image load. Without this, the image element loads
+// correctly (naturalWidth/Height are set, .has-image class is
+// applied) but the hint text stays on screen, making the canvas
+// look perpetually stuck in "Loading image..." even though the
+// bitmap is already painted. Was commented out at some point;
+// reintroduced as the real implementation rather than a no-op.
+function hideEmptyHint() {
+  els.emptyHint.hidden = true;
+}
 
 function showImage(item, opts = {}) {
   showEmptyHint("加载图片...");
