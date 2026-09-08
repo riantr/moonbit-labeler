@@ -6,13 +6,13 @@
 //   * extensions/labeler/   — labeling backend (uses riantr/moonbit_image)
 //   * extensions/counter/   — small counter example used by the app
 //
-// (extensions/image/ used to be a vendored copy of buildliming/moonbit_image;
-// it has been replaced by the shared `riantr/moonbit_image` package on
-// mooncakes.io, which includes a critical JPEG chroma-stride fix that
-// the vendored buildliming copy was missing — without it, mizchi-mode
-// thumbnails and full-res decodes showed the classic "花屏" vertical
-// stripes on every 4:2:0 / 4:2:2 subsampled JPEG. The vendored
-// sources are kept in git history but no longer linked.)
+// Image decode/encode comes from the shared `riantr/moonbit_image`
+// package on mooncakes.io (pulled in via `moon.mod`). A prior
+// vendored copy of `buildliming/moonbit_image` lived under
+// `extensions/image/` and was removed in commit b6dd1b1 — it
+// shared an ancestor with the riantr package but missed the
+// JPEG chroma-stride fix that prevents the "花屏" vertical stripes
+// on 4:2:0 / 4:2:2 subsampled files.
 
 import {
   "moonbitlang/core/ref",

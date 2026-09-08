@@ -76,12 +76,10 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
     "Stdio JSON-RPC bridge" below). Selected by passing `--stdio` as the first arg.
   `stdio_main.mbt` holds the stdio loop. Both modes share the `@labeler.dispatch_op`
   entry point in `extensions/labeler/dispatch.mbt`.
-- `extensions/labeler/`    — 18 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
+- `extensions/labeler/`    — 19 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
   and the pure-MoonBit `dispatch_op(op, payload) -> Json raise` entry point. In
   `extension.mbt`, each op is declared as a `@proton_contract.Command[Request, Reply]`
   and bound to the existing `op_*` handler via a `CommandRegistrar`.
-- `extensions/image/`      — vendored `buildliming/moonbit_image` (MIT, 14 .mbt files). Do not
-  modify unless bumping the upstream pin.
 - `frontend/`              — Vite + vanilla-JS UI. `src/main.js` orchestrates IPC + canvas + state;
   `dist/` is inlined into the exe at `proton_cli package` time.
 - `data/`                  — local sample dataset (`Image@CARS.Part.01`, sibling `Label@<name>`).
@@ -96,12 +94,15 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   frontend dev/build commands, product name + version + output dir + formats.
   (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration.)
 - `moon.mod`               — `riantr/moonbit_labeler` v0.2.5, depends on `moonbit-community/proton@0.2.5`,
-  `proton_contract@0.2.5`, and `moonbitlang/async@0.19.4`.
+  `proton_contract@0.2.5`, and `moonbitlang/async@0.19.4`. The image codec comes from the shared
+  `riantr/moonbit_image@0.3.3` package (pulled in transitively). A prior vendored copy under
+  `extensions/image/` was removed in commit b6dd1b1; do not reintroduce it without first
+  re-reading the deletion rationale in that commit's message.
 
 ## Code style
 
-- MoonBit source under `app/` and `extensions/labeler/`. Vendored code under `extensions/image/`
-  stays untouched except when bumping the upstream pin.
+- MoonBit source under `app/` and `extensions/labeler/`. Image decoding/encoding lives in
+  the shared `riantr/moonbit_image` mooncake — never vendor image codec code locally.
 - IPC ops are declared in `extensions/labeler/extension.mbt` as
   `@proton_contract.Command[Request, Reply]` values and bound to handlers inside
   `@proton_extension.typed(...)`. A new op must be added to the table in
@@ -137,8 +138,8 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 
 - Branch from `main`; never push to it directly.
 - Conventional commits (`feat:` / `fix:` / `refactor:` / `docs:` / `chore:`).
-- Keep commits scoped to one package (`app/`, `extensions/labeler/`, `frontend/`, or the
-  vendored `extensions/image/` bump) when practical.
+- Keep commits scoped to one package (`app/`, `extensions/labeler/`, `frontend/`, or a
+  dependency bump in `moon.mod`) when practical.
 
 ## Operational notes
 
