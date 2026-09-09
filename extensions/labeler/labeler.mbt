@@ -532,9 +532,9 @@ async fn op_list_images(req : ListImagesRequest) -> ListImagesReply {
       continue
     }
     let full = join_path(req.path, name)
-    images.push({ name, path: full, ext: ext_of(name) })
+    images.push({ name, path: full, ext: ext_of(name), })
   }
-  { folder: req.path, images }
+  { folder: req.path, images, }
 }
 
 ///|
@@ -544,7 +544,7 @@ async fn op_read_image(req : ReadImageRequest) -> ReadImageReply {
     err => fail("read_image failed: " + err.to_string())
   }
   let bytes = data.binary()
-  { path: req.path, base64: base64_encode(bytes), mime: mime_for(req.path) }
+  { path: req.path, base64: base64_encode(bytes), mime: mime_for(req.path), }
 }
 
 ///|
@@ -570,17 +570,17 @@ async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply {
       // Surface as empty reply so the frontend's loadThumbFallback
       // can fall back to read_image (full-res file:// URL).
       let _ = err
-      return { path: req.path, base64: "", mime: "image/bmp" }
+      return { path: req.path, base64: "", mime: "image/bmp", }
     }
   }
   let raw = data.binary()
   let img = decode_for(req.path, raw) catch {
-    _ => return { path: req.path, base64: "", mime: "image/bmp" }
+    _ => return { path: req.path, base64: "", mime: "image/bmp", }
   }
   let w = img.width
   let h = img.height
   if w <= 0 || h <= 0 {
-    return { path: req.path, base64: "", mime: "image/bmp" }
+    return { path: req.path, base64: "", mime: "image/bmp", }
   }
   // Compute the new size preserving aspect ratio. `max_edge` is the
   // longest-side cap; the other dimension scales proportionally.
@@ -606,20 +606,20 @@ async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply {
   let bmp = @moonbit_image.encode_bmp(resized) catch {
     err => fail("read_thumb encode_bmp failed: " + err.to_string())
   }
-  { path: req.path, base64: base64_encode(bmp), mime: "image/bmp" }
+  { path: req.path, base64: base64_encode(bmp), mime: "image/bmp", }
 }
 
-///| --- buildliming/moonbit_image integration (bypass path) ---
+///| --- riantr/moonbit_image integration (bypass path) ---
 ///
-/// Two new ops that route through the vendored buildliming/moonbit_image
-/// library (extensions/image/) instead of the ffmpeg/file:// path.
-/// They are registered alongside the existing ops but never called from
-/// the default code path — the frontend opts in via a settings flag
-/// (`imageRenderMode`).
+/// Two new ops that route through the shared `riantr/moonbit_image@0.3.4`
+/// mooncake instead of the ffmpeg/file:// path. They are registered
+/// alongside the existing ops but never called from the default code
+/// path — the frontend opts in via a settings flag (`imageRenderMode`).
 ///
-/// Why have them at all? The buildliming path:
+/// Why have them at all? The shared decoder:
 ///   - decodes fully to RGBA8 in pure MoonBit (no subprocess, no FFI),
-///   - supports BMP / QOI / TGA / PNG / GIF / JPEG via one `decode_*` call,
+///   - supports BMP / QOI / TGA / PNG / GIF / JPEG / ICO / TIFF via
+///     one `decode_*` call,
 ///   - can resize to a target dimension with bilinear / nearest,
 ///   - can re-encode to BMP / QOI without leaving the language.
 /// Useful for future work where we want to:
@@ -658,7 +658,7 @@ async fn op_decode_image(req : DecodeImageRequest) -> ReadImageReply {
   let bmp = @moonbit_image.encode_bmp(img) catch {
     err => fail("decode_image encode_bmp failed: " + err.to_string())
   }
-  { path: req.path, base64: base64_encode(bmp), mime: "image/bmp" }
+  { path: req.path, base64: base64_encode(bmp), mime: "image/bmp", }
 }
 
 ///|
@@ -693,7 +693,7 @@ async fn op_resize_image(req : ResizeImageRequest) -> ReadImageReply {
   let w = img.width
   let h = img.height
   if w <= 0 || h <= 0 {
-    return { path: req.path, base64: "", mime: "image/bmp" }
+    return { path: req.path, base64: "", mime: "image/bmp", }
   }
   let scale = max_edge.to_double() / w.to_double()
   let nh = if scale >= 1.0 { h } else { (h.to_double() * scale).to_int() }
@@ -707,7 +707,7 @@ async fn op_resize_image(req : ResizeImageRequest) -> ReadImageReply {
   let bmp = @moonbit_image.encode_bmp(resized) catch {
     err => fail("resize_image encode_bmp failed: " + err.to_string())
   }
-  { path: req.path, base64: base64_encode(bmp), mime: "image/bmp" }
+  { path: req.path, base64: base64_encode(bmp), mime: "image/bmp", }
 }
 
 ///|
@@ -731,10 +731,10 @@ fn decode_for(path : String, raw : Bytes) -> @moonbit_image.Image raise {
 #warnings("-unused_value")
 async fn op_read_text(req : ReadTextRequest) -> ReadTextReply {
   if !@fs.exists(req.path) {
-    return { path: req.path, content: "", found: false }
+    return { path: req.path, content: "", found: false, }
   }
   let data = @fs.read_file(req.path) catch {
-    _ => return { path: req.path, content: "", found: false }
+    _ => return { path: req.path, content: "", found: false, }
   }
   let text = data.text() catch {
     err =>
@@ -744,7 +744,7 @@ async fn op_read_text(req : ReadTextRequest) -> ReadTextReply {
         found: true,
       }
   }
-  { path: req.path, content: text, found: true }
+  { path: req.path, content: text, found: true, }
 }
 
 ///|
@@ -758,7 +758,7 @@ async fn op_write_text(req : WriteTextRequest) -> WriteTextReply {
   @fs.write_file(req.path, req.content, create_mode=@fs.CreateOrTruncate) catch {
     err => fail("write_text failed: " + err.to_string())
   }
-  { path: req.path, bytes: req.content.length() }
+  { path: req.path, bytes: req.content.length(), }
 }
 
 ///|
@@ -923,7 +923,12 @@ async fn op_read_label(req : ReadLabelRequest) -> ReadLabelReply {
     image_path_to_label_path(req.image_path)
   }
   if !@fs.exists(label_path) {
-    return { image_path: req.image_path, label_path, content: "", found: false }
+    return {
+      image_path: req.image_path,
+      label_path,
+      content: "",
+      found: false,
+    }
   }
   let data = @fs.read_file(label_path) catch {
     _ =>
@@ -943,7 +948,7 @@ async fn op_read_label(req : ReadLabelRequest) -> ReadLabelReply {
         found: true,
       }
   }
-  { image_path: req.image_path, label_path, content, found: true }
+  { image_path: req.image_path, label_path, content, found: true, }
 }
 
 ///|
@@ -976,7 +981,7 @@ async fn op_write_label(req : WriteLabelRequest) -> WriteLabelReply {
   @fs.write_file(label_path, req.content, create_mode=@fs.CreateOrTruncate) catch {
     err => fail("write_label failed: " + err.to_string())
   }
-  { image_path: req.image_path, label_path, bytes: req.content.length() }
+  { image_path: req.image_path, label_path, bytes: req.content.length(), }
 }
 
 ///|
@@ -1017,9 +1022,9 @@ async fn op_scan_classes(req : ScanClassesRequest) -> ScanClassesReply {
     log("label_dir empty or missing -> fallback")
     let classes : Array[ClassInfo] = []
     for c in fallback_classes {
-      classes.push({ name: c, count: 0, color: "" })
+      classes.push({ name: c, count: 0, color: "", })
     }
-    return { label_dir, classes }
+    return { label_dir, classes, }
   }
   let names = @fs.readdir(label_dir, include_hidden=false, sort=false) catch {
     err => {
@@ -1051,7 +1056,7 @@ async fn op_scan_classes(req : ScanClassesRequest) -> ScanClassesReply {
   let entries = aggregate_label_entries(items)
   log("distinct classes found: " + entries.length().to_string())
   log("returning " + entries.length().to_string() + " entries")
-  { label_dir, classes: entries }
+  { label_dir, classes: entries, }
 }
 
 ///|
@@ -1075,12 +1080,12 @@ fn aggregate_label_entries(items : Array[(String, String)]) -> Array[ClassInfo] 
   }
   let entries : Array[ClassInfo] = []
   for k, v in counts {
-    entries.push({ name: k, count: v, color: "" })
+    entries.push({ name: k, count: v, color: "", })
   }
   entries.sort_by(fn(a, b) { b.count - a.count })
   for fallback in fallback_classes {
     if !counts.contains(fallback) {
-      entries.push({ name: fallback, count: 0, color: "" })
+      entries.push({ name: fallback, count: 0, color: "", })
     }
   }
   entries
@@ -1123,7 +1128,7 @@ async fn op_save_classes(req : SaveClassesRequest) -> SaveClassesReply {
   @fs.write_file(dest, buf.to_string(), create_mode=@fs.CreateOrTruncate) catch {
     err => fail("save_classes write failed: " + err.to_string())
   }
-  { path: dest, written: req.classes.length() }
+  { path: dest, written: req.classes.length(), }
 }
 
 ///|
@@ -1149,9 +1154,9 @@ async fn op_load_classes(req : LoadClassesRequest) -> LoadClassesReply {
     let entries : Array[ClassInfo] = []
     for p in parsed {
       let (name, color) = p
-      entries.push({ name, count: 0, color })
+      entries.push({ name, count: 0, color, })
     }
-    return { path: curated, classes: entries, from_curated: true }
+    return { path: curated, classes: entries, from_curated: true, }
   }
   // (2) label-folder scan
   let label_dir = derive_label_dir_for_scan(req.image_path)
@@ -1171,15 +1176,15 @@ async fn op_load_classes(req : LoadClassesRequest) -> LoadClassesReply {
     }
     let entries = aggregate_label_entries(items)
     if entries.length() > 0 {
-      return { path: label_dir, classes: entries, from_curated: false }
+      return { path: label_dir, classes: entries, from_curated: false, }
     }
   }
   // (3) fallback
   let entries : Array[ClassInfo] = []
   for c in fallback_classes {
-    entries.push({ name: c, count: 0, color: "" })
+    entries.push({ name: c, count: 0, color: "", })
   }
-  { path: "", classes: entries, from_curated: false }
+  { path: "", classes: entries, from_curated: false, }
 }
 
 ///|
@@ -1208,9 +1213,9 @@ async fn op_load_classes_from_file(
   let entries : Array[ClassInfo] = []
   for p in parsed {
     let (name, color) = p
-    entries.push({ name, count: 0, color })
+    entries.push({ name, count: 0, color, })
   }
-  { path, classes: entries, from_curated: true }
+  { path, classes: entries, from_curated: true, }
 }
 
 ///|
@@ -1505,7 +1510,7 @@ async fn op_list_videos(req : ListVideosRequest) -> ListVideosReply {
       size_bytes: bytes.length(),
     })
   }
-  { folder: req.path, videos }
+  { folder: req.path, videos, }
 }
 
 ///|
@@ -1973,7 +1978,7 @@ async fn op_read_video_frame(
   // assuming a constant rate. For MVP we approximate fps=25 when probe
   // fails — typical CCTV footage. The user can always pick a frame and
   // see what comes out.
-  let info = op_read_video_info({ path: req.path })
+  let info = op_read_video_info({ path: req.path, })
   let fps = if info.fps > 0.0 { info.fps } else { 25.0 }
   let sec = req.frame.to_double() / fps
   let tmp = video_frame_tmp_path()
@@ -2684,7 +2689,9 @@ fn parse_one_info(s : String, idx : Int) -> (ExportAnn, Int)? {
   } else {
     "polygon"
   }
-  Some(({ shape: resolved_shape, type_: type_str, points: pts }, entry_end + 1))
+  Some(
+    ({ shape: resolved_shape, type_: type_str, points: pts, }, entry_end + 1),
+  )
 }
 
 ///|
@@ -3421,8 +3428,6 @@ async fn op_export_yolo_folder(req : ExportYoloRequest) -> ExportReply {
   export_yolo_internal(image_dir, label_dir, req.dest_folder)
 }
 
-
-
 ///|
 /// Open a native folder picker dialog (Windows: IFileDialog via CEF;
 /// Linux/macOS: platform equivalent) and resolve to the absolute path
@@ -3473,7 +3478,7 @@ pub struct PickFolderReply {
 async fn op_pick_folder(
   _ctx : @core.AppCommandRequestContext,
   req : PickFolderRequest,
-) -> PickFolderReply raise {
+) -> PickFolderReply {
   // Build the PowerShell command. Use a one-liner to keep argv
   // handling simple. Description text is the dialog title.
   // `SelectedPath` may have trailing whitespace on some PS versions;
@@ -3509,35 +3514,33 @@ async fn op_pick_folder(
   // official way to pass a non-trivial script.
   let encoded = ps_encode_command(script)
   let args : Array[String] = [
-    "-NoProfile", "-NonInteractive",
-    "-ExecutionPolicy", "Bypass",
-    "-EncodedCommand", encoded,
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
+    encoded,
   ]
   let (code, out) = @process.collect_stdout("powershell.exe", args) catch {
-    err =>
-      // powershell.exe missing or sandboxed — surface as cancelled
-      // so the UI keeps the previous folder rather than crashing.
-      {
-        @fs.write_file(
-          "C:\\Windows\\Temp\\moonbit-labeler-pick-folder.log",
-          "collect_stdout failed: " + err.to_string() + "\n",
-          create_mode=@fs.OpenOrCreate,
-        ) catch {
-          _ => ()
-        }
-        return { path: "", cancelled: true }
+    // powershell.exe missing or sandboxed — surface as cancelled
+    // so the UI keeps the previous folder rather than crashing.
+    err => {
+      @fs.write_file(
+        "C:\\Windows\\Temp\\moonbit-labeler-pick-folder.log",
+        "collect_stdout failed: " + err.to_string() + "\n",
+        create_mode=@fs.OpenOrCreate,
+      ) catch {
+        _ => ()
       }
+      return { path: "", cancelled: true, }
+    }
   }
   // PowerShell exits 0 on OK/Cancel, non-zero on hard error. Empty
   // stdout = user clicked Cancel; non-empty = picked path.
   if code != 0 {
-    return { path: "", cancelled: true }
+    return { path: "", cancelled: true, }
   }
   let raw = out.text() catch { _ => "" }
   let chosen = raw.trim().to_string()
   if chosen == "" {
-    { path: "", cancelled: true }
+    { path: "", cancelled: true, }
   } else {
-    { path: chosen, cancelled: false }
+    { path: chosen, cancelled: false, }
   }
 }

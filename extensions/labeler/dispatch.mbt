@@ -20,7 +20,7 @@
 /// struct, invokes the matching op_handler, and serializes the
 /// Reply struct back to JSON. Errors raised by the handler
 /// propagate to the caller.
-pub async fn dispatch_op(op : String, payload : Json) -> Json raise {
+pub async fn dispatch_op(op : String, payload : Json) -> Json {
   match op {
     "list_images" => {
       let req : ListImagesRequest = @json.from_json(payload)
@@ -113,10 +113,9 @@ pub async fn dispatch_op(op : String, payload : Json) -> Json raise {
 /// probe capability at startup.
 pub fn dispatch_op_list() -> Array[String] {
   [
-    "list_images", "read_image", "read_thumb", "decode_image", "resize_image",
-    "read_text", "write_text", "read_label", "write_label", "scan_classes",
-    "save_classes", "load_classes", "load_classes_from_file",
-    "list_videos", "read_video_info", "read_video_frame",
+    "list_images", "read_image", "read_thumb", "decode_image", "resize_image", "read_text",
+    "write_text", "read_label", "write_label", "scan_classes", "save_classes", "load_classes",
+    "load_classes_from_file", "list_videos", "read_video_info", "read_video_frame",
     "export_voc_folder", "export_yolo_folder",
   ]
 }

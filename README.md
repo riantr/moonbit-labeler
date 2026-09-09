@@ -45,7 +45,7 @@ and CARS-dataset legacy schemas.
 |---|---|---|
 | Backend | MoonBit 0.4.43 + async runtime | Native AOT compile, no GC pauses in the hot path |
 | UI shell | Proton 0.2.5 + CEF 150.0.19 | Self-contained portable exe, no Electron |
-| Image codec | vendored [buildliming/moonbit_image](extensions/image/) (MIT) | Faster than `mizchi/image` for our workload |
+| Image codec | shared [`riantr/moonbit_image@0.3.4`](https://mooncakes.io/riantr/moonbit_image) (MIT / Apache-2.0) | Faster than `mizchi/image` for our workload; includes JPEG IDCT fix |
 | Frontend | Vanilla JS + Vite | No framework lock-in, fast cold reload |
 | IPC | MoonBit `@proton_contract.Command` + `@proton_extension.typed` | Type-safe Request/Reply structs, bound via `CommandRegistrar` |
 
@@ -63,12 +63,14 @@ don't match the documented target.
 ├── app/
 │   └── main.mbt                       # 0.2.5 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
 ├── extensions/
-│   ├── labeler/                       # 18 IPC ops + the image/label/VOC/YOLO pipeline
+│   ├── labeler/                       # 19 IPC ops + the image/label/VOC/YOLO pipeline
 │   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
-│   │   ├── extension.mbt               # 0.2.5 extension registration (CommandRegistrar::bind for all 18 ops)
+│   │   ├── extension.mbt               # 0.2.5 extension registration (CommandRegistrar::bind for all 19 ops)
 │   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
 │   │   └── moon.pkg
-│   └── image/                         # vendored buildliming/moonbit_image (14 .mbt files)
+│   # Image codec lives in the shared riantr/moonbit_image@0.3.4 mooncake
+│   # (see moon.mod), not in this tree. Prior `extensions/image/` vendored
+│   # copy was removed in 20fbdf2.
 ├── frontend/
 │   ├── dist/                          # Vite build output (inlined into the exe)
 │   ├── index.html
@@ -170,7 +172,7 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 |---|---|---|
 | `list_images` | frontend → backend | List image files in a folder |
 | `read_image` / `read_thumb` | frontend → backend | Read image bytes (base64), with optional resize for thumbs |
-| `decode_image` / `resize_image` | frontend → backend | Backend-side image decode / resize (vendored buildliming/moonbit_image) |
+| `decode_image` / `resize_image` | frontend → backend | Backend-side image decode / resize (shared `riantr/moonbit_image@0.3.4`) |
 | `read_text` / `write_text` | frontend → backend | Read / write a UTF-8 text file |
 | `read_label` / `write_label` | frontend → backend | Read / write the on-disk label JSON for a given image path |
 | `scan_classes` / `save_classes` / `load_classes` / `load_classes_from_file` | frontend → backend | Manage the curated class list (TXT or JSON, by file path or by Image/Label dir scan) |
@@ -180,10 +182,13 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 
 ## Vendored dependencies
 
-- **buildliming/moonbit_image** — `extensions/image/` (14 .mbt files).
-  MIT license, original copyright 2025 lws, published upstream as
-  `shunge/image`. Vendored because the build environment can't reach the
-  moon registry. Used for the backend decode + resize + BMP encode paths.
+- **`riantr/moonbit_image@0.3.4`** — shared mooncake, MIT / Apache-2.0,
+  original copyright 2025 lws. Pulled in via `moon.mod` (see the
+  `import` block). Used for the backend decode + resize + BMP encode
+  paths. A prior vendored copy under `extensions/image/` was removed
+  in commit `20fbdf2`; see the commit message for the deletion
+  rationale (the vendored buildliming fork was missing the JPEG
+  IDCT fix that the upstream 0.3.4 release ships).
 - **CEF / Proton runtime** — assembled into `target/proton-dist/...` at
   build time by `proton_cli package`. The runtime itself is downloaded
   by `proton_cli cef setup` and cached under `.proton/runtimes/`.

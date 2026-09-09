@@ -34,10 +34,10 @@ test "Scenario: PNG signature is detected" {
   // Given a PNG signature
   set_fixture(b"\x89PNG\r\n\x1a\n")
   // When I call detect_format
-  let f = @image.detect_format(getFixture())
+  let f = @moonbit_image.detect_format(getFixture())
   // Then the result is Some(PNG)
   match f {
-    Some(@image.ImageFormat::PNG) => assert_true(true)
+    Some(@moonbit_image.ImageFormat::PNG) => assert_true(true)
     _ => fail("expected Some(PNG)")
   }
 }
@@ -45,8 +45,8 @@ test "Scenario: PNG signature is detected" {
 ///|
 test "Scenario: QOI signature is detected" {
   set_fixture(b"qoif\x00\x00\x00\x01")
-  match @image.detect_format(getFixture()) {
-    Some(@image.ImageFormat::QOI) => assert_true(true)
+  match @moonbit_image.detect_format(getFixture()) {
+    Some(@moonbit_image.ImageFormat::QOI) => assert_true(true)
     _ => fail("expected Some(QOI)")
   }
 }
@@ -54,8 +54,8 @@ test "Scenario: QOI signature is detected" {
 ///|
 test "Scenario: BMP signature is detected" {
   set_fixture(b"BM\x36\x00\x00\x00\x00\x00\x00")
-  match @image.detect_format(getFixture()) {
-    Some(@image.ImageFormat::BMP) => assert_true(true)
+  match @moonbit_image.detect_format(getFixture()) {
+    Some(@moonbit_image.ImageFormat::BMP) => assert_true(true)
     _ => fail("expected Some(BMP)")
   }
 }
@@ -63,8 +63,8 @@ test "Scenario: BMP signature is detected" {
 ///|
 test "Scenario: JPEG signature is detected" {
   set_fixture(b"\xFF\xD8\xFF\xE0\x00\x10JFIF")
-  match @image.detect_format(getFixture()) {
-    Some(@image.ImageFormat::JPEG) => assert_true(true)
+  match @moonbit_image.detect_format(getFixture()) {
+    Some(@moonbit_image.ImageFormat::JPEG) => assert_true(true)
     _ => fail("expected Some(JPEG)")
   }
 }
@@ -77,8 +77,8 @@ test "Scenario: TGA signature is detected" {
   set_fixture(
     b"\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x10\x00\x20\x00",
   )
-  match @image.detect_format(getFixture()) {
-    Some(@image.ImageFormat::TGA) => assert_true(true)
+  match @moonbit_image.detect_format(getFixture()) {
+    Some(@moonbit_image.ImageFormat::TGA) => assert_true(true)
     _ => fail("expected Some(TGA)")
   }
 }
@@ -86,7 +86,7 @@ test "Scenario: TGA signature is detected" {
 ///|
 test "Scenario: Garbage input is rejected" {
   set_fixture(b"not a header")
-  match @image.detect_format(getFixture()) {
+  match @moonbit_image.detect_format(getFixture()) {
     None => assert_true(true)
     _ => fail("expected None")
   }
@@ -104,14 +104,14 @@ test "Scenario: image_dimensions reads PNG IHDR without decoding pixels" {
   // minimum-length guard passes)
   let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0DIHDR\x00\x00\x00\x10\x00\x00\x00\x0B\x08\x06\x00\x00\x00\x1F\x15\xC4\x89"
   // When I call image_dimensions
-  let (w, h, f) = @image.image_dimensions(png) catch {
+  let (w, h, f) = @moonbit_image.image_dimensions(png) catch {
     _ => fail("image_dimensions raised")
   }
   // Then the function returns width and height without touching pixels
   assert_eq(w, 16)
   assert_eq(h, 11)
   match f {
-    @image.ImageFormat::PNG => assert_true(true)
+    @moonbit_image.ImageFormat::PNG => assert_true(true)
     _ => fail("expected PNG")
   }
 }
@@ -122,7 +122,7 @@ test "Scenario: image_dimensions rejects truncated PNG" {
   // A 12-byte stream is too small to even read IHDR; the function
   // should raise Failure rather than guess dimensions.
   let tiny = b"\x89PNG\r\n\x1a\n\x00\x00"
-  let raised = (try? @image.image_dimensions(tiny)) is Err(_)
+  let raised = (try? @moonbit_image.image_dimensions(tiny)) is Err(_)
   assert_true(raised)
 }
 
@@ -134,10 +134,12 @@ test "Scenario: image_dimensions rejects truncated PNG" {
 test "Scenario: BMP round-trip preserves dimensions" {
   // Given a 1x1 black 24bpp BMP fixture
   let src = bmp_1x1_black_24bpp()
-  let original = @image.decode(src) catch { _ => fail("decode fixture failed") }
+  let original = @moonbit_image.decode(src) catch {
+    _ => fail("decode fixture failed")
+  }
   // When I encode to BMP and decode back
-  let bytes = @image.encode_bmp(original)
-  let decoded = @image.decode(bytes) catch {
+  let bytes = @moonbit_image.encode_bmp(original)
+  let decoded = @moonbit_image.decode(bytes) catch {
     _ => fail("decode round-trip failed")
   }
   // Then dimensions match
@@ -148,9 +150,11 @@ test "Scenario: BMP round-trip preserves dimensions" {
 ///|
 test "Scenario: QOI round-trip preserves pixel data" {
   let src = qoi_1x1_red_rgba()
-  let original = @image.decode(src) catch { _ => fail("decode fixture failed") }
-  let bytes = @image.encode_qoi(original)
-  let decoded = @image.decode(bytes) catch {
+  let original = @moonbit_image.decode(src) catch {
+    _ => fail("decode fixture failed")
+  }
+  let bytes = @moonbit_image.encode_qoi(original)
+  let decoded = @moonbit_image.decode(bytes) catch {
     _ => fail("decode round-trip failed")
   }
   assert_eq(decoded.width, original.width)

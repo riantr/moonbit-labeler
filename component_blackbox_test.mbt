@@ -5,7 +5,7 @@
 // `extensions/image/lib.mbt` and `extensions/labeler/labeler.mbt`.
 //
 // These tests run as a blackbox suite (`*_blackbox_test.mbt`) at the
-// project root, so they see only the public surfaces: @image.* and
+// project root, so they see only the public surfaces: @moonbit_image.* and
 // @labeler.*. Internal helpers (normalize_label_json, decode_for, …)
 // are intentionally not exercised here.
 //
@@ -38,23 +38,23 @@ fn comp_bmp_1x1_black_24bpp() -> Bytes {
   let bytes : Array[Int] = [
     // file header
     0x42, 0x4D, // "BM"
-    0x3A, 0x00, 0x00, 0x00, // file size = 58
-    0x00, 0x00, 0x00, 0x00, // reserved
-    0x36, 0x00, 0x00, 0x00, // pixel data offset = 54
+     0x3A, 0x00, 0x00, 0x00, // file size = 58
+     0x00, 0x00, 0x00, 0x00, // reserved
+     0x36, 0x00, 0x00, 0x00, // pixel data offset = 54
     // DIB header (BITMAPINFOHEADER)
-    0x28, 0x00, 0x00, 0x00, // header size = 40
-    0x01, 0x00, 0x00, 0x00, // width = 1
-    0x01, 0x00, 0x00, 0x00, // height = 1
-    0x01, 0x00, // planes = 1
-    0x18, 0x00, // bpp = 24
-    0x00, 0x00, 0x00, 0x00, // compression = 0
-    0x04, 0x00, 0x00, 0x00, // image size = 4
-    0x00, 0x00, 0x00, 0x00, // x pix/m
-    0x00, 0x00, 0x00, 0x00, // y pix/m
-    0x00, 0x00, 0x00, 0x00, // colors used
-    0x00, 0x00, 0x00, 0x00, // colors important
+     0x28, 0x00, 0x00, 0x00, // header size = 40
+     0x01, 0x00, 0x00, 0x00, // width = 1
+     0x01, 0x00, 0x00, 0x00, // height = 1
+     0x01, 0x00, // planes = 1
+     0x18, 0x00, // bpp = 24
+     0x00, 0x00, 0x00, 0x00, // compression = 0
+     0x04, 0x00, 0x00, 0x00, // image size = 4
+     0x00, 0x00, 0x00, 0x00, // x pix/m
+     0x00, 0x00, 0x00, 0x00, // y pix/m
+     0x00, 0x00, 0x00, 0x00, // colors used
+     0x00, 0x00, 0x00, 0x00, // colors important
     // pixel row: BGR=0,0,0 + 1 byte pad
-    0x00, 0x00, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00,
   ]
   bytes_from(bytes)
 }
@@ -66,14 +66,14 @@ fn comp_qoi_1x1_red_rgba() -> Bytes {
   // Matches the layout used by gherkin_blackbox_test.mbt.
   let bytes : Array[Int] = [
     0x71, 0x6F, 0x69, 0x66, // "qoif"
-    0x00, 0x00, 0x00, 0x01, // width = 1
-    0x00, 0x00, 0x00, 0x01, // height = 1
-    0x04, // channels = 4 (RGBA)
-    0x01, // colorspace = sRGB (value 1, not 0)
-    0xFE, // OP_RGB tag
-    0xFF, 0x00, 0x00, // R=255, G=0, B=0
-    0x00, 0x00, 0x00, 0x00, // 8-byte end marker
-    0x00, 0x00, 0x00, 0x01,
+     0x00, 0x00, 0x00, 0x01, // width = 1
+     0x00, 0x00, 0x00, 0x01, // height = 1
+     0x04, // channels = 4 (RGBA)
+     0x01, // colorspace = sRGB (value 1, not 0)
+     0xFE, // OP_RGB tag
+     0xFF, 0x00, 0x00, // R=255, G=0, B=0
+     0x00, 0x00, 0x00, 0x00, // 8-byte end marker
+     0x00, 0x00, 0x00, 0x01,
   ]
   bytes_from(bytes)
 }
@@ -85,10 +85,12 @@ fn comp_qoi_1x1_red_rgba() -> Bytes {
 ///|
 test "component: decode BMP, brighten, re-encode, re-decode preserves size" {
   let src = comp_bmp_1x1_black_24bpp()
-  let original = @image.decode(src) catch { _ => fail("decode fixture failed") }
+  let original = @moonbit_image.decode(src) catch {
+    _ => fail("decode fixture failed")
+  }
   let brightened = original.brighten(128)
-  let bytes = @image.encode_bmp(brightened)
-  let roundtrip = @image.decode(bytes) catch {
+  let bytes = @moonbit_image.encode_bmp(brightened)
+  let roundtrip = @moonbit_image.decode(bytes) catch {
     _ => fail("decode round-trip failed")
   }
   assert_eq(roundtrip.width, original.width)
@@ -101,15 +103,17 @@ test "component: decode QOI → grayscale → encode BMP → dimensions match" {
   // running OCR-style processing. Verify the encode side still emits
   // a valid BMP after the transform.
   let src = comp_qoi_1x1_red_rgba()
-  let original = @image.decode(src) catch { _ => fail("decode fixture failed") }
+  let original = @moonbit_image.decode(src) catch {
+    _ => fail("decode fixture failed")
+  }
   let gray = original.to_grayscale()
-  let bytes = @image.encode_bmp(gray)
-  let (w, h, fmt) = @image.image_dimensions(bytes) catch {
+  let bytes = @moonbit_image.encode_bmp(gray)
+  let (w, h, fmt) = @moonbit_image.image_dimensions(bytes) catch {
     _ => fail("image_dimensions on encoded bytes failed")
   }
   assert_eq(w, 1)
   assert_eq(h, 1)
-  assert_eq(@image.image_format_name(fmt), "BMP")
+  assert_eq(@moonbit_image.image_format_name(fmt), "BMP")
 }
 
 // ---------------------------------------------------------------------------
@@ -119,12 +123,14 @@ test "component: decode QOI → grayscale → encode BMP → dimensions match" {
 ///|
 test "component: histogram on a 1x1 red image sums to 1 pixel" {
   let src = comp_qoi_1x1_red_rgba()
-  let img = @image.decode(src) catch { _ => fail("decode failed") }
+  let img = @moonbit_image.decode(src) catch { _ => fail("decode failed") }
   let hist = img.histogram()
   let total = hist.fold(init=0, fn(acc, b) { acc + b })
   assert_eq(total, 1)
   // The image has exactly one non-zero bucket (the luminance bin).
-  let non_zero = hist.fold(init=0, fn(acc, b) { acc + (if b > 0 { 1 } else { 0 }) })
+  let non_zero = hist.fold(init=0, fn(acc, b) {
+    acc + (if b > 0 { 1 } else { 0 })
+  })
   assert_eq(non_zero, 1)
   // Sum of pixel-counts == 1 means there is exactly one populated bucket.
   let populated = hist.filter(fn(b) { b > 0 })
@@ -186,12 +192,12 @@ test "component: image_dimensions on encoded BMP stays consistent" {
   // can read cheaply. Verify that image_dimensions on bytes coming
   // out of the codec still returns the expected BMP marker.
   let src = comp_bmp_1x1_black_24bpp()
-  let img = @image.decode(src) catch { _ => fail("decode failed") }
-  let encoded = @image.encode_bmp(img)
-  let (w, h, fmt) = @image.image_dimensions(encoded) catch {
+  let img = @moonbit_image.decode(src) catch { _ => fail("decode failed") }
+  let encoded = @moonbit_image.encode_bmp(img)
+  let (w, h, fmt) = @moonbit_image.image_dimensions(encoded) catch {
     _ => fail("image_dimensions raised on encoded bytes")
   }
   assert_eq(w, 1)
   assert_eq(h, 1)
-  assert_eq(@image.image_format_name(fmt), "BMP")
+  assert_eq(@moonbit_image.image_format_name(fmt), "BMP")
 }

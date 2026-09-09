@@ -3,7 +3,7 @@
 **Captured:** 2026-08-25 (post 9-stage QA, commit `e0e1ef2`)
 **Host:** Windows 11 Pro 23H2, AMD Ryzen 7 5800X, 64 GiB RAM
 **Toolchain:** moon 0.1.20260824 (self-built, SHA1 `43F03B4C57AC`), moonc v0.10.10, MSVC 2022, native target
-**Moon dependency set:** `moonbitlang/async@0.19.4`, `moonbitlang/core/ref`, `riantr/moonbit_labeler/extensions/image`, `riantr/moonbit_labeler/extensions/labeler`
+**Moon dependency set:** `moonbitlang/async@0.19.4`, `moonbitlang/core/ref`, `riantr/moonbit_image@0.3.4`, `riantr/moonbit_labeler/extensions/labeler`
 **Frontend:** Vite 7.3.6 + jsdom 30.0.1 (Node 24.17.0)
 
 This is the baseline snapshot. Future commits should re-run the collector
@@ -147,9 +147,8 @@ them.
 | ICO | ❌ (in vendored copy) | ❌ | n/a |
 
 The published `riantr/moonbit_image` package (separate namespace, version
-0.3.1 on mooncakes) does add TIFF + ICO; the local vendored copy under
-`extensions/image/` is one minor version behind and ships BMP/QOI/TGA/
-PNG/GIF/JPEG.
+0.3.4 on mooncakes) does add TIFF + ICO; the project now consumes it
+directly via `moon.mod` rather than vendoring an older copy locally.
 
 ## 9. Wall-clock cost of the test suite
 
@@ -237,8 +236,8 @@ Things that should **stay flat or grow modestly**:
 - API surface (should grow monotonically; any drop = removed API = breaking change)
 
 Things that should **stay flat**:
-- Format coverage ratio (target: 100% by 2026-Q4 with TIFF + ICO in
-  the vendored copy, matching `riantr/moonbit_image@0.3.x`)
+- Format coverage ratio (target: 100% by 2026-Q4 with TIFF + ICO,
+  matching `riantr/moonbit_image@0.3.x`)
 - Memory ratio per fixture (only improves with format upgrades)
 - SAST warning count (target: 0 forever)
 

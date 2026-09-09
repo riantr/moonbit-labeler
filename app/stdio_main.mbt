@@ -26,9 +26,9 @@ struct Response {
 ///|
 fn make_response(id : Json, ok : Bool, result : Json, err : String) -> Response {
   if ok {
-    { id, ok, result: Some(result), error: None }
+    { id, ok, result: Some(result), error: None, }
   } else {
-    { id, ok, result: None, error: Some(err) }
+    { id, ok, result: None, error: Some(err), }
   }
 }
 
@@ -64,10 +64,7 @@ fn extract_op(req : Json) -> Result[String, Response] {
             ),
           )
       }
-    _ =>
-      Err(
-        make_response(null, false, null, "request must be a JSON object"),
-      )
+    _ => Err(make_response(null, false, null, "request must be a JSON object"))
   }
 }
 
@@ -99,12 +96,7 @@ async fn handle_request(req : Json) -> Response {
   match (try? @labeler.dispatch_op(op, payload)) {
     Ok(json) => make_response(id, true, json, "")
     Err(e) =>
-      make_response(
-        id,
-        false,
-        null,
-        "op '" + op + "' raised: " + e.to_string(),
-      )
+      make_response(id, false, null, "op '" + op + "' raised: " + e.to_string())
   }
 }
 
@@ -134,12 +126,7 @@ pub async fn run_stdio() -> Unit {
     let resp = match (try? @json.parse(trimmed)) {
       Ok(req) => handle_request(req)
       Err(e) =>
-        make_response(
-          null,
-          false,
-          null,
-          "json parse error: " + e.to_string(),
-        )
+        make_response(null, false, null, "json parse error: " + e.to_string())
     }
     @stdio.stdout.write(resp.to_json().stringify())
     @stdio.stdout.write("\n")
