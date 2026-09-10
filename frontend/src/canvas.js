@@ -499,8 +499,21 @@ export function createCanvas(container) {
     ctx.clearRect(0, 0, w, h);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(layerStatic, 0, 0, natural.w, natural.h, 0, 0, w, h);
-    ctx.drawImage(layerDynamic, 0, 0, natural.w, natural.h, 0, 0, w, h);
+    // Source rect must cover the entire static/dynamic layer bitmap,
+    // which `applyDpr` already scaled to (natural.w*dpr, natural.h*dpr)
+    // — labels are painted with a dpr transform into that scaled
+    // bitmap. Sampling only (natural.w, natural.h) (the pre-Fix C
+    // mistake) captures just the top-left 1/dpr² of the painted
+    // content and stretches it to fit the destination, which makes
+    // labels render at view.zoom * dpr instead of view.zoom and
+    // pushes them off-position by (label_natural * view.zoom *
+    // (dpr - 1)) CSS px. On a HiDPI display with dpr=2 that's a
+    // large offset (e.g. ~300 CSS px for a keypoint near the image
+    // center at 1.29× zoom).
+    const srcW = Math.round(natural.w * display.dpr);
+    const srcH = Math.round(natural.h * display.dpr);
+    ctx.drawImage(layerStatic, 0, 0, srcW, srcH, 0, 0, w, h);
+    ctx.drawImage(layerDynamic, 0, 0, srcW, srcH, 0, 0, w, h);
     ctx.globalAlpha = 1;
   }
 
