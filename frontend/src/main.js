@@ -1942,17 +1942,33 @@ function flashHint(msg, kind) {
 
 function syncNativeImageView(detail) {
   if (!detail || !els.image) return;
-  const nativeMode = (settings.imageRenderMode || "native") === "native" && !els.image.hidden;
-  if (!nativeMode) {
-    els.image.style.transform = "";
-    return;
-  }
-  // The canvas reports the screen-space rect of the rendered bitmap; the
-  // <img> element must mirror it exactly so bitmap and annotations stay
-  // in lock-step across pan / zoom.
+  // The canvas reports the screen-space rect of the rendered bitmap.
+  // Both the <img> element AND the annotation canvas overlay must
+  // mirror it exactly so the bitmap, the labels, and the mouse-event
+  // coordinate system all agree — even when the stage flex-collapses
+  // to 0 (DevTools docked, toolbar too tall, etc.). Without this,
+  // canvas.getBoundingClientRect() can return a degenerate rect
+  // while the <img> is still at its full size, and the click→natural
+  // math lands the annotation in the wrong place.
+  //
+  // This is true in BOTH native mode (<img> visible, canvas overlays
+  // labels) and mizchi mode (canvas renders the bitmap, <img> hidden) —
+  // the difference is which element is the renderer, not how the rect
+  // is computed. So we always update both.
   const r = detail.imageRect;
+  const overlay = document.querySelector("canvas.annotation-overlay");
   if (!r) {
     els.image.style.transform = "";
+    els.image.style.left = "";
+    els.image.style.top = "";
+    els.image.style.width = "";
+    els.image.style.height = "";
+    if (overlay) {
+      overlay.style.left = "";
+      overlay.style.top = "";
+      overlay.style.width = "";
+      overlay.style.height = "";
+    }
     return;
   }
   els.image.style.transformOrigin = "0 0";
@@ -1961,6 +1977,13 @@ function syncNativeImageView(detail) {
   els.image.style.left = `${r.x}px`;
   els.image.style.top = `${r.y}px`;
   els.image.style.transform = "";
+  if (overlay) {
+    overlay.style.position = "absolute";
+    overlay.style.left = `${r.x}px`;
+    overlay.style.top = `${r.y}px`;
+    overlay.style.width = `${r.w}px`;
+    overlay.style.height = `${r.h}px`;
+  }
 }
 
 function setupViewSync() {
