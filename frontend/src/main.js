@@ -146,6 +146,7 @@ const els = {
   emptyHint: $("#empty-hint"),
   statusPath: $("#status-path"),
   statusIndex: $("#status-index"),
+  statusCursor: $("#status-cursor"),
   toolbar: $("#toolbar"),
   classInput: $("#class-input"),
   dirtyBadge: $("#dirty-badge"),
@@ -394,6 +395,55 @@ function updateStatus(item, currentIndex, total) {
   }
   els.statusPath.textContent = item.path;
   els.statusIndex.textContent = `${currentIndex + 1} / ${total}`;
+}
+
+// Status-bar cursor readout: shows the current mouse position in both
+// screen (CSS pixels) and image (natural pixels) coordinates. Useful
+// for diagnosing annotation drift — if the user clicks at one place and
+// the resulting keypoint appears elsewhere, comparing the two numbers
+// in the status bar shows whether the click→natural conversion or the
+// natural→render conversion is wrong.
+//
+// Throttled to one rAF tick because mousemove fires at ~120 Hz and we
+// don't need 120 textContent updates per second. The most recent mouse
+// position is held in `_pendingCursor` until the rAF fires.
+let _pendingCursor = null; // { ev, imgPt } | null
+let _cursorRafQueued = false;
+function updateCursorReadout(ev, imgPt) {
+  _pendingCursor = { ev, imgPt };
+  if (_cursorRafQueued) return;
+  _cursorRafQueued = true;
+  requestAnimationFrame(() => {
+    _cursorRafQueued = false;
+    const p = _pendingCursor;
+    if (!p) return;
+    _pendingCursor = null;
+    if (!els.statusCursor) return;
+    if (!p.imgPt) {
+      els.statusCursor.textContent = "—";
+      return;
+    }
+    // `ev` is the raw MouseEvent; `clientX/Y` are CSS pixels relative to
+    // the viewport. We don't need to subtract the canvas rect here — the
+    // status bar is for the user, and they think in viewport coords.
+    const sx = p.ev.clientX;
+    const sy = p.ev.clientY;
+    const ix = Math.round(p.imgPt[0]);
+    const iy = Math.round(p.imgPt[1]);
+    els.statusCursor.textContent = `screen ${sx}, ${sy}   img ${ix}, ${iy}`;
+  });
+}
+function queueCursorReadout(imgPt) {
+  // Called on mouseleave. We don't have a meaningful clientX/Y anymore,
+  // so we just clear the readout to "—".
+  _pendingCursor = { ev: { clientX: 0, clientY: 0 }, imgPt: imgPt ?? null };
+  if (_cursorRafQueued) return;
+  _cursorRafQueued = true;
+  requestAnimationFrame(() => {
+    _cursorRafQueued = false;
+    if (!els.statusCursor) return;
+    els.statusCursor.textContent = "—";
+  });
 }
 
 function showEmptyHint(text) {
@@ -1031,12 +1081,16 @@ function bindCanvasEvents(api) {
       state.draftPoints = [imgPt, imgPt];
     }
   });
-  api.onMouseMove((_ev, imgPt) => {
+  api.onMouseMove((ev, imgPt) => {
     if (!imgPt) return;
     if (state.mode === "rect" && state.draftPoints.length === 2) {
       state.draftPoints[1] = imgPt;
       renderAnnotations();
     }
+    updateCursorReadout(ev, imgPt);
+  });
+  api.onMouseLeave(() => {
+    queueCursorReadout(null);
   });
   api.onMouseUp((_ev, imgPt) => {
     if (!imgPt) return;

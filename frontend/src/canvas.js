@@ -110,7 +110,7 @@ export function createCanvas(container) {
 
   // ---------- event forwarding ----------
   const handlers = {
-    mousedown: null, mousemove: null, mouseup: null,
+    mousedown: null, mousemove: null, mouseup: null, mouseleave: null,
     click: null, dblclick: null, wheel: null,
   };
 
@@ -210,6 +210,12 @@ export function createCanvas(container) {
     }, { passive: false });
     // Suppress browser context menu on right-click so we can use it for pan.
     canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
+    // Mouse leave / enter: lets the host reset overlays like the
+    // status-bar cursor readout. Fires only on the canvas element itself,
+    // not on child elements.
+    canvas.addEventListener("mouseleave", (ev) => {
+      if (handlers.mouseleave) handlers.mouseleave(ev);
+    });
   }
 
   /** Zoom to `z` keeping the natural point currently under (sx, sy) in place. */
@@ -601,6 +607,7 @@ export function createCanvas(container) {
     onMouseDown(fn) { handlers.mousedown = fn; },
     onMouseMove(fn) { handlers.mousemove = fn; },
     onMouseUp(fn) { handlers.mouseup = fn; },
+    onMouseLeave(fn) { handlers.mouseleave = fn; },
     onClick(fn) { handlers.click = fn; },
     onDblClick(fn) { handlers.dblclick = fn; },
     onWheel(fn) { handlers.wheel = fn; },
