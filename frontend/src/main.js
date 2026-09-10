@@ -1993,6 +1993,22 @@ function waitForBridge(attempt = 0) {
     canvasApi = createCanvas(document.getElementById("stage"));
     bindCanvasEvents(canvasApi);
     installResizeObserver();
+    // Expose a small read-only debug bundle on `window` so the user can
+    // diagnose annotation drift / state from the DevTools console
+    // without the module-private `state` / `canvasApi` being hidden.
+    // `state` is a live reference, not a copy, so reads always reflect
+    // the current in-memory label.
+    window.__labelerDebug = Object.freeze({
+      get state() { return state; },
+      get canvas() { return canvasApi; },
+      get imgNatural() { return state.imgNatural; },
+      get lastKeypoint() {
+        const infos = state.label?.infos ?? [];
+        if (infos.length === 0) return null;
+        return infos[infos.length - 1];
+      },
+      get allKeypoints() { return state.label?.infos ?? []; },
+    });
     bindEvents();
     setupMenubar();
     setupViewSync();
