@@ -201,3 +201,90 @@ test "component: image_dimensions on encoded BMP stays consistent" {
   assert_eq(h, 1)
   assert_eq(@moonbit_image.image_format_name(fmt), "BMP")
 }
+
+// ---------------------------------------------------------------------------
+// Component: label-path derivation
+//
+// `image_path_to_label_path` honors the `Image@<name>/Label@<name>` sibling
+// convention when the parent folder matches, and falls back to in-folder
+// `<basename>.json` otherwise. The in-folder case is the "user's folder is
+// just a pile of photos" path — easy to lose if someone tidies the empty
+// branch, so we lock both shapes here.
+// ---------------------------------------------------------------------------
+
+///|
+test "component: image_path_to_label_path maps Image@X/<file>.jpg to Label@X/<file>.json" {
+  let got = @labeler.image_path_to_label_path("D:/datasets/Image@CARS.Part.01/1800003_0.jpg")
+  assert_eq(got, "D:/datasets/Label@CARS.Part.01/1800003_0.json")
+}
+
+///|
+test "component: image_path_to_label_path maps Image@X/<file>.png to Label@X/<file>.json" {
+  let got = @labeler.image_path_to_label_path("/home/user/Image@skin/abc.png")
+  assert_eq(got, "/home/user/Label@skin/abc.json")
+}
+
+///|
+test "component: image_path_to_label_path uses the parent dir when Image@ leaf is at root" {
+  // When the Image@ folder is at the filesystem root, dir_parent is "",
+  // so the result must not have a leading separator.
+  let got = @labeler.image_path_to_label_path("Image@CARS/1800003_0.jpg")
+  assert_eq(got, "Label@CARS/1800003_0.json")
+}
+
+///|
+test "component: image_path_to_label_path keeps _0 suffix in the basename (CARS-style)" {
+  // The `_0` is part of the original CARS filename, not a separate
+  // index — the label name must mirror the basename verbatim.
+  let got = @labeler.image_path_to_label_path("D:/x/Image@CARS/1800003_0.jpg")
+  assert_eq(got, "D:/x/Label@CARS/1800003_0.json")
+}
+
+///|
+test "component: image_path_to_label_path falls back to in-folder .json when dir leaf is not Image@<rest>" {
+  // The user dropped a pile of photos in `data/photos/` without the
+  // Image@/Label@ sibling convention. The label file must land
+  // alongside the image so the user can save and load labels without
+  // restructuring their directory tree.
+  let got = @labeler.image_path_to_label_path("D:/data/photos/a.jpg")
+  assert_eq(got, "D:/data/photos/a.json")
+}
+
+///|
+test "component: image_path_to_label_path falls back to in-folder .json for bare folder names" {
+  // A flat folder of photos (no Image@ prefix anywhere) should still
+  // produce a usable label path. This is the "user just dropped a
+  // bunch of JPGs in a folder" path.
+  let got = @labeler.image_path_to_label_path("/home/user/pics/2024-01-15/IMG_0001.bmp")
+  assert_eq(got, "/home/user/pics/2024-01-15/IMG_0001.json")
+}
+
+///|
+test "component: image_path_to_label_path accepts Windows backslash paths" {
+  // Native Windows builds hit `dir.contains("\\")` and use the
+  // backslash as the separator. The result must round-trip cleanly.
+  let got = @labeler.image_path_to_label_path("D:\\datasets\\Image@CARS\\a.jpg")
+  assert_eq(got, "D:\\datasets\\Label@CARS\\a.json")
+}
+
+///|
+test "component: image_path_to_label_path uses backslash for backslash input on Windows-style paths" {
+  // Same as above but verifying the in-folder fallback picks up
+  // the backslash separator when the input uses backslashes.
+  let got = @labeler.image_path_to_label_path("D:\\photos\\a.jpg")
+  assert_eq(got, "D:\\photos\\a.json")
+}
+
+///|
+test "component: video_path_to_label_path mirrors the image rule for Video@X/<file>.mp4" {
+  let got = @labeler.video_path_to_label_path("D:/datasets/Video@clip/run_001.mp4")
+  assert_eq(got, "D:/datasets/Label@clip/run_001.json")
+}
+
+///|
+test "component: video_path_to_label_path falls back to in-folder .json for non-Video@ dirs" {
+  // Same in-folder fallback as the image path: a video dropped in
+  // `data/raw/` gets its label next to it as `data/raw/foo.json`.
+  let got = @labeler.video_path_to_label_path("D:/data/raw/clip_001.mkv")
+  assert_eq(got, "D:/data/raw/clip_001.json")
+}

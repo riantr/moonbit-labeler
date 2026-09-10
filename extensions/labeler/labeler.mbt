@@ -843,11 +843,28 @@ async fn derive_image_dir(p : String) -> String {
 }
 
 ///|
-/// Map `Image@X/<basename>.ext` -> `Label@X/<basename>.json`.
-/// Mirrors the frontend's `detectLabelFolder` heuristic. The basename is
-/// preserved verbatim — `1800003_0.jpg` becomes `1800003_0.json` (the `_0`
-/// is part of the CARS filename, not a separate index suffix).
-fn image_path_to_label_path(image_path : String) -> String {
+/// Derive the on-disk JSON path for an image, honoring the folder
+/// convention documented in `op_read_label`:
+///
+///   `Image@X/<basename>.ext`  ->  `Label@X/<basename>.json`   (sibling dir)
+///   `anything_else/<basename>.ext`  ->  `anything_else/<basename>.json`
+///                                    (same folder as the image)
+///
+/// The second case is the explicit fallback for folders that don't follow
+/// the `Image@<name>` / `Label@<name>` convention — the label is stored
+/// alongside the image as a same-name JSON file. This keeps the labeler
+/// usable on ad-hoc photo directories that don't have the dataset-style
+/// `Image@…/Label@…` pair, and matches what the frontend displays when
+/// `state.labelFolder` is empty (no detected sibling label dir).
+///
+/// The basename is preserved verbatim — `1800003_0.jpg` becomes
+/// `1800003_0.json` (the `_0` is part of the CARS filename, not a
+/// separate index suffix).
+///
+/// Exposed as `pub fn` so the black-box test suite can lock both
+/// conventions against regressions; the in-folder case in particular
+/// is easy to lose if someone "tidies" the empty-branch fallback.
+pub fn image_path_to_label_path(image_path : String) -> String {
   let (dir, basename) = split_dir_name(image_path)
   let (stem, _ext) = split_stem_ext(basename)
 
@@ -875,9 +892,12 @@ fn image_path_to_label_path(image_path : String) -> String {
 
 ///|
 /// Same as `image_path_to_label_path` but for `Video@X/<basename>.ext`
-/// -> `Label@X/<basename>.json`. The convention is identical to images;
-/// the basename is preserved verbatim.
-fn video_path_to_label_path(video_path : String) -> String {
+/// -> `Label@X/<basename>.json`. The convention is identical to images
+/// (sibling `Label@<name>/` dir when the parent folder matches
+/// `Video@<name>`, same-folder `.json` otherwise); the basename is
+/// preserved verbatim. Promoted to `pub fn` for the same reason as
+/// `image_path_to_label_path`.
+pub fn video_path_to_label_path(video_path : String) -> String {
   let (dir, basename) = split_dir_name(video_path)
   let (stem, _ext) = split_stem_ext(basename)
 
