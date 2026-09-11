@@ -187,7 +187,7 @@ pub fn extension() -> @proton_extension.Extension {
       registrar.bind(read_video_frame, fn(_ctx, req) { op_read_video_frame(req) })
       registrar.bind(export_voc_folder, fn(_ctx, req) { op_export_voc_folder(req) })
       registrar.bind(export_yolo_folder, fn(_ctx, req) { op_export_yolo_folder(req) })
-      // pick_folder keeps the context (the only one of the 19 that does).
+      // pick_folder keeps the context (the only one of the 21 that does).
       registrar.bind(pick_folder, fn(ctx, req) { op_pick_folder(ctx, req) })
     },
   )

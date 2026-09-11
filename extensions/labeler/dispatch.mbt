@@ -118,13 +118,17 @@ pub async fn dispatch_op(op : String, payload : Json) -> Json {
 
 ///|
 /// List of all supported op names. Useful for the Python side to
-/// probe capability at startup.
+/// probe capability at startup. Includes `pick_folder` even though
+/// the stdio dispatch raises on it (the op is CEF-only — see the
+/// match arm); clients can detect the raise and fall back to a
+/// non-native picker rather than treating the missing name as
+/// "unsupported".
 pub fn dispatch_op_list() -> Array[String] {
   [
     "list_images", "read_image", "read_thumb", "decode_image", "resize_image", "read_text",
     "write_text", "read_label", "write_label", "parse_label", "serialize_label",
     "scan_classes", "save_classes", "load_classes", "load_classes_from_file",
     "list_videos", "read_video_info", "read_video_frame",
-    "export_voc_folder", "export_yolo_folder",
+    "export_voc_folder", "export_yolo_folder", "pick_folder",
   ]
 }

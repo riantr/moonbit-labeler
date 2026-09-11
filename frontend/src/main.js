@@ -955,6 +955,7 @@ function updateCanvasCursor() {
 }
 
 function hitTestAnnotation(x, y) {
+  if (!state.label) return null;
   const tol = 8 / Math.max(state.imgNatural.w, 1) * Math.max(state.imgNatural.w, state.imgNatural.h);
   // Bindings first so they win over their endpoints.
   for (let i = state.label.bindings.length - 1; i >= 0; i--) {
@@ -1038,6 +1039,7 @@ function commitPolygon() {
     renderAnnotations();
     return;
   }
+  if (!state.label) return;
   pushHistory();
   state.label.infos.push({
     id: newId("obj"),
@@ -1051,6 +1053,7 @@ function commitPolygon() {
 
 function deleteSelected() {
   if (!state.selectedId) return;
+  if (!state.label) return;
   pushHistory();
   const id = state.selectedId;
   const next = {
@@ -1097,6 +1100,7 @@ function bindCanvasEvents(api) {
     if (state.mode === "rect" && state.draftPoints.length === 2) {
       const [a, b] = state.draftPoints;
       if (Math.abs(a[0] - b[0]) > 2 && Math.abs(a[1] - b[1]) > 2) {
+        if (!state.label) return;
         pushHistory();
         state.label.infos.push({
           id: newId("obj"),
@@ -1119,6 +1123,7 @@ function bindCanvasEvents(api) {
       updateDeleteBtn();
       return;
     }
+    if (!state.label) return;
     if (state.mode === "polygon") {
       if (state.draftPoints.length >= 3) {
         const first = state.draftPoints[0];
@@ -2020,17 +2025,20 @@ function waitForBridge(attempt = 0) {
     // diagnose annotation drift / state from the DevTools console
     // without the module-private `state` / `canvasApi` being hidden.
     // `state` is a live reference, not a copy, so reads always reflect
-    // the current in-memory label.
+    // the current in-memory label. Getters are named `lastAnnotation` /
+    // `allAnnotations` (not `*Keypoint`) because state.label.infos
+    // holds all four shapes — rect / polygon / keypoint / binding —
+    // not just keypoints.
     window.__labelerDebug = Object.freeze({
       get state() { return state; },
       get canvas() { return canvasApi; },
       get imgNatural() { return state.imgNatural; },
-      get lastKeypoint() {
+      get lastAnnotation() {
         const infos = state.label?.infos ?? [];
         if (infos.length === 0) return null;
         return infos[infos.length - 1];
       },
-      get allKeypoints() { return state.label?.infos ?? []; },
+      get allAnnotations() { return state.label?.infos ?? []; },
     });
     bindEvents();
     setupMenubar();

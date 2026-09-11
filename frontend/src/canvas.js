@@ -420,6 +420,7 @@ export function createCanvas(container) {
   // ---------- paint ----------
   function paintStatic(state) {
     if (natural.w === 0) return;
+    if (!state.label) return;
     applyDpr(staticCtx, natural.w, natural.h);
     staticCtx.setTransform(display.dpr, 0, 0, display.dpr, 0, 0);
     staticCtx.clearRect(0, 0, natural.w, natural.h);
@@ -461,6 +462,7 @@ export function createCanvas(container) {
   }
   function paintDynamic(state) {
     if (natural.w === 0) return;
+    if (!state.label) return;
     applyDpr(dynamicCtx, natural.w, natural.h);
     dynamicCtx.setTransform(display.dpr, 0, 0, display.dpr, 0, 0);
     dynamicCtx.clearRect(0, 0, natural.w, natural.h);
