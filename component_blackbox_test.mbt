@@ -290,6 +290,71 @@ test "component: video_path_to_label_path falls back to in-folder .json for non-
 }
 
 // ---------------------------------------------------------------------------
+// Component: derive_label_dir_from_image_dir
+//
+// The export ops (op_export_voc_folder, op_export_yolo_folder) use this
+// pure helper to find the label dir to scan. The old `derive_label_dir_for_scan`
+// had a Case-2 fallback that re-interpreted the input dir as a file via
+// `image_path_to_label_path` and returned the **parent** of the image
+// dir as the label dir — so the export ops silently found no labels
+// and reported `exported_count: 0` whenever the user worked in a flat
+// folder without the `Image@<name>` / `Label@<name>` convention. The
+// pure helper now returns the in-folder dir directly in that case.
+// ---------------------------------------------------------------------------
+
+///|
+test "component: derive_label_dir_from_image_dir maps Image@X/ to Label@X/" {
+  let got = @labeler.derive_label_dir_from_image_dir("D:/datasets/Image@CARS.Part.01")
+  assert_eq(got, "D:/datasets/Label@CARS.Part.01")
+}
+
+///|
+test "component: derive_label_dir_from_image_dir keeps in-folder as-is" {
+  // The user dropped photos in a flat folder. The export must
+  // scan the same folder for .json files, not its parent.
+  let got = @labeler.derive_label_dir_from_image_dir("D:/data/photos")
+  assert_eq(got, "D:/data/photos")
+}
+
+///|
+test "component: derive_label_dir_from_image_dir handles Image@X at FS root" {
+  // No leading parent — result must not have a leading separator.
+  let got = @labeler.derive_label_dir_from_image_dir("Image@CARS")
+  assert_eq(got, "Label@CARS")
+}
+
+///|
+test "component: derive_label_dir_from_image_dir keeps single-segment in-folder as-is" {
+  let got = @labeler.derive_label_dir_from_image_dir("photos")
+  assert_eq(got, "photos")
+}
+
+///|
+test "component: derive_label_dir_from_image_dir accepts Windows backslash separator" {
+  let got = @labeler.derive_label_dir_from_image_dir("D:\\datasets\\Image@CARS")
+  assert_eq(got, "D:\\datasets\\Label@CARS")
+}
+
+///|
+test "component: derive_label_dir_from_image_dir preserves dot in Image@<rest> leaf" {
+  // CARS-style dataset names with dots in the leaf must round-trip
+  // verbatim — only the leading `Image@` is stripped, the rest
+  // (including the dot) is preserved. (Note: the function is called
+  // with the resolved image dir, not a file path, so the leaf is
+  // the trailing segment — no extra "/2024" suffix here.)
+  let got = @labeler.derive_label_dir_from_image_dir("D:/data/Image@CARS.Part.01")
+  assert_eq(got, "D:/data/Label@CARS.Part.01")
+}
+
+///|
+test "component: derive_label_dir_from_image_dir treats Image@-less deep tree as in-folder" {
+  // A nested dir that does NOT start with `Image@` is in-folder,
+  // even if the parent happens to.
+  let got = @labeler.derive_label_dir_from_image_dir("D:/data/photos/day-2024-01-15")
+  assert_eq(got, "D:/data/photos/day-2024-01-15")
+}
+
+// ---------------------------------------------------------------------------
 // Component: parse_label / serialize_label IPC ops
 //
 // These two ops used to be missing from the bridge's op surface — the

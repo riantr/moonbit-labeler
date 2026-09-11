@@ -862,27 +862,64 @@ fn split_stem_ext(basename : String) -> (String, String) {
 
 ///|
 /// Resolve the label directory for the `scan_classes` op.
+/// Pure: given an image directory, return the label directory to scan
+/// for `.json` label files. The two conventions:
+///
+///   `Image@<rest>/...`     →  `<parent>/Label@<rest>/`     (sibling dir)
+///   `anything_else/...`    →  `anything_else/`            (in-folder)
+///
+/// The in-folder branch is the explicit fallback for photo directories
+/// that don't follow the dataset-style `Image@<name>` / `Label@<name>`
+/// pairing — the labeler writes `<basename>.json` next to the image
+/// (see `image_path_to_label_path`), so the export must read from the
+/// same folder.
+///
+/// Exposed as `pub fn` so the blackbox suite can lock both branches
+/// without any filesystem setup. The async FS wrapper
+/// `derive_label_dir_for_scan` is the only entry point the export ops
+/// call; this pure helper is the actual contract.
+pub fn derive_label_dir_from_image_dir(image_dir : String) -> String {
+  let (parent, leaf) = split_dir_name(image_dir)
+  if leaf.has_prefix("Image@") && leaf.length() > 6 {
+    let rest = leaf[6:].to_owned()
+    let sep = if image_dir.contains("\\") { "\\" } else { "/" }
+    if parent == "" {
+      "Label@" + rest
+    } else {
+      parent + sep + "Label@" + rest
+    }
+  } else {
+    // In-folder: labels live next to the image dir itself. This
+    // branch is what was broken in the old `derive_label_dir_for_scan`
+    // — when the export ops passed a dir path, the old code fell
+    // through to `image_path_to_label_path` which re-interpreted the
+    // directory as a file and returned the **parent** of the image
+    // dir as the label dir. The export then silently found no
+    // labels and reported `exported_count: 0`.
+    image_dir
+  }
+}
+
 /// Accepts either a directory path (`D:/x/Image@Foo`) or a file path
 /// (`D:/x/Image@Foo/1800003_0.jpg`). Returns the sibling `Label@Foo`
-/// directory, or "" if it can't be determined.
+/// directory, or the in-folder path if the dir doesn't follow the
+/// `Image@<rest>` convention, or "" if neither an image dir nor a
+/// containing file path can be located.
 async fn derive_label_dir_for_scan(p : String) -> String {
-  // Case 1: p is an existing directory whose leaf starts with "Image@".
+  // Case 1: p is an existing directory.
   if @fs.exists(p) && @fs.kind(p) == @fs.Directory {
-    let (parent, leaf) = split_dir_name(p)
-    if leaf.has_prefix("Image@") && leaf.length() > 6 {
-      let rest = leaf[6:].to_owned()
-      let sep = if p.contains("\\") { "\\" } else { "/" }
-      if parent == "" {
-        return "Label@" + rest
-      } else {
-        return parent + sep + "Label@" + rest
-      }
-    }
+    return derive_label_dir_from_image_dir(p)
   }
-  // Case 2: fall back to file-path heuristic.
-  let lp = image_path_to_label_path(p)
-  let (dir, _) = split_dir_name(lp)
-  dir
+  // Case 2: p is (or claims to be) a file path — resolve to its
+  // parent dir, then run the same pure derivation.
+  let (parent, _) = split_dir_name(p)
+  if parent == "" {
+    return ""
+  }
+  if @fs.exists(parent) && @fs.kind(parent) == @fs.Directory {
+    return derive_label_dir_from_image_dir(parent)
+  }
+  ""
 }
 
 ///|
