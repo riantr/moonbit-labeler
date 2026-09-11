@@ -288,3 +288,63 @@ test "component: video_path_to_label_path falls back to in-folder .json for non-
   let got = @labeler.video_path_to_label_path("D:/data/raw/clip_001.mkv")
   assert_eq(got, "D:/data/raw/clip_001.json")
 }
+
+// ---------------------------------------------------------------------------
+// Component: parse_label / serialize_label IPC ops
+//
+// These two ops used to be missing from the bridge's op surface — the
+// frontend `label.js` calls them on every save/load, and the bridge
+// returned "bridge op is not registered", which the autosave catch
+// block surfaced as the persistent "保存失败" badge. The pure helpers
+// (`parse_label_text` / `serialize_label_text`) already existed, so
+// the fix is to register thin IPC wrappers. This test exercises them
+// through `dispatch_op` (the stdio JSON-RPC entry point) to lock the
+// end-to-end wiring — `dispatch_op` is the same dispatcher the CEF
+// bridge calls, so a green test here means the CEF op is wired.
+// ---------------------------------------------------------------------------
+
+///|
+async test "component: dispatch_op parse_label normalizes legacy points string" {
+  let req : Json = {
+    "text": "{\"img_name\":\"a.png\",\"infos\":[{\"label\":\"cat\",\"points\":\"0,0;10,10;20,20\"}]}",
+    "fallback_img_name": "fallback.png",
+  }
+  let reply = @labeler.dispatch_op("parse_label", req) catch {
+    _ => fail("dispatch_op parse_label raised")
+  }
+  // Reply should be { label_text: "<normalized JSON>" } per the Reply
+  // struct. Pull the label_text back out and verify the modern schema.
+  let label_text = match reply {
+    { "label_text": String(s), .. } => s
+    _ => fail("parse_label reply missing label_text: " + reply.stringify())
+  }
+  assert_true(label_text.contains("\"infos\""))
+  assert_true(label_text.contains("\"img_name\""))
+  // The legacy `points: "x,y;x,y;..."` shape must be normalized to
+  // nested arrays. If this regresses, the editor can't tell
+  // keypoints from polygons downstream.
+  assert_true(label_text.contains("[["))
+}
+
+///|
+async test "component: dispatch_op serialize_label round-trips a modern label" {
+  // The frontend hands in a label object JSON-stringified; the
+  // normalizer must round-trip it back with the modern schema.
+  let req : Json = {
+    "label_text": "{\"img_name\":\"a.png\",\"infos\":[{\"id\":\"x\",\"shape\":\"rect\",\"type\":\"t\",\"points\":[[1.4,2.6],[3.5,4.7]]}]}",
+  }
+  let reply = @labeler.dispatch_op("serialize_label", req) catch {
+    _ => fail("dispatch_op serialize_label raised")
+  }
+  let text = match reply {
+    { "text": String(s), .. } => s
+    _ => fail("serialize_label reply missing text: " + reply.stringify())
+  }
+  // Pixel coordinates must be rounded to integers on the way back out
+  // (the on-disk schema is integer px, not float). 1.4 -> 1, 2.6 -> 3.
+  assert_true(text.contains("[1,3]"))
+  assert_true(text.contains("[4,5]"))
+  // id and shape must be preserved
+  assert_true(text.contains("\"id\":\"x\""))
+  assert_true(text.contains("\"shape\":\"rect\""))
+}

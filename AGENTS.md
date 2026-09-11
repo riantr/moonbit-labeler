@@ -61,7 +61,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > `resolve_asset_path` into `resolve_entry_path` in
 > `moonbit-community/proton/proton_app/facade_entry.mbt`.
 - Frontend only:                 `cd frontend && npm run dev` / `npm run build`
-- Headless JSON-RPC bridge:      `moonbit-labeler.exe --stdio` (CEF-free; same 18 ops over stdin/stdout)
+- Headless JSON-RPC bridge:      `moonbit-labeler.exe --stdio` (CEF-free; same 21 ops over stdin/stdout)
   See "Stdio JSON-RPC bridge" below for the wire protocol.
 - Launch packaged exe:           `_build/run.bat [--cef|--stdio]`
   (auto mode: CEF if `target/proton-dist/moonbit-labeler/libcef.dll` is present,
@@ -72,11 +72,11 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - `app/`                   — runnable entry. `main.mbt` routes to one of two modes:
   - CEF/Proton (default): `@proton.file(...).identifier(...).capability(...).run_or_abort()` —
     the 0.2.5 `App` builder API that loads `frontend/dist/index.html` into a CEF webview.
-  - `--stdio` (headless): dispatches the same 18 ops as JSON-RPC over stdin/stdout (see
+  - `--stdio` (headless): dispatches the same 21 ops as JSON-RPC over stdin/stdout (see
     "Stdio JSON-RPC bridge" below). Selected by passing `--stdio` as the first arg.
   `stdio_main.mbt` holds the stdio loop. Both modes share the `@labeler.dispatch_op`
   entry point in `extensions/labeler/dispatch.mbt`.
-- `extensions/labeler/`    — 19 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
+- `extensions/labeler/`    — 21 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
   and the pure-MoonBit `dispatch_op(op, payload) -> Json raise` entry point. In
   `extension.mbt`, each op is declared as a `@proton_contract.Command[Request, Reply]`
   and bound to the existing `op_*` handler via a `CommandRegistrar`.
@@ -159,21 +159,21 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as
-a CEF-free JSON-RPC server when launched with `--stdio`. Same 18 ops, same Request/Reply
+a CEF-free JSON-RPC server when launched with `--stdio`. Same 21 ops, same Request/Reply
 structs, same JSON wire format as the CEF path — useful for embedding the labeler backend
 in a Python Qt shell, scripts, or debug tooling.
 
 ```
 $ echo '{"id":1,"op":"list_images","payload":{"path":"data/Image@skin","extensions":["jpg"]}}' \
     | ./moonbit-labeler.exe --stdio
-{"type":"ready","ops":["list_images", ...18 ops...]}
+{"type":"ready","ops":["list_images", ...21 ops...]}
 {"id":1,"ok":true,"result":{"folder":"data/Image@skin","images":[...]}}
 {"type":"bye"}
 ```
 
 Wire format (one JSON object per line, newline-delimited):
 
-- Banner on startup: `{"type":"ready","ops":[...18 op names...]}`
+- Banner on startup: `{"type":"ready","ops":[...21 op names...]}`
 - Request: `{"id": <int|null>, "op": "<name>", "payload": <op-specific-json>}`
 - Response: `{"id": ..., "ok": true,  "result": <json>, "error": null}`
   or:       `{"id": ..., "ok": false, "result": null, "error": "<message>"}`

@@ -1,6 +1,6 @@
 // Stdio JSON-RPC dispatcher for the labeler extension.
 //
-// The original `extension()` function in this package registered 18
+// The original `extension()` function in this package registered 21
 // op_handlers with the Proton IPC layer (`ext:labeler/<op>`). This
 // file provides an alternative entry point: a single `dispatch_op`
 // function that the `bin/labeler_stdio` binary can call over
@@ -58,6 +58,14 @@ pub async fn dispatch_op(op : String, payload : Json) -> Json {
       let req : WriteLabelRequest = @json.from_json(payload)
       op_write_label(req).to_json()
     }
+    "parse_label" => {
+      let req : ParseLabelRequest = @json.from_json(payload)
+      op_parse_label(req).to_json()
+    }
+    "serialize_label" => {
+      let req : SerializeLabelRequest = @json.from_json(payload)
+      op_serialize_label(req).to_json()
+    }
     "scan_classes" => {
       let req : ScanClassesRequest = @json.from_json(payload)
       op_scan_classes(req).to_json()
@@ -114,8 +122,9 @@ pub async fn dispatch_op(op : String, payload : Json) -> Json {
 pub fn dispatch_op_list() -> Array[String] {
   [
     "list_images", "read_image", "read_thumb", "decode_image", "resize_image", "read_text",
-    "write_text", "read_label", "write_label", "scan_classes", "save_classes", "load_classes",
-    "load_classes_from_file", "list_videos", "read_video_info", "read_video_frame",
+    "write_text", "read_label", "write_label", "parse_label", "serialize_label",
+    "scan_classes", "save_classes", "load_classes", "load_classes_from_file",
+    "list_videos", "read_video_info", "read_video_frame",
     "export_voc_folder", "export_yolo_folder",
   ]
 }

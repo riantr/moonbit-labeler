@@ -63,9 +63,9 @@ don't match the documented target.
 ├── app/
 │   └── main.mbt                       # 0.2.5 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
 ├── extensions/
-│   ├── labeler/                       # 19 IPC ops + the image/label/VOC/YOLO pipeline
+│   ├── labeler/                       # 21 IPC ops + the image/label/VOC/YOLO pipeline
 │   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
-│   │   ├── extension.mbt               # 0.2.5 extension registration (CommandRegistrar::bind for all 19 ops)
+│   │   ├── extension.mbt               # 0.2.5 extension registration (CommandRegistrar::bind for all 21 ops)
 │   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
 │   │   └── moon.pkg
 │   # Image codec lives in the shared riantr/moonbit_image@0.3.4 mooncake

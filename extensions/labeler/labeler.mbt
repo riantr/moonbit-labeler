@@ -134,6 +134,65 @@ pub struct WriteLabelReply {
 /// strips UTF-8 BOMs.
 
 ///|
+/// Request shape for `ext:labeler/parse_label`. Mirrors the JS call
+/// in `label.js::parseLabel` — `fallback_img_name` is used when the
+/// incoming JSON omits `img_name` (e.g. a brand-new empty label).
+pub struct ParseLabelRequest {
+  text : String
+  fallback_img_name : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+/// Reply shape for `parse_label`. The bridge wraps this in
+/// `{ ok: true, label_text: ... }` on success, so the JS side can
+/// `JSON.parse(reply.label_text)` and use the normalized schema
+/// directly without re-implementing the normalizer in JS.
+pub struct ParseLabelReply {
+  label_text : String
+} derive(ToJson, Eq, Debug)
+
+///|
+/// Request shape for `ext:labeler/serialize_label`. The frontend
+/// `JSON.stringify`s the in-memory label, hands the text here, and
+/// gets the round-tripped, modern-schema text back so the on-disk
+/// JSON always has `id` / `shape` / integer pixel coords.
+pub struct SerializeLabelRequest {
+  label_text : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+/// Reply shape for `serialize_label`.
+pub struct SerializeLabelReply {
+  text : String
+} derive(ToJson, Eq, Debug)
+
+///|
+/// IPC handler for `ext:labeler/parse_label`. Wraps the pure
+/// `parse_label_text` helper so the same normalizer the save path
+/// uses is the one the load path trusts. Raises on JSON parse error
+/// so the bridge can convert it to a structured `{ ok: false, error }`
+/// reply.
+fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply raise {
+  let (text, err) = parse_label_text(req.text, req.fallback_img_name)
+  if err != "" {
+    raise Failure::Failure(err)
+  }
+  { label_text: text, }
+}
+
+///|
+/// IPC handler for `ext:labeler/serialize_label`. Wraps the pure
+/// `serialize_label_text` helper. Same raise-to-bridge-error
+/// conversion as `op_parse_label`.
+fn op_serialize_label(req : SerializeLabelRequest) -> SerializeLabelReply raise {
+  let (text, err) = serialize_label_text(req.label_text)
+  if err != "" {
+    raise Failure::Failure(err)
+  }
+  { text, }
+}
+
+///|
 /// Default image extensions when the frontend doesn't pass a list.
 let default_image_extensions : Array[String] = [
   ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif",

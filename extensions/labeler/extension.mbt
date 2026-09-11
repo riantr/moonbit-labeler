@@ -1,7 +1,7 @@
 ///| ---------------------------------------------------------------
 /// 0.2.5 Proton extension registration for the labeler backend.
 ///
-/// Defines the 19 IPC ops as `ext:labeler/<op>` and binds them to the
+/// Defines the 21 IPC ops as `ext:labeler/<op>` and binds them to the
 /// existing `op_*` handlers in `labeler.mbt`. The frontend invokes
 /// these via `window.__MoonBit__.core.invokeOp("ext:labeler/<op>", payload)`.
 ///
@@ -18,6 +18,8 @@
 /// | write_text                  | WriteTextRequest         | WriteTextReply        |
 /// | read_label                  | ReadLabelRequest         | ReadLabelReply        |
 /// | write_label                 | WriteLabelRequest        | WriteLabelReply       |
+/// | parse_label                 | ParseLabelRequest        | ParseLabelReply       |
+/// | serialize_label             | SerializeLabelRequest    | SerializeLabelReply   |
 /// | scan_classes                | ScanClassesRequest       | ScanClassesReply      |
 /// | save_classes                | SaveClassesRequest       | SaveClassesReply      |
 /// | load_classes                | LoadClassesRequest       | LoadClassesReply      |
@@ -85,6 +87,17 @@ pub fn extension() -> @proton_extension.Extension {
   let write_label : @proton_contract.Command[WriteLabelRequest, WriteLabelReply] = contract.command(
     "write_label",
   )
+  // parse_label / serialize_label round-trip the in-memory label through
+  // the Moon-side schema normalizer. The frontend `label.js` calls them
+  // on every save and load; without these registrations the bridge
+  // returns "bridge op is not registered" and the autosave status bar
+  // gets stuck on "保存失败".
+  let parse_label : @proton_contract.Command[ParseLabelRequest, ParseLabelReply] = contract.command(
+    "parse_label",
+  )
+  let serialize_label : @proton_contract.Command[SerializeLabelRequest, SerializeLabelReply] = contract.command(
+    "serialize_label",
+  )
   let scan_classes : @proton_contract.Command[ScanClassesRequest, ScanClassesReply] = contract.command(
     "scan_classes",
   )
@@ -131,6 +144,8 @@ pub fn extension() -> @proton_extension.Extension {
     write_text.contract_route(),
     read_label.contract_route(),
     write_label.contract_route(),
+    parse_label.contract_route(),
+    serialize_label.contract_route(),
     scan_classes.contract_route(),
     save_classes.contract_route(),
     load_classes.contract_route(),
@@ -146,7 +161,7 @@ pub fn extension() -> @proton_extension.Extension {
     contract,
     routes,
     fn(registrar) {
-      // 17 of 19 handlers are stateless and just discard the
+      // 20 of 21 handlers are stateless and just discard the
       // AppCommandRequestContext. Only `pick_folder` keeps the
       // context because it needs the CEF `CommandWindow` to drive
       // the native folder dialog. The wrap-in-closure is a
@@ -161,6 +176,8 @@ pub fn extension() -> @proton_extension.Extension {
       registrar.bind(write_text, fn(_ctx, req) { op_write_text(req) })
       registrar.bind(read_label, fn(_ctx, req) { op_read_label(req) })
       registrar.bind(write_label, fn(_ctx, req) { op_write_label(req) })
+      registrar.bind(parse_label, fn(_ctx, req) { op_parse_label(req) })
+      registrar.bind(serialize_label, fn(_ctx, req) { op_serialize_label(req) })
       registrar.bind(scan_classes, fn(_ctx, req) { op_scan_classes(req) })
       registrar.bind(save_classes, fn(_ctx, req) { op_save_classes(req) })
       registrar.bind(load_classes, fn(_ctx, req) { op_load_classes(req) })

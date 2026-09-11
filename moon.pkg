@@ -15,6 +15,7 @@
 // on 4:2:0 / 4:2:2 subsampled files.
 
 import {
+  "moonbitlang/async",
   "moonbitlang/core/ref",
   "riantr/moonbit_image",
   "riantr/moonbit_labeler/extensions/labeler",
