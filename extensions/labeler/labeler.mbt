@@ -382,20 +382,33 @@ pub struct ExportReply {
 /// MoonBit async fs `mkdir` doesn't materialise the path. We hit this
 /// edge case on Windows when the parent path lives in a folder the
 /// async backend hasn't seen before.
+///
+/// Errors from `@fs.mkdir` are intentionally propagated (no `catch`)
+/// so callers — `op_write_label`, `export_voc_internal`, and
+/// `export_yolo_internal` — can surface a descriptive "cannot create
+/// label/dest directory" message to the frontend instead of a later
+/// "write_label failed: <@os_error>" that hides the real cause.
+///
+/// Note: MoonBit's `&&` is strict (both sides are evaluated even if
+/// the left is false), so the existence-vs-kind check is split into
+/// two ifs — otherwise calling `@fs.kind` on a non-existent path
+/// raises `@os_error.OSError`, defeating the early-return path on
+/// the first save.
 async fn ensure_dir(path : String) -> Unit {
   if path == "" {
     return
   }
-  if @fs.exists(path) && @fs.kind(path) == @fs.Directory {
+  if @fs.exists(path) {
+    if @fs.kind(path) != @fs.Directory {
+      fail("ensure_dir: '" + path + "' exists but is not a directory")
+    }
     return
   }
   // `@fs.mkdir(..., recursive=true)` is the modern MoonBit path. It
   // was probed to work on `Image@CARS.Part.01`-style paths (with `@`
   // in the directory name) under moon 0.4.43, so the PowerShell
   // `New-Item -Force` round-trip is no longer needed here.
-  @fs.mkdir(path, recursive=true) catch {
-    _ => ()
-  }
+  @fs.mkdir(path, recursive=true)
 }
 
 ///| --- string helpers ---
@@ -1087,7 +1100,13 @@ async fn op_write_label(req : WriteLabelRequest) -> WriteLabelReply {
   let (label_dir, _) = split_dir_name(label_path)
   if label_dir != "" {
     ensure_dir(label_dir) catch {
-      _ => ()
+      e =>
+        fail(
+          "write_label: cannot create label directory '" +
+          label_dir +
+          "': " +
+          e.to_string(),
+        )
     }
   }
   // Direct MoonBit @fs.write_file, UTF-8 encoded. The async fs in
@@ -3283,7 +3302,15 @@ async fn export_voc_internal(
   label_dir : String,
   dest_folder : String,
 ) -> ExportReply {
-  ensure_dir(dest_folder)
+  ensure_dir(dest_folder) catch {
+    e =>
+      fail(
+        "export_voc_folder: cannot create dest folder '" +
+        dest_folder +
+        "': " +
+        e.to_string(),
+      )
+  }
   let names = @fs.readdir(label_dir, include_hidden=false, sort=true) catch {
     _ => []
   }
@@ -3387,7 +3414,15 @@ async fn export_yolo_internal(
   label_dir : String,
   dest_folder : String,
 ) -> ExportReply {
-  ensure_dir(dest_folder)
+  ensure_dir(dest_folder) catch {
+    e =>
+      fail(
+        "export_yolo_folder: cannot create dest folder '" +
+        dest_folder +
+        "': " +
+        e.to_string(),
+      )
+  }
   let names = @fs.readdir(label_dir, include_hidden=false, sort=true) catch {
     _ => []
   }

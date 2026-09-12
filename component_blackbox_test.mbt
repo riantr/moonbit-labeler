@@ -413,3 +413,171 @@ async test "component: dispatch_op serialize_label round-trips a modern label" {
   assert_true(text.contains("\"id\":\"x\""))
   assert_true(text.contains("\"shape\":\"rect\""))
 }
+
+// ---------------------------------------------------------------------------
+// Component: write_label error propagation
+//
+// `op_write_label` calls `ensure_dir` to materialise `Label@<name>/` on
+// the first save. Before this fix, the underlying `@fs.mkdir` failure
+// was silently swallowed (`catch { _ => () }`), so a write to a
+// read-only / blocked / non-existent parent surfaced as a generic
+// "write_label failed: <@os_error>" coming from the subsequent
+// `@fs.write_file` call. Users couldn't tell whether the label
+// directory was un-creatable or the file was un-writable.
+//
+// These two tests lock the new contract:
+//   1. The happy path — `Label@<name>/` is auto-created on first save
+//      and the file round-trips through `read_label`.
+//   2. The error path — when the directory cannot be created, the
+//      raised message starts with
+//      "write_label: cannot create label directory '<path>':" so the
+//      frontend can distinguish it from a later write failure.
+//
+// We use `_build/labeler_write_test_*/` (gitignored) as fresh
+// sandboxes per test, so the two scenarios don't interfere.
+// ---------------------------------------------------------------------------
+
+///|
+/// Recursively remove `path` whether it's a file, a symlink, or a
+/// directory tree. `@fs.rmdir` is non-recursive and `@fs.remove`
+/// only handles files, so we walk the tree ourselves. Idempotent
+/// (silently no-ops on a missing path).
+///
+/// We avoid `@fs.kind` because its non-`Directory` variant names
+/// differ between targets and we don't need fine-grained type
+/// discrimination: a path is either enumerable (directory) or it
+/// isn't, and `readdir` reliably raises on the latter.
+async fn rm_rf(path : String) -> Unit {
+  let exists = @fs.exists(path) catch {
+    _ => false
+  }
+  if !exists {
+    return
+  }
+  // Probe with readdir; if it raises the path is a file (or a
+  // broken symlink, etc.), which we just remove directly.
+  let probe = try {
+    ignore(@fs.readdir(path))
+    true
+  } catch {
+    _ => false
+  }
+  if !probe {
+    @fs.remove(path) catch {
+      _ => ()
+    }
+    return
+  }
+  let names = @fs.readdir(path) catch {
+    _ => []
+  }
+  for n in names {
+    // Forward-slash join works on both Windows and POSIX; the
+    // async fs normalises the separator internally.
+    rm_rf(path + "/" + n)
+  }
+  @fs.rmdir(path) catch {
+    _ => ()
+  }
+}
+
+///|
+async test "component: dispatch_op write_label auto-creates Label@X/ and round-trips through read_label" {
+  // The root of the work dir for this test. Distinct from the failure
+  // test's root so the two cases can run side-by-side.
+  let root = "_build/labeler_write_test_ok"
+  rm_rf(root)
+  let image_path = root + "/Image@CARS/1800003_0.jpg"
+  let content = "{\"img_name\":\"1800003_0.jpg\",\"infos\":[]}"
+  let write_req : Json = { "image_path": image_path, "content": content }
+  let write_reply = @labeler.dispatch_op("write_label", write_req) catch {
+    e => fail("write_label raised unexpectedly: " + e.to_string())
+  }
+  // The reply must report the sibling Label@<name>/<file>.json path.
+  let label_path = match write_reply {
+    { "label_path": String(s), .. } => s
+    _ =>
+      fail(
+        "write_label reply missing label_path: " + write_reply.stringify(),
+      )
+  }
+  assert_eq(label_path, root + "/Label@CARS/1800003_0.json")
+  // The bytes count must match the UTF-8 length of the content.
+  let expected_bytes = content.length()
+  let got_bytes = match write_reply {
+    { "bytes": Number(n, ..), .. } => n.to_int()
+    _ => fail("write_label reply missing bytes: " + write_reply.stringify())
+  }
+  assert_eq(got_bytes, expected_bytes)
+  // And the file must actually be on disk + readable back through
+  // read_label. This proves ensure_dir did its job (created the dir)
+  // AND that write_file produced a valid UTF-8 file the JSON parser
+  // can re-read.
+  let read_req : Json = { "image_path": image_path }
+  let read_reply = @labeler.dispatch_op("read_label", read_req) catch {
+    e => fail("read_label raised unexpectedly: " + e.to_string())
+  }
+  // found must be true (we just wrote it) and content must match.
+  let found = match read_reply {
+    { "found": True, .. } => true
+    { "found": False, .. } =>
+      fail("read_label returned found=false right after write_label")
+    _ => fail("read_label reply missing found: " + read_reply.stringify())
+  }
+  let got_content = match read_reply {
+    { "content": String(s), .. } => s
+    _ => fail("read_label reply missing content: " + read_reply.stringify())
+  }
+  assert_true(found)
+  assert_eq(got_content, content)
+  rm_rf(root)
+}
+
+///|
+async test "component: dispatch_op write_label raises 'cannot create label directory' when a file blocks Label@X" {
+  // Set up a sandbox where the Label@<name> dir *cannot* be created:
+  // we pre-place a regular file at the exact path `ensure_dir` will
+  // try to use as a directory. `@fs.mkdir(..., recursive=true)` fails
+  // on both Windows and POSIX when one of the path components is a
+  // file rather than a directory, which is exactly the "blocked"
+  // scenario we want the error message to cover.
+  let root = "_build/labeler_write_test_blocked"
+  rm_rf(root)
+  // Make the parent dir, then drop a regular file at the spot
+  // `Label@<name>` would need to be a directory.
+  @fs.mkdir(root, recursive=true) catch {
+    e => fail("test setup: mkdir root failed: " + e.to_string())
+  }
+  let blocker = root + "/Label@BLOCKED"
+  @fs.write_file(blocker, b"not a dir", create_mode=@fs.CreateOrTruncate) catch {
+    e => fail("test setup: write_file blocker failed: " + e.to_string())
+  }
+  // image_path_to_label_path(".../Image@BLOCKED/...") → ".../Label@BLOCKED/..."
+  // — same name as the blocker file, so the mkdir inside op_write_label
+  // must fail.
+  let image_path = root + "/Image@BLOCKED/1800003_0.jpg"
+  let write_req : Json = {
+    "image_path": image_path,
+    "content": "{\"img_name\":\"x.jpg\",\"infos\":[]}",
+  }
+  // The contract: the raised error must start with
+  // "write_label: cannot create label directory '<path>':" so the
+  // frontend can distinguish it from a later write failure.
+  try {
+    let _ = @labeler.dispatch_op("write_label", write_req)
+    fail("write_label should have raised but returned normally")
+  } catch {
+    e => {
+      let msg = e.to_string()
+      assert_true(
+        msg.contains("write_label: cannot create label directory"),
+      )
+      // The reported label_dir must be the one we tried to create, not
+      // an empty string or the parent. Comparing against the absolute
+      // blocker path locks the message to the exact directory that
+      // failed.
+      assert_true(msg.contains(blocker))
+    }
+  }
+  rm_rf(root)
+}

@@ -16,6 +16,7 @@
 
 import {
   "moonbitlang/async",
+  "moonbitlang/async/fs",
   "moonbitlang/core/ref",
   "riantr/moonbit_image",
   "riantr/moonbit_labeler/extensions/labeler",
