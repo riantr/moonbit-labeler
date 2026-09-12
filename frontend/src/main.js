@@ -872,7 +872,7 @@ async function flushSave() {
     }
     return;
   }
-  if (!state.dirty || !state.labelPath) return;
+  if (!state.dirty) return;
   state.saving = true;
   updateDirtyBadge();
   try {
