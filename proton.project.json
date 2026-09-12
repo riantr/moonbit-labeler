@@ -1,5 +1,5 @@
 {
-  "identifier": "com.mavis.moonbit-labeler",
+  "identifier": "io.mooncakes.riantr.moonbit-labeler",
   "backend": {
     "path": ".",
     "package": "app"

@@ -56,7 +56,7 @@ async fn main {
       height=800,
       debug=is_debug_mode(args),
     )
-    .identifier("com.mavis.moonbit-labeler")
+    .identifier("io.mooncakes.riantr.moonbit-labeler")
     .capability(@proton_extension.capability(@labeler.extension()))
     .run_or_abort()
   }
