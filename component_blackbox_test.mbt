@@ -581,3 +581,279 @@ async test "component: dispatch_op write_label raises 'cannot create label direc
   }
   rm_rf(root)
 }
+
+// ---------------------------------------------------------------------------
+// Component: end-to-end save flow with real image files on disk
+//
+// The two write_label tests above exercise `op_write_label` in
+// isolation against synthetic JSON paths. They catch the
+// "ensure_dir swallowed the mkdir error" bug and the "label_path
+// wrong" bug, but they do not prove that the *full* dispatch_op
+// chain works against actual image bytes: list_images must discover
+// real files, read_image must hand them back, and write_label must
+// land the label JSON next to them. This test drops a real BMP file
+// on disk, walks list_images → read_image → write_label → read_label
+// end-to-end, and verifies both the dispatch_op replies and the
+// bytes on disk.
+//
+// The test image is hand-crafted (2×2 BGRA, all 4 pixels distinct)
+// rather than generated through @moonbit_image.encode — the encoder
+// is fine, but `ImageFormat::*` and `PixelFormat::*` variants are
+// read-only outside the package, so a one-off test would have to
+// monkey-patch the public API. A 70-byte BMP literal is more
+// honest about what the test needs and is easier to audit. BMP is
+// lossless so a successful read_image round-trip is conclusive.
+// ---------------------------------------------------------------------------
+
+///|
+/// A 2×2 RGBA BMP. 4 distinct pixels (red / green / blue / yellow),
+/// so any byte-level corruption in the round-trip will flip a
+/// non-equal pair. The whole file is 70 bytes:
+///
+///   14-byte file header + 40-byte DIB header + 16-byte pixel data.
+///
+/// Pixels are stored bottom-to-top, BGRA, with no row padding needed
+/// for 32-bit alignment.
+fn sample_bmp_bytes() -> Bytes {
+  // [file header 14][DIB header 40][pixels 16]
+  let raw : Array[Int] = [
+    0x42, 0x4D,                          //  0  "BM"
+    0x46, 0x00, 0x00, 0x00,              //  2  file size = 70
+    0x00, 0x00, 0x00, 0x00,              //  6  reserved
+    0x36, 0x00, 0x00, 0x00,              // 10  pixel offset = 54
+    0x28, 0x00, 0x00, 0x00,              // 14  DIB header size = 40
+    0x02, 0x00, 0x00, 0x00,              // 18  width = 2
+    0x02, 0x00, 0x00, 0x00,              // 22  height = 2
+    0x01, 0x00,                          // 26  planes = 1
+    0x20, 0x00,                          // 28  bits per pixel = 32
+    0x00, 0x00, 0x00, 0x00,              // 30  compression = BI_RGB
+    0x10, 0x00, 0x00, 0x00,              // 34  image size = 16
+    0x00, 0x00, 0x00, 0x00,              // 38  x ppm
+    0x00, 0x00, 0x00, 0x00,              // 42  y ppm
+    0x00, 0x00, 0x00, 0x00,              // 46  colors used
+    0x00, 0x00, 0x00, 0x00,              // 50  important colors
+    // pixel data, bottom row then top row, BGRA per pixel
+    0xFF, 0x00, 0x00, 0xFF,              // 54  (0,0) bottom-left  blue
+    0x00, 0xFF, 0xFF, 0xFF,              // 58  (1,0) bottom-right yellow
+    0x00, 0x00, 0xFF, 0xFF,              // 62  (0,1) top-left    red
+    0x00, 0xFF, 0x00, 0xFF,              // 66  (1,1) top-right   green
+  ]
+  bytes_from(raw)
+}
+
+///|
+/// Tiny base64 decoder for the BMP round-trip check. We hand-roll
+/// this rather than pulling another dependency for one assertion.
+/// Only handles the padded/unpadded standard alphabet our server
+/// emits (the dispatch_op op_read_image response).
+///
+/// Output length rule (RFC 4648 §6):
+///   - input length 4k           → 3k bytes
+///   - input length 4k + 2       → 3k + 1 byte (1 byte of zero-pad)
+///   - input length 4k + 3       → 3k + 2 bytes (1 byte of zero-pad)
+///   - input length 4k + 1       → invalid (we don't expect this)
+fn b64_decode(s : String) -> Bytes {
+  // Map every base64 alphabet char to its 6-bit value, sentinel -1
+  // for anything else (including padding).
+  let idx = fn(c : Char) -> Int {
+    let n = c.to_int()
+    if n >= 65 && n <= 90 {
+      n - 65
+    } else if n >= 97 && n <= 122 {
+      n - 71
+    } else if n >= 48 && n <= 57 {
+      n + 4
+    } else if n == 43 {
+      62
+    } else if n == 47 {
+      63
+    } else {
+      -1
+    }
+  }
+  // Collect the non-padding chars; the input is well-formed base64
+  // from the server so we don't need to defend against garbage.
+  let chars : Array[Char] = []
+  for c in s {
+    if c != '=' {
+      chars.push(c)
+    }
+  }
+  let extra = chars.length() % 4
+  let mut out_len = (chars.length() / 4) * 3
+  if extra == 2 {
+    out_len = out_len + 1
+  } else if extra == 3 {
+    out_len = out_len + 2
+  }
+  let out : Array[Int] = Array::make(out_len, 0)
+  let mut bi = 0
+  let mut i = 0
+  while i + 4 <= chars.length() {
+    let a = idx(chars[i])
+    let b = idx(chars[i + 1])
+    let c = idx(chars[i + 2])
+    let d = idx(chars[i + 3])
+    out[bi] = (a << 2) | (b >> 4)
+    bi = bi + 1
+    out[bi] = ((b & 0xF) << 4) | (c >> 2)
+    bi = bi + 1
+    out[bi] = ((c & 0x3) << 6) | d
+    bi = bi + 1
+    i = i + 4
+  }
+  // Handle the trailing 1-3 chars (post-pad). `extra` of 2 means
+  // 1 byte of source data (plus 2 bits of zero-pad); 3 means 2
+  // bytes (plus 1 bit of zero-pad).
+  if extra == 2 {
+    let a = idx(chars[i])
+    let b = idx(chars[i + 1])
+    out[bi] = (a << 2) | (b >> 4)
+  } else if extra == 3 {
+    let a = idx(chars[i])
+    let b = idx(chars[i + 1])
+    let c = idx(chars[i + 2])
+    out[bi] = (a << 2) | (b >> 4)
+    bi = bi + 1
+    out[bi] = ((b & 0xF) << 4) | (c >> 2)
+  }
+  bytes_from(out)
+}
+
+///|
+async test "component: e2e — list_images + read_image + write_label + read_label against a real BMP file" {
+  // Sandbox: fresh tree under _build/ so reruns are deterministic.
+  let root = "_build/labeler_e2e_test"
+  rm_rf(root)
+  let image_dir = root + "/Image@e2e"
+  @fs.mkdir(image_dir, recursive=true) catch {
+    e => fail("test setup: mkdir image_dir failed: " + e.to_string())
+  }
+  // Drop the real BMP on disk.
+  let bmp_path = image_dir + "/sample.bmp"
+  let bmp_bytes = sample_bmp_bytes()
+  @fs.write_file(bmp_path, bmp_bytes, create_mode=@fs.CreateOrTruncate) catch {
+    e => fail("test setup: write_file bmp failed: " + e.to_string())
+  }
+  // --- 1. list_images discovers the file ---
+  let list_req : Json = {
+    "path": image_dir,
+    "extensions": ["bmp", "png", "jpg", "jpeg"],
+  }
+  let list_reply = @labeler.dispatch_op("list_images", list_req) catch {
+    e => fail("list_images raised: " + e.to_string())
+  }
+  let names = match list_reply {
+    { "images": Array(arr), .. } => arr
+    _ => fail("list_images reply missing 'images' array: " + list_reply.stringify())
+  }
+  assert_eq(names.length(), 1)
+  // list_images returns an array of { name, path, ext } objects, not
+  // bare filename strings. Verify both fields to lock the contract.
+  let entry = names[0]
+  let (got_name, got_path) = match entry {
+    { "name": String(n), "path": String(p), .. } => (n, p)
+    _ => fail("list_images entry shape wrong: " + entry.stringify())
+  }
+  assert_eq(got_name, "sample.bmp")
+  // The path separator is platform-specific (Windows: `\`, POSIX: `/`),
+  // and the dispatch_op normalises to the native form. We just check
+  // that the Image@e2e/ directory leaf and the filename appear in the
+  // returned path, regardless of separator.
+  assert_true(got_path.contains("Image@e2e"))
+  assert_true(got_path.has_suffix("sample.bmp"))
+  // --- 2. read_image returns the exact bytes ---
+  let read_reply = @labeler.dispatch_op("read_image", { "path": bmp_path }) catch {
+    e => fail("read_image raised: " + e.to_string())
+  }
+  let (b64, mime) = match read_reply {
+    { "base64": String(s), "mime": String(m), "path": String(p), .. } => {
+      assert_eq(p, bmp_path)
+      (s, m)
+    }
+    _ => fail("read_image reply shape wrong: " + read_reply.stringify())
+  }
+  assert_eq(mime, "image/bmp")
+  let bmp_back = b64_decode(b64)
+  assert_eq(bmp_back.length(), bmp_bytes.length())
+  // Byte-for-byte: the BMP round-trip must not corrupt a single byte.
+  for i = 0; i < bmp_back.length(); i = i + 1 {
+    if bmp_back[i] != bmp_bytes[i] {
+      fail(
+        "BMP round-trip byte mismatch at offset " +
+        i.to_string() +
+        ": " +
+        bmp_back[i].to_string() +
+        " != " +
+        bmp_bytes[i].to_string(),
+      )
+    }
+  }
+  // --- 3. write_label lands the JSON in Label@e2e/sample.json ---
+  let label_content =
+    "{\"img_name\":\"sample.bmp\",\"width\":2,\"height\":2,\"infos\":[{\"id\":\"r1\",\"shape\":\"rect\",\"points\":[[0,0],[1,1]],\"class\":\"target\"}]}"
+  let write_req : Json = {
+    "image_path": bmp_path,
+    "content": label_content,
+  }
+  let write_reply = @labeler.dispatch_op("write_label", write_req) catch {
+    e => fail("write_label raised: " + e.to_string())
+  }
+  let label_path = match write_reply {
+    { "label_path": String(s), "bytes": Number(n, ..), .. } => {
+      assert_eq(n.to_int(), label_content.length())
+      s
+    }
+    _ => fail("write_label reply shape wrong: " + write_reply.stringify())
+  }
+  // Convention: Image@e2e/sample.bmp → Label@e2e/sample.json. Anything
+  // else is a path-derivation regression.
+  assert_eq(label_path, root + "/Label@e2e/sample.json")
+  // --- 4. read_label round-trips the exact content ---
+  let read_label_req : Json = { "image_path": bmp_path }
+  let read_label_reply = @labeler.dispatch_op("read_label", read_label_req) catch {
+    e => fail("read_label raised: " + e.to_string())
+  }
+  let (got_content, got_label_path) = match read_label_reply {
+    { "content": String(s), "found": True, "label_path": String(lp), .. } => (s, lp)
+    { "found": False, .. } =>
+      fail("read_label returned found=false right after write_label")
+    _ =>
+      fail(
+        "read_label reply shape wrong: " + read_label_reply.stringify(),
+      )
+  }
+  assert_eq(got_label_path, label_path)
+  assert_eq(got_content, label_content)
+  // --- 5. The label file must actually exist on disk and match. ---
+  let on_disk = @fs.read_file(label_path) catch {
+    e => fail("read_file label on disk failed: " + e.to_string())
+  }
+  assert_eq(on_disk.text(), label_content)
+  // --- 6. Auto-save semantics: a second write_label with new content
+  //         must overwrite the first write in place (CreateOrTruncate
+  //         semantics) — no orphan files, no appended bytes. ---
+  let label_v2 = "{\"img_name\":\"sample.bmp\",\"width\":2,\"height\":2,\"infos\":[]}"
+  let _ = @labeler.dispatch_op("write_label", {
+    "image_path": bmp_path,
+    "content": label_v2,
+  }) catch {
+    e => fail("second write_label raised: " + e.to_string())
+  }
+  let on_disk_v2 = @fs.read_file(label_path) catch {
+    e => fail("read_file label on disk v2 failed: " + e.to_string())
+  }
+  let on_disk_v2_text = on_disk_v2.text()
+  assert_eq(on_disk_v2_text, label_v2)
+  // File size must equal the new content's UTF-8 length, not v1's —
+  // i.e., no bytes were appended or leaked.
+  assert_eq(on_disk_v2_text.length(), label_v2.length())
+  // And the Label@e2e/ directory must contain *only* this one file —
+  // no second `sample (1).json` or similar leak.
+  let dir_entries = @fs.readdir(root + "/Label@e2e") catch {
+    e => fail("readdir Label@e2e failed: " + e.to_string())
+  }
+  assert_eq(dir_entries.length(), 1)
+  assert_eq(dir_entries[0], "sample.json")
+  rm_rf(root)
+}
