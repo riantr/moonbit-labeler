@@ -825,10 +825,15 @@ function undo() {
   requestAnimationFrame(() => renderAnnotations());
   updateDeleteBtn();
   updateUndoRedoButtons();
-  if (state.labelPath) {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(flushSave, settings.autosaveMs);
-  }
+  // Always schedule the autosave timer. `flushSave` itself is the
+  // gate — it no-ops when `!state.dirty` and is the single source of
+  // truth on whether to actually write. The previous
+  // `if (state.labelPath)` guard here is the same anti-pattern that
+  // bit `flushSave` (commit 068a9f4): for any image that has not
+  // loaded a label JSON from disk yet, `state.labelPath` is empty
+  // and the new label would be silently dropped on the first undo.
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, settings.autosaveMs);
 }
 
 function redo() {
@@ -843,10 +848,10 @@ function redo() {
   requestAnimationFrame(() => renderAnnotations());
   updateDeleteBtn();
   updateUndoRedoButtons();
-  if (state.labelPath) {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(flushSave, settings.autosaveMs);
-  }
+  // See the comment in undo() above for why the previous
+  // `if (state.labelPath)` guard was wrong.
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, settings.autosaveMs);
 }
 
 async function flushSave() {
