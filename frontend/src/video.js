@@ -50,6 +50,11 @@ export function createVideoController(deps) {
     if (_videoMetaCache.has(path)) return _videoMetaCache.get(path);
     try {
       const reply = await invokeLabeler("read_video_info", { path });
+      // CEF/Proton 0.2.5 reply is the raw `ReadVideoInfoReply` struct:
+      // top-level `{ width, height, fps, frame_count, codec,
+      // duration_ms }` (no `ok` wrapper). Treat a non-zero width as
+      // "we got something" — `read_video_info` raises on the moonside
+      // when ffprobe fails, so any reply means success.
       const meta = {
         width: reply?.width || 0,
         height: reply?.height || 0,
@@ -57,7 +62,7 @@ export function createVideoController(deps) {
         frameCount: reply?.frame_count || reply?.frameCount || 0,
         durationMs: reply?.duration_ms || reply?.durationMs || 0,
         codec: reply?.codec || "",
-        ok: !!reply?.ok,
+        ok: !!(reply && (reply.width || reply.height)),
       };
       _videoMetaCache.set(path, meta);
       return meta;
@@ -192,7 +197,11 @@ export function createVideoController(deps) {
     try {
       const reply = await invokeLabeler("read_video_frame", { path: item.path, frame });
       if (token !== _frameLoadToken) return;
-      if (!reply?.ok || !reply.base64) {
+      // CEF/Proton 0.2.5 reply is the raw `ReadVideoFrameReply`:
+      // top-level `{ base64, mime, width, height }` (no `ok` wrapper).
+      // moonside raises on ffmpeg failure, so any reply with base64
+      // means success.
+      if (!reply || !reply.base64) {
         showEmptyHint(`无法抽帧 #${frame}`);
         return;
       }

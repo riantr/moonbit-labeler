@@ -34,13 +34,18 @@ export function emptyLabel() {
 /// backend normalizes to the modern shape, infers `shape` from the
 /// point count when missing, mints `id`s, and strips UTF-8 BOMs.
 ///
-/// The Moon handler returns the error inside `reply.err` rather
-/// than `raise`ing (see `ParseLabelReply` in labeler.mbt), so the
-/// CEF bridge's error-detail stripping cannot hide the actual
-/// reason. We surface it directly: `reply.err` is non-empty on
-/// failure, and the JS-level `reply.error` fallback is the
-/// `bridge.invokeOp`-level error (e.g. timeout), distinct from
-/// handler-level parse/normalize failure.
+/// **Reply shape (CEF/Proton 0.2.5):** `bridge_bootstrap.js`'s
+/// `dispatchResponse` resolves the JS promise with the *raw reply
+/// body JSON* — i.e. `JSON.parse(Reply.to_json().stringify())`.
+/// That is the typed `ParseLabelReply` / `SerializeLabelReply`
+/// struct directly: top-level `{ label_text, err }` or
+/// `{ text, err }`. There is **no** `{ ok, result, error }` wrapper
+/// in CEF mode (the stdio bridge in `app/stdio_main.mbt` does add
+/// one, but `label.js` only ever runs in CEF mode). The Moon
+/// handler returns handler-level failures inside `reply.err`
+/// rather than `raise`ing (see `ParseLabelReply` in `labeler.mbt`),
+/// so the CEF bridge's `dispatch_error_message` detail-stripping
+/// cannot hide the actual reason.
 export async function parseLabel(text, fallbackImgName) {
   if (!text) return null;
   const bridge = window.__MoonBit__?.core;
@@ -51,11 +56,16 @@ export async function parseLabel(text, fallbackImgName) {
     text,
     fallback_img_name: fallbackImgName || null,
   });
-  if (!reply?.ok) {
-    throw new Error(reply?.error || "parse_label failed");
+  if (!reply || typeof reply !== "object") {
+    throw new Error("parse_label: bridge returned no reply");
   }
-  if (reply.err) {
+  if (typeof reply.err === "string" && reply.err.length > 0) {
     throw new Error(reply.err);
+  }
+  if (typeof reply.label_text !== "string") {
+    throw new Error(
+      "parse_label: reply missing label_text field, got " + JSON.stringify(reply),
+    );
   }
   return JSON.parse(reply.label_text);
 }
@@ -65,8 +75,8 @@ export async function parseLabel(text, fallbackImgName) {
 /// modern schema: `id`, `shape`, nested `points` array, integer pixel
 /// coordinates, and `frames` included only when non-empty.
 ///
-/// As with `parseLabel`, the handler returns the error inside
-/// `reply.err` so the CEF bridge doesn't strip the detail.
+/// See the reply-shape note on `parseLabel` above. The CEF-mode
+/// reply is the raw `SerializeLabelReply`: top-level `{ text, err }`.
 export async function serializeLabel(label) {
   const bridge = window.__MoonBit__?.core;
   if (!bridge) {
@@ -75,11 +85,16 @@ export async function serializeLabel(label) {
   const reply = await bridge.invokeOp("ext:labeler/serialize_label", {
     label_text: JSON.stringify(label),
   });
-  if (!reply?.ok) {
-    throw new Error(reply?.error || "serialize_label failed");
+  if (!reply || typeof reply !== "object") {
+    throw new Error("serialize_label: bridge returned no reply");
   }
-  if (reply.err) {
+  if (typeof reply.err === "string" && reply.err.length > 0) {
     throw new Error(reply.err);
+  }
+  if (typeof reply.text !== "string") {
+    throw new Error(
+      "serialize_label: reply missing text field, got " + JSON.stringify(reply),
+    );
   }
   return reply.text;
 }
