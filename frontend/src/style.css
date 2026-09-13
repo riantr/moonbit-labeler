@@ -486,10 +486,17 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   color: #166534;
   border-color: #bbf7d0;
 }
+.dirty-badge.error {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+  cursor: help;
+}
 @media (prefers-color-scheme: dark) {
   .dirty-badge.dirty { background: #78350f; color: #fef3c7; border-color: #92400e; }
   .dirty-badge.saving { background: #1e3a8a; color: #dbeafe; border-color: #1e40af; }
   .dirty-badge.ok { background: #14532d; color: #dcfce7; border-color: #166534; }
+  .dirty-badge.error { background: #7f1d1d; color: #fee2e2; border-color: #991b1b; }
 }
 button.ghost {
   background: transparent;
