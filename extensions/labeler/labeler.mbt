@@ -147,8 +147,21 @@ pub struct ParseLabelRequest {
 /// `{ ok: true, label_text: ... }` on success, so the JS side can
 /// `JSON.parse(reply.label_text)` and use the normalized schema
 /// directly without re-implementing the normalizer in JS.
+///
+/// `err` is non-empty when parsing/validation fails. The handler
+/// returns the error inside the reply (rather than `raise`ing) so
+/// the CEF bridge can surface the detail in `reply.err` to the
+/// frontend. The proton CEF bridge (`MbtProcessHost::
+/// dispatch_error_message` in `proton/core/mbt_process_host.mbt:204`)
+/// strips the detail off `HandlerFailed` errors and renders them as
+/// just `"op <name> failed"` — the frontend then sees the generic
+/// fallback "serialize_label failed" / "parse_label failed" with no
+/// diagnostic. Routing the error through a reply field instead
+/// works around that bridge limitation without forking the IPC
+/// library.
 pub struct ParseLabelReply {
   label_text : String
+  err : String
 } derive(ToJson, Eq, Debug)
 
 ///|
@@ -162,34 +175,44 @@ pub struct SerializeLabelRequest {
 
 ///|
 /// Reply shape for `serialize_label`.
+///
+/// `err` is non-empty when normalization fails. The handler returns
+/// the error inside the reply (rather than `raise`ing) so the CEF
+/// bridge can surface the detail in `reply.err` to the frontend.
+/// See the matching note on `ParseLabelReply` for why this matters.
 pub struct SerializeLabelReply {
   text : String
+  err : String
 } derive(ToJson, Eq, Debug)
 
 ///|
-/// IPC handler for `ext:labeler/parse_label`. Wraps the pure
-/// `parse_label_text` helper so the same normalizer the save path
-/// uses is the one the load path trusts. Raises on JSON parse error
-/// so the bridge can convert it to a structured `{ ok: false, error }`
-/// reply.
-fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply raise {
-  let (text, err) = parse_label_text(req.text, req.fallback_img_name)
-  if err != "" {
-    raise Failure::Failure(err)
+/// IPC handler for `ext:labeler/parse_label`. Returns the
+/// (text, err) tuple from `parse_label_text` directly rather than
+/// `raise`ing — see the note on `ParseLabelReply` for why the CEF
+/// bridge's error-detail loss otherwise hides the actual reason
+/// the call failed.
+fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply {
+  try {
+    let (text, err) = parse_label_text(req.text, req.fallback_img_name)
+    { label_text: text, err }
+  } catch {
+    e => { label_text: "", err: e.to_string() }
   }
-  { label_text: text, }
 }
 
 ///|
-/// IPC handler for `ext:labeler/serialize_label`. Wraps the pure
-/// `serialize_label_text` helper. Same raise-to-bridge-error
-/// conversion as `op_parse_label`.
-fn op_serialize_label(req : SerializeLabelRequest) -> SerializeLabelReply raise {
-  let (text, err) = serialize_label_text(req.label_text)
-  if err != "" {
-    raise Failure::Failure(err)
+/// IPC handler for `ext:labeler/serialize_label`. Returns the
+/// (text, err) tuple from `serialize_label_text` directly rather
+/// than `raise`ing — see the note on `ParseLabelReply` for why the
+/// CEF bridge's error-detail loss otherwise hides the actual reason
+/// the call failed.
+fn op_serialize_label(req : SerializeLabelRequest) -> SerializeLabelReply {
+  try {
+    let (text, err) = serialize_label_text(req.label_text)
+    { text, err }
+  } catch {
+    e => { text: "", err: e.to_string() }
   }
-  { text, }
 }
 
 ///|

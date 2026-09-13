@@ -33,6 +33,14 @@ export function emptyLabel() {
 /// `points: [[x, y], ...]` shape are accepted on the wire; the
 /// backend normalizes to the modern shape, infers `shape` from the
 /// point count when missing, mints `id`s, and strips UTF-8 BOMs.
+///
+/// The Moon handler returns the error inside `reply.err` rather
+/// than `raise`ing (see `ParseLabelReply` in labeler.mbt), so the
+/// CEF bridge's error-detail stripping cannot hide the actual
+/// reason. We surface it directly: `reply.err` is non-empty on
+/// failure, and the JS-level `reply.error` fallback is the
+/// `bridge.invokeOp`-level error (e.g. timeout), distinct from
+/// handler-level parse/normalize failure.
 export async function parseLabel(text, fallbackImgName) {
   if (!text) return null;
   const bridge = window.__MoonBit__?.core;
@@ -46,6 +54,9 @@ export async function parseLabel(text, fallbackImgName) {
   if (!reply?.ok) {
     throw new Error(reply?.error || "parse_label failed");
   }
+  if (reply.err) {
+    throw new Error(reply.err);
+  }
   return JSON.parse(reply.label_text);
 }
 
@@ -53,6 +64,9 @@ export async function parseLabel(text, fallbackImgName) {
 /// trips through the MoonBit normalizer so we always write the
 /// modern schema: `id`, `shape`, nested `points` array, integer pixel
 /// coordinates, and `frames` included only when non-empty.
+///
+/// As with `parseLabel`, the handler returns the error inside
+/// `reply.err` so the CEF bridge doesn't strip the detail.
 export async function serializeLabel(label) {
   const bridge = window.__MoonBit__?.core;
   if (!bridge) {
@@ -63,6 +77,9 @@ export async function serializeLabel(label) {
   });
   if (!reply?.ok) {
     throw new Error(reply?.error || "serialize_label failed");
+  }
+  if (reply.err) {
+    throw new Error(reply.err);
   }
   return reply.text;
 }
