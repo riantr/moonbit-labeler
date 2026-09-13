@@ -967,6 +967,13 @@ function renderAnnotations() {
       draftPoints: state.draftPoints,
       bindingFromId: state.bindingFromId,
       cursorImgPt: state.cursorImgPt,
+      // Active modify drag, if any. The canvas render uses this
+      // to bypass the static-layer cache while a drag is in
+      // flight — applyDrag mutates a.points in place, so the
+      // cache key (which only hashes id + length + type) would
+      // not change and the previous outline would stick around
+      // as a ghost.
+      drag: state.drag,
       colorForType,
       opacity: settings.annotationOpacity,
     });

@@ -805,7 +805,16 @@ export function createCanvas(container) {
       if (typeof state.opacity === "number") _opacity = state.opacity;
       _lastState = state;
       const k = staticKey(state.label);
-      if (k !== _lastStaticKey) {
+      // While a modify drag is in progress, force a static-layer
+      // repaint on every frame. The drag handler mutates points
+      // in place, so staticKey (which hashes id + length + type
+      // but not point coordinates) doesn't change and the cache
+      // would otherwise hold the pre-drag outline — visible as a
+      // ghost rect / polygon that snaps to the new position only
+      // when the drag ends. paintStatic is cheap (a few rect /
+      // polygon paths) so this is fine for the duration of a
+      // single user drag.
+      if (k !== _lastStaticKey || state.drag) {
         paintStatic(state);
         _lastStaticKey = k;
       }
