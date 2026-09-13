@@ -845,11 +845,7 @@ async test "component: e2e — list_images + read_image + write_label + read_lab
   }
   let on_disk_v2_text = on_disk_v2.text()
   assert_eq(on_disk_v2_text, label_v2)
-  // File size must equal the new content's UTF-8 length, not v1's —
-  // i.e., no bytes were appended or leaked.
   assert_eq(on_disk_v2_text.length(), label_v2.length())
-  // And the Label@e2e/ directory must contain *only* this one file —
-  // no second `sample (1).json` or similar leak.
   let dir_entries = @fs.readdir(root + "/Label@e2e") catch {
     e => fail("readdir Label@e2e failed: " + e.to_string())
   }
