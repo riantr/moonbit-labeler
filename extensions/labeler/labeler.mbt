@@ -3356,58 +3356,42 @@ async fn export_voc_internal(
   let mut exported = 0
   let mut skipped = 0
   let classes_ordered : Array[String] = []
-  let dbg = "C:\\Users\\hp\\.minimax\\moonbit-labeler-export-voc.log"
-  @fs.write_file(
-    dbg,
-    "=== export_voc start ===\n",
-    create_mode=@fs.CreateOrTruncate,
-  ) catch {
-    _ => ()
-  }
-  async fn elog(s : String) {
-    @fs.write_file(dbg, s + "\n", append=true, create_mode=@fs.OpenOrCreate) catch {
-      _ => ()
-    }
-  }
-  elog("pairs=" + pairs.length().to_string())
   for pair in pairs {
     let (stem, label_path) = pair
     let img_filename = find_image_filename(image_dir, stem)
     if img_filename == "" {
-      elog("skip " + stem + " (no image)")
       skipped = skipped + 1
       continue
     }
     let data = @fs.read_file(label_path) catch {
       _ => {
-        elog("skip " + stem + " (read fail)")
         skipped = skipped + 1
         continue
       }
     }
     let text = data.text() catch {
       _ => {
-        elog("skip " + stem + " (text decode fail)")
         skipped = skipped + 1
         continue
       }
     }
-    elog("read " + stem + " bytes=" + text.length().to_string())
     let anns = parse_export_anns(text)
-    elog("parse " + stem + " -> " + anns.length().to_string() + " anns")
     if anns.length() == 0 {
-      // Print first 200 chars of the label so we can see what the
-      // parser swallowed.
-      let preview = if text.length() < 200 {
-        text
-      } else {
-        text[0:200].to_owned()
-      }
-      elog("preview: " + preview)
+      // Parser returned nothing (structural error, empty infos, or
+      // all entries filtered out by normalize). Treat as skip — the
+      // frontend surfaces skipped_count so the user notices.
       skipped = skipped + 1
       continue
     }
     let (w, h) = read_image_dims(join_path(image_dir, img_filename))
+    if w <= 0 || h <= 0 {
+      // We can't emit a meaningful `<size>` element with width=0
+      // height=0 (every VOC loader treats that as corrupt). Match
+      // the YOLO driver's behaviour and skip — counted in
+      // skipped_count so the user can see something was dropped.
+      skipped = skipped + 1
+      continue
+    }
     for a in anns {
       dedup_push(classes_ordered, a.type_)
     }
@@ -3417,7 +3401,6 @@ async fn export_voc_internal(
     if write_text_or_log(out_path, xml) {
       exported = exported + 1
     } else {
-      elog("skip " + stem + " (write fail)")
       skipped = skipped + 1
     }
   }
@@ -3617,6 +3600,12 @@ async fn op_export_yolo_folder(req : ExportYoloRequest) -> ExportReply {
 /// directory. Pass `""` to start at the framework default.
 pub struct PickFolderRequest {
   initial_dir : String
+  /// Dialog title (`$f.Description` on Windows). Empty string falls
+  /// back to "Select folder". Use this to distinguish input-folder
+  /// vs output-folder dialogs in the UX — without it, the export
+  /// path used to open a "Select image folder" dialog when it
+  /// actually wanted an output folder, which confused callers.
+  description : String
 } derive(FromJson, ToJson, Eq, Debug)
 
 ///|
@@ -3654,20 +3643,24 @@ async fn op_pick_folder(
   req : PickFolderRequest,
 ) -> PickFolderReply {
   // Build the PowerShell command. Use a one-liner to keep argv
-  // handling simple. Description text is the dialog title.
+  // handling simple. Description text is the dialog title — when
+  // the caller doesn't supply one (legacy clients or empty request)
+  // we fall back to a generic "Select folder" so the dialog still
+  // makes sense.
   // `SelectedPath` may have trailing whitespace on some PS versions;
   // the JS side .trim()s and we do too below.
   //
-  // `$initialDir` is substituted as a single-quoted PowerShell string
-  // before the script is handed to PowerShell — so it's a literal
-  // constant from PowerShell's POV, not a variable that needs
-  // runtime resolution. Empty string means "no preset".
+  // `$initialDir` / `$description` are substituted as single-quoted
+  // PowerShell strings before the script is handed to PowerShell —
+  // so they're literal constants from PowerShell's POV, not
+  // variables that need runtime resolution. Empty strings mean
+  // "no preset" / "use the generic title".
   let script =
     #|$initialDir = '__INITIAL_DIR__'
     #|Add-Type -AssemblyName System.Windows.Forms
     #|Add-Type -AssemblyName System.Drawing
     #|$f = New-Object System.Windows.Forms.FolderBrowserDialog
-    #|$f.Description = "Select image folder"
+    #|$f.Description = '__DESCRIPTION__'
     #|$f.ShowNewFolderButton = $true
     #|if ($initialDir -ne '' -and (Test-Path -LiteralPath $initialDir)) {
     #|  $f.SelectedPath = (Resolve-Path -LiteralPath $initialDir).Path
@@ -3676,10 +3669,13 @@ async fn op_pick_folder(
     #|  Write-Output $f.SelectedPath
     #|}
   // PowerShell single-quote-escape any embedded single quotes in the
-  // path, then substitute the placeholder.
+  // path / description, then substitute the placeholders.
   let initial = req.initial_dir
-  let escaped = initial.replace_all(old="'", new="''")
-  let script = script.replace(old="__INITIAL_DIR__", new=escaped)
+  let initial_escaped = initial.replace_all(old="'", new="''")
+  let desc = if req.description == "" { "Select folder" } else { req.description }
+  let desc_escaped = desc.replace_all(old="'", new="''")
+  let script = script.replace(old="__INITIAL_DIR__", new=initial_escaped)
+  let script = script.replace(old="__DESCRIPTION__", new=desc_escaped)
   // Use `-EncodedCommand` (Base64 UTF-16LE) instead of `-Command`.
   // PowerShell 5.1's `-Command` parses the input as the local code
   // page and chokes on a leading UTF-8 BOM (which Moon's string
@@ -3691,19 +3687,13 @@ async fn op_pick_folder(
     "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
     encoded,
   ]
+  // powershell.exe missing or sandboxed — surface as cancelled so
+  // the UI keeps the previous folder rather than crashing. (We used
+  // to log this to C:\Windows\Temp but that path was hard-coded for
+  // a different machine, so the write would silently no-op on every
+  // other host; the cancel-on-failure behaviour is what matters.)
   let (code, out) = @process.collect_stdout("powershell.exe", args) catch {
-    // powershell.exe missing or sandboxed — surface as cancelled
-    // so the UI keeps the previous folder rather than crashing.
-    err => {
-      @fs.write_file(
-        "C:\\Windows\\Temp\\moonbit-labeler-pick-folder.log",
-        "collect_stdout failed: " + err.to_string() + "\n",
-        create_mode=@fs.OpenOrCreate,
-      ) catch {
-        _ => ()
-      }
-      return { path: "", cancelled: true, }
-    }
+    _ => return { path: "", cancelled: true, }
   }
   // PowerShell exits 0 on OK/Cancel, non-zero on hard error. Empty
   // stdout = user clicked Cancel; non-empty = picked path.

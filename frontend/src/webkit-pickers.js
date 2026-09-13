@@ -167,13 +167,19 @@ export function pickFolder(accept = "image/*") {
 /// `FromJson` for `PickFolderRequest { initial_dir : String }` rejects
 /// `null` with `ProtonBridgeError: invalid payload`, and we'd lose
 /// the picker entirely on a fresh launch where the input is empty.
-export async function pickFolderViaBackend(initialDir = "") {
+///
+/// `description` sets the dialog's title (`$f.Description` on the
+/// Windows side). Pass a context-specific title like
+/// "Select output folder for Pascal VOC XML" so the user doesn't
+/// confuse an output-folder picker for an input-folder picker.
+export async function pickFolderViaBackend(initialDir = "", description = "") {
   const bridge = window.__MoonBit__?.core;
   if (!bridge?.invokeOp) {
     throw new Error("MoonBit IPC bridge not available");
   }
   const reply = await bridge.invokeOp("ext:labeler/pick_folder", {
     initial_dir: initialDir,
+    description,
   });
   if (!reply || typeof reply.path !== "string") {
     throw new Error(`pick_folder: bad reply shape: ${JSON.stringify(reply)}`);

@@ -1387,11 +1387,19 @@ async function runExportFolder(kind) {
     return;
   }
   const whichName = kind === "voc" ? "Pascal VOC XML" : "YOLO TXT";
+  // The webkit `pickFolder()` helper is actually a *file* picker with
+  // `accept="image/*"` — completely wrong for picking an output
+  // directory. Drive the Moon-side `op_pick_folder` (which spawns
+  // PowerShell's FolderBrowserDialog) directly. We pass an explicit
+  // `description` so the dialog title reflects the actual purpose
+  // ("Select output folder for …") rather than the legacy generic
+  // "Select image folder" that confused users into thinking they
+  // were being asked to re-pick the input.
   let pick;
   try {
-    pick = await pickFolder();
+    pick = await pickFolderViaBackend("", `Select output folder for ${whichName}`);
   } catch (err) {
-    console.error("pickFolder (export) failed:", err);
+    console.error("pickFolderViaBackend (export) failed:", err);
     flashHint(`选择输出文件夹失败: ${err}`, "info");
     return;
   }
@@ -1423,10 +1431,35 @@ async function runExportFolder(kind) {
   const classesInfo = reply.classes?.length
     ? `，${reply.classes.length} 个类别：${reply.classes.join(", ")}`
     : "";
-  flashHint(
-    `${head}（已写入 ${reply.exported_count} 个文件到 ${reply.dest_folder}${classesInfo}${tail}）`,
-    reply.exported_count > 0 ? "ok" : "info",
-  );
+  if (reply.exported_count > 0) {
+    flashHint(
+      `${head}（已写入 ${reply.exported_count} 个文件到 ${reply.dest_folder}${classesInfo}${tail}）`,
+      "ok",
+    );
+  } else {
+    // Nothing written — surface the most common causes so the user
+    // doesn't have to guess. Common culprits:
+    //   1. `state.folder` doesn't follow the `Image@<name>` naming
+    //      convention (the backend's `derive_image_dir` returns ""
+    //      and the op fails — but the reply is still shaped as an
+    //      ExportReply because the failure happens before the
+    //      internal driver runs, so we only get here if the op did
+    //      dispatch but found no matching image/label pair).
+    //   2. The image directory is read with no sibling `Label@<name>`
+    //      directory and no in-folder `.json` labels.
+    //   3. Every label file failed to parse, or the images are in
+    //      a format `read_image_dims` doesn't recognise (BMP / WebP
+    //      / TIFF / GIF — only PNG / JPEG are decoded, everything
+    //      else is skipped with `<width>0</width>` for VOC).
+    const isImgAt = /[\\/]Image@/.test(state.folder || "");
+    const causeHint = isImgAt
+      ? `未找到匹配的 image/label 对：检查 ${state.folder} 是否有对应的 Label@<name> 兄弟目录或 in-folder .json`
+      : `当前图片文件夹 ${state.folder || "(空)"} 不符合 Image@<name> 约定，先点“打开文件夹”载入合规图片目录`;
+    flashHint(
+      `${head}（已写入 0 个文件到 ${reply.dest_folder}）${causeHint}`,
+      "info",
+    );
+  }
 }
 
 function bindEvents() {
