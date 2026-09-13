@@ -419,9 +419,15 @@ export function createCanvas(container) {
     return [sx / pts.length, sy / pts.length];
   }
   // Hit radius in image-natural px. Used both for handle drawing
-  // size and for the same handle's hit region. Bigger than 8 so a
-  // touch / mid-DPI mouse can still grab a handle easily.
-  const HANDLE_R = 6;
+  // size and for the same handle's hit region. 12 px in image
+  // space — large enough that a user hovering "near a point" can
+  // grab it without having to land on a 6 px target, which is
+  // effectively invisible on a thumbnail. The hit radius scales
+  // with image-natural space, so on a small image or a zoomed-out
+  // canvas a point still has a generous grab area. The draw radius
+  // matches so the on-screen handle is at least as large as the
+  // hit zone — the user can see what they're about to click.
+  const HANDLE_R = 12;
   // Render the corner / edge / vertex handles of one selected
   // annotation. Only ever called from paintDynamic — handles are
   // expected to move with the annotation under the cursor, so we
