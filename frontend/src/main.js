@@ -898,14 +898,24 @@ async function flushSave() {
 
 function updateDirtyBadge() {
   if (!els.dirtyBadge) return;
-  els.dirtyBadge.classList.remove("dirty", "saving", "ok");
+  els.dirtyBadge.classList.remove("dirty", "saving", "ok", "error");
   els.dirtyBadge.textContent = "";
+  // The error tooltip carries the actual `state.saveError` string so
+  // the user can see *why* the save failed without opening DevTools.
+  // `flushSave` populates `state.saveError` with the IPC error message
+  // (e.g. "write_label: cannot create label directory '...': ...").
+  els.dirtyBadge.title = "";
   if (state.saving) {
     els.dirtyBadge.classList.add("saving");
     els.dirtyBadge.textContent = "保存中...";
   } else if (state.saveError) {
-    els.dirtyBadge.classList.add("dirty");
+    els.dirtyBadge.classList.add("error");
     els.dirtyBadge.textContent = "保存失败";
+    // Truncate to keep the badge width bounded; full message is
+    // already in the DOM via `title` and in DevTools via the
+    // `console.error` from `flushSave`.
+    const msg = String(state.saveError);
+    els.dirtyBadge.title = msg.length > 240 ? msg.slice(0, 240) + "…" : msg;
   } else if (state.dirty) {
     els.dirtyBadge.classList.add("dirty");
     els.dirtyBadge.textContent = "未保存";
