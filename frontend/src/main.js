@@ -108,6 +108,21 @@ const state = {
   // Image mapping
   imgNatural: { w: 0, h: 0 },
   imgDisplay: { w: 0, h: 0 },
+  // Active drag for annotation modification. null when idle.
+  // Schema (when non-null):
+  //   { id, kind: "body", initialPoints, initialPt }
+  //   { id, kind: "rect-corner", corner: "nw"|"ne"|"sw"|"se", initialPoints, initialPt, anchor }
+  //   { id, kind: "rect-edge",   edge:   "n"|"s"|"w"|"e",   initialPoints, initialPt, anchor }
+  //   { id, kind: "vertex", index: <int>, initialPoints, initialPt }
+  //   { id, kind: "keypoint",                   initialPoints, initialPt }
+  // `initialPoints` is a deep-cloned snapshot of the points at
+  // mouse-down time (so we can apply deltas without accumulating
+  // floating-point error on every mousemove). `initialPt` is the
+  // image-natural mouse position at mouse-down — the delta from
+  // there to the current event pt is what we apply to the points.
+  // `anchor` is the corner / edge opposite to the handle being
+  // dragged for rect resizes.
+  drag: null,
   // Per-folder label cache
   labeledPaths: new Set(),
   // Monotonic counter to discard stale async replies
@@ -1088,6 +1103,117 @@ function updateDeleteBtn() {
 }
 
 // ============================================================
+// Annotation modification (drag handles / body / vertices).
+// Activated in select mode after an annotation is selected.
+// Every drag mutates state.label.infos[i].points in place and
+// renders incrementally; the entire drag is one undoable step
+// (pushHistory fires once at mouse-down, never on mousemove).
+// ============================================================
+
+// Deep-clone a points array. We need a snapshot at mouse-down so
+// the mousemove handler can recompute from the original rather
+// than layering floating-point error on the live array.
+function clonePoints(pts) {
+  return pts.map((p) => [p[0], p[1]]);
+}
+
+// Begin a modify drag. `handle` is one of:
+//   { kind: "body" }
+//   { kind: "rect-corner", corner: "nw"|"ne"|"sw"|"se" }
+//   { kind: "rect-edge",   edge:   "n"|"s"|"w"|"e" }
+//   { kind: "vertex", index: <int> }
+// For rect resize handles we also stash the *opposite* corner /
+// edge as `anchor` so the resize can recompute both points from
+// the same baseline.
+function startDrag(a, handle, imgPt) {
+  if (!a || !a.points) return;
+  pushHistory();
+  const drag = {
+    id: a.id,
+    kind: handle.kind,
+    initialPoints: clonePoints(a.points),
+    initialPt: [imgPt[0], imgPt[1]],
+  };
+  if (handle.kind === "rect-corner") {
+    // The opposite corner of the rect doesn't move during this
+    // drag. Pre-compute which corner that is so applyDrag can
+    // just override the dragged corner.
+    drag.corner = handle.corner;
+    const x1 = Math.min(a.points[0][0], a.points[1][0]);
+    const x2 = Math.max(a.points[0][0], a.points[1][0]);
+    const y1 = Math.min(a.points[0][1], a.points[1][1]);
+    const y2 = Math.max(a.points[0][1], a.points[1][1]);
+    const anchor = {
+      nw: [x2, y2], ne: [x1, y2], sw: [x2, y1], se: [x1, y1],
+    }[handle.corner];
+    drag.anchor = anchor;
+  } else if (handle.kind === "rect-edge") {
+    drag.edge = handle.edge;
+    const x1 = Math.min(a.points[0][0], a.points[1][0]);
+    const x2 = Math.max(a.points[0][0], a.points[1][0]);
+    const y1 = Math.min(a.points[0][1], a.points[1][1]);
+    const y2 = Math.max(a.points[0][1], a.points[1][1]);
+    // The opposite edge's coord is fixed; the dragged edge tracks
+    // the mouse. For horizontal edges (n, s) the y of the
+    // opposite edge is fixed; for vertical (w, e) the x is.
+    drag.opposite = handle.edge === "n" ? y2 :
+                    handle.edge === "s" ? y1 :
+                    handle.edge === "w" ? x2 : x1;
+  } else if (handle.kind === "vertex") {
+    drag.index = handle.index;
+  }
+  state.drag = drag;
+}
+
+// Apply one mousemove tick to the active drag. Called every
+// pointermove between mouse-down and mouse-up. We re-derive the
+// final points from `initialPoints` + the new mouse position so
+// the drag is stable (no drift from accumulated delta-of-delta).
+function applyDrag(imgPt) {
+  const d = state.drag;
+  if (!d) return;
+  const a = state.label?.infos?.find((it) => it.id === d.id);
+  if (!a) { state.drag = null; return; }
+  const dx = imgPt[0] - d.initialPt[0];
+  const dy = imgPt[1] - d.initialPt[1];
+  if (d.kind === "body") {
+    a.points = d.initialPoints.map((p) => [p[0] + dx, p[1] + dy]);
+  } else if (d.kind === "rect-corner") {
+    // [a, b] = corner diagonally opposite the one being dragged.
+    const [ax, ay] = d.anchor;
+    const x = imgPt[0];
+    const y = imgPt[1];
+    // Reorder so points[0] is the top-left and points[1] the
+    // bottom-right of the new rect — the existing drawRectShape
+    // / voc_xml_for path is order-agnostic, but keeping the
+    // canonical form makes diffs and on-disk JSON predictable.
+    const x1 = Math.min(ax, x);
+    const y1 = Math.min(ay, y);
+    const x2 = Math.max(ax, x);
+    const y2 = Math.max(ay, y);
+    a.points = [[x1, y1], [x2, y2]];
+  } else if (d.kind === "rect-edge") {
+    // Opposite coord is fixed; the dragged side tracks the mouse.
+    const [p1, p2] = d.initialPoints;
+    const x1 = Math.min(p1[0], p2[0]);
+    const x2 = Math.max(p1[0], p2[0]);
+    const y1 = Math.min(p1[1], p2[1]);
+    const y2 = Math.max(p1[1], p2[1]);
+    if (d.edge === "n") a.points = [[x1, imgPt[1]], [x2, d.opposite]];
+    else if (d.edge === "s") a.points = [[x1, d.opposite], [x2, imgPt[1]]];
+    else if (d.edge === "w") a.points = [[imgPt[0], y1], [d.opposite, y2]];
+    else a.points = [[d.opposite, y1], [imgPt[0], y2]];
+  } else if (d.kind === "vertex") {
+    // Move just the one vertex of the polygon.
+    a.points = d.initialPoints.map((p, i) =>
+      i === d.index ? [imgPt[0], imgPt[1]] : [p[0], p[1]],
+    );
+  } else if (d.kind === "keypoint") {
+    a.points = [[imgPt[0], imgPt[1]]];
+  }
+}
+
+// ============================================================
 // Canvas event wiring — uses Pointer Events (WHATWG Pointer Events).
 // Falls back to Mouse Events if Pointer Events aren't supported.
 // ============================================================
@@ -1097,6 +1223,31 @@ function bindCanvasEvents(api) {
     if (!imgPt) return;
     if (state.mode === "rect") {
       state.draftPoints = [imgPt, imgPt];
+      return;
+    }
+    // ---- Modify (drag) ----
+    // In select mode with an annotation already selected, mouse-down
+    // can either start a handle drag (rect corner / edge / polygon
+    // vertex / keypoint) or a body-drag (move the whole box / shape).
+    // Anything else falls through to onClick (which selects / clears).
+    if (state.mode === "select" && state.selectedId && canvasApi) {
+      const a = state.label?.infos?.find((it) => it.id === state.selectedId);
+      if (a) {
+        const h = canvasApi.hitTestHandle(imgPt[0], imgPt[1]);
+        if (h) {
+          startDrag(a, h, imgPt);
+          return;
+        }
+        // Body hit: was the press inside the selected annotation
+        // (not a handle, not a different annotation)? Existing
+        // hitTestAnnotation already covers "is (x,y) inside this
+        // info's geometric shape" — we just re-use it.
+        const body = hitTestAnnotation(imgPt[0], imgPt[1]);
+        if (body && body.kind === "info" && body.id === state.selectedId) {
+          startDrag(a, { kind: "body" }, imgPt);
+          return;
+        }
+      }
     }
   });
   api.onMouseMove((ev, imgPt) => {
@@ -1105,13 +1256,29 @@ function bindCanvasEvents(api) {
       state.draftPoints[1] = imgPt;
       renderAnnotations();
     }
+    if (state.drag) {
+      applyDrag(imgPt);
+      // Re-render every frame so the bbox / crosshair / handles
+      // follow the cursor in real time. pushHistory is already
+      // called once at mouse-down, so the history entry captures
+      // the entire drag as a single undoable step.
+      renderAnnotations();
+      return;
+    }
     updateCursorReadout(ev, imgPt);
   });
   api.onMouseLeave(() => {
     queueCursorReadout(null);
   });
-  api.onMouseUp((_ev, imgPt) => {
-    if (!imgPt) return;
+  api.onMouseUp((_ev, _imgPt) => {
+    if (state.drag) {
+      // Commit the modify: keep the new points (already mutated on
+      // each mousemove), clear the drag state, and flag dirty.
+      state.drag = null;
+      markDirty();
+      renderAnnotations();
+      return;
+    }
     if (state.mode === "rect" && state.draftPoints.length === 2) {
       const [a, b] = state.draftPoints;
       if (Math.abs(a[0] - b[0]) > 2 && Math.abs(a[1] - b[1]) > 2) {

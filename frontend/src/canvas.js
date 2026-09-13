@@ -318,12 +318,14 @@ export function createCanvas(container) {
       }
     }
   }
-  function drawRectShape(c, points, color, fillOpacity, isSelected) {
+  function drawRectShape(c, points, color, fillOpacity, isSelected, imgBounds) {
     if (points.length < 2) return;
     const x1 = Math.min(points[0][0], points[1][0]);
     const y1 = Math.min(points[0][1], points[1][1]);
-    const w = Math.abs(points[1][0] - points[0][0]);
-    const h = Math.abs(points[1][1] - points[0][1]);
+    const x2 = Math.max(points[0][0], points[1][0]);
+    const y2 = Math.max(points[0][1], points[1][1]);
+    const w = x2 - x1;
+    const h = y2 - y1;
     c.fillStyle = color;
     c.globalAlpha = fillOpacity;
     c.fillRect(x1, y1, w, h);
@@ -331,6 +333,27 @@ export function createCanvas(container) {
     c.lineWidth = isSelected ? 3 : 2;
     c.strokeStyle = color;
     c.strokeRect(x1, y1, w, h);
+    // Crosshair: extend the bbox's center lines out to the image
+    // edges, so the user can eyeball the box's center against the
+    // full canvas (useful for centred / symmetric objects). Drawn
+    // for every rect, not just the selected one — this matches
+    // labelImg / labelme default and was the explicit ask.
+    if (imgBounds && imgBounds.w > 0 && imgBounds.h > 0) {
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      c.save();
+      c.strokeStyle = color;
+      c.globalAlpha = 0.45;
+      c.setLineDash([4, 4]);
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(0, cy);
+      c.lineTo(imgBounds.w, cy);
+      c.moveTo(cx, 0);
+      c.lineTo(cx, imgBounds.h);
+      c.stroke();
+      c.restore();
+    }
   }
   function drawKeypointShape(c, points, color, isSelected) {
     for (const [x, y] of points) {
@@ -416,6 +439,103 @@ export function createCanvas(container) {
     for (const [x, y] of pts) { sx += x; sy += y; }
     return [sx / pts.length, sy / pts.length];
   }
+  // Hit radius in image-natural px. Used both for handle drawing
+  // size and for the same handle's hit region. Bigger than 8 so a
+  // touch / mid-DPI mouse can still grab a handle easily.
+  const HANDLE_R = 6;
+  // Render the corner / edge / vertex handles of one selected
+  // annotation. Only ever called from paintDynamic — handles are
+  // expected to move with the annotation under the cursor, so we
+  // can't keep them on the cached static layer.
+  function drawHandles(c, a, color) {
+    if (!a || !a.points || a.points.length === 0) return;
+    c.save();
+    c.fillStyle = "#ffffff";
+    c.strokeStyle = color;
+    c.lineWidth = 2;
+    if (a.shape === "rect" && a.points.length >= 2) {
+      const x1 = Math.min(a.points[0][0], a.points[1][0]);
+      const x2 = Math.max(a.points[0][0], a.points[1][0]);
+      const y1 = Math.min(a.points[0][1], a.points[1][1]);
+      const y2 = Math.max(a.points[0][1], a.points[1][1]);
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      const corners = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]];
+      for (const [x, y] of corners) {
+        c.beginPath();
+        c.arc(x, y, HANDLE_R, 0, Math.PI * 2);
+        c.fill();
+        c.stroke();
+      }
+      // 4 edge midpoints as small squares so they read as
+      // resize-from-edge rather than another corner.
+      const edges = [[cx, y1], [cx, y2], [x1, cy], [x2, cy]];
+      c.fillRect(cx - HANDLE_R, y1 - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2);
+      c.strokeRect(cx - HANDLE_R, y1 - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2);
+      c.fillRect(cx - HANDLE_R, y2 - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2);
+      c.strokeRect(cx - HANDLE_R, y2 - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2);
+      c.fillRect(x1 - HANDLE_R, cy - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2);
+      c.strokeRect(x1 - HANDLE_R, cy - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2);
+      c.fillRect(x2 - HANDLE_R, cy - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2);
+      c.strokeRect(x2 - HANDLE_R, cy - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2);
+    } else if (a.shape === "polygon" || a.shape === "keypoint") {
+      for (const [x, y] of a.points) {
+        c.beginPath();
+        c.arc(x, y, HANDLE_R, 0, Math.PI * 2);
+        c.fill();
+        c.stroke();
+      }
+    }
+    c.restore();
+  }
+  // What kind of handle (if any) is at image-natural (x, y) for
+  // the currently-selected annotation? Returns one of:
+  //   { kind: "body" }
+  //   { kind: "rect-corner", corner: "nw"|"ne"|"sw"|"se" }
+  //   { kind: "rect-edge",   edge:   "n"|"s"|"w"|"e" }
+  //   { kind: "vertex", index: <int> }
+  //   null  →  not on any handle
+  // Body hit is intentionally not returned by this function; the
+  // caller layers a body-drag check (existing hitTestAnnotation) on
+  // top, since "body" and "in handle" have different UX.
+  function hitTestHandle(x, y, a) {
+    if (!a || !a.points || a.points.length === 0) return null;
+    const r = HANDLE_R;
+    if (a.shape === "rect" && a.points.length >= 2) {
+      const x1 = Math.min(a.points[0][0], a.points[1][0]);
+      const x2 = Math.max(a.points[0][0], a.points[1][0]);
+      const y1 = Math.min(a.points[0][1], a.points[1][1]);
+      const y2 = Math.max(a.points[0][1], a.points[1][1]);
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      const cornerPts = [[x1, y1, "nw"], [x2, y1, "ne"], [x2, y2, "se"], [x1, y2, "sw"]];
+      for (const [hx, hy, name] of cornerPts) {
+        if (Math.hypot(x - hx, y - hy) <= r) {
+          return { kind: "rect-corner", corner: name };
+        }
+      }
+      const edgePts = [[cx, y1, "n"], [cx, y2, "s"], [x1, cy, "w"], [x2, cy, "e"]];
+      for (const [hx, hy, name] of edgePts) {
+        if (Math.abs(x - hx) <= r && Math.abs(y - hy) <= r) {
+          return { kind: "rect-edge", edge: name };
+        }
+      }
+    } else if (a.shape === "polygon" || a.shape === "keypoint") {
+      // For polygon we want any vertex to be grabbable. We pick
+      // the closest one within the radius; ties go to the lower
+      // index. The same function covers keypoint (1 vertex) so the
+      // caller doesn't have to special-case shape.
+      let best = -1;
+      let bestD = r;
+      for (let i = 0; i < a.points.length; i++) {
+        const [vx, vy] = a.points[i];
+        const d = Math.hypot(x - vx, y - vy);
+        if (d <= bestD) { bestD = d; best = i; }
+      }
+      if (best >= 0) return { kind: "vertex", index: best };
+    }
+    return null;
+  }
 
   // ---------- paint ----------
   function paintStatic(state) {
@@ -451,8 +571,9 @@ export function createCanvas(container) {
     for (const a of label.infos) {
       const color = colorForType(a.type);
       const sel = selectedId === a.id;
+      const imgBounds = { w: natural.w, h: natural.h };
       if (a.shape === "polygon") drawPolygonShape(staticCtx, a.points, color, 0.18, sel);
-      else if (a.shape === "rect") drawRectShape(staticCtx, a.points, color, 0.12, sel);
+      else if (a.shape === "rect") drawRectShape(staticCtx, a.points, color, 0.12, sel, imgBounds);
       else if (a.shape === "keypoint") drawKeypointShape(staticCtx, a.points, color, sel);
       if (a.points && a.points.length > 0) {
         const [cx, cy] = centroid(a);
@@ -466,7 +587,7 @@ export function createCanvas(container) {
     applyDpr(dynamicCtx, natural.w, natural.h);
     dynamicCtx.setTransform(display.dpr, 0, 0, display.dpr, 0, 0);
     dynamicCtx.clearRect(0, 0, natural.w, natural.h);
-    const { mode, draftPoints, bindingFromId } = state;
+    const { mode, draftPoints, bindingFromId, selectedId, colorForType } = state;
     if (bindingFromId) {
       const a = state.label.infos.find((x) => x.id === bindingFromId);
       if (a) {
@@ -482,6 +603,14 @@ export function createCanvas(container) {
       drawDraftRect(dynamicCtx, draftPoints, state.colorForType?.("draft") || "#fbbf24");
     } else if (mode === "polygon" && draftPoints.length > 0) {
       drawDraftPolygon(dynamicCtx, draftPoints, state.colorForType?.("draft") || "#fbbf24");
+    }
+    // Modification handles (selected annotation only). Drawn on the
+    // dynamic layer so they track the annotation point-for-point
+    // during a drag — the static layer caches the bulk render and
+    // only repaints when label.infos / label.bindings change.
+    if (selectedId) {
+      const a = state.label.infos.find((x) => x.id === selectedId);
+      if (a) drawHandles(dynamicCtx, a, colorForType(a.type));
     }
   }
   function composite() {
@@ -667,5 +796,19 @@ export function createCanvas(container) {
     onClick(fn) { handlers.click = fn; },
     onDblClick(fn) { handlers.dblclick = fn; },
     onWheel(fn) { handlers.wheel = fn; },
+    /// Hit-test the modification handles of the currently-selected
+    /// annotation at image-natural (x, y). Returns one of:
+    ///   { kind: "body" }
+    ///   { kind: "rect-corner", corner: "nw"|"ne"|"sw"|"se" }
+    ///   { kind: "rect-edge",   edge:   "n"|"s"|"w"|"e" }
+    ///   { kind: "vertex", index: <int> }
+    ///   null  →  no handle hit
+    /// Body hit is layered on by the caller (existing
+    /// hitTestAnnotation) so the same hover/press does both jobs.
+    hitTestHandle(x, y) {
+      const a = state.label?.infos?.find((it) => it.id === state.selectedId);
+      if (!a) return null;
+      return hitTestHandle(x, y, a);
+    },
   };
 }
