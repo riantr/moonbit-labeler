@@ -108,6 +108,12 @@ const state = {
   // Image mapping
   imgNatural: { w: 0, h: 0 },
   imgDisplay: { w: 0, h: 0 },
+  // Current cursor position in image-natural coordinates. null
+  // when the pointer is outside the canvas. The canvas overlay
+  // renders a dashed crosshair through this point on every frame
+  // (see paintDynamic) so the user has a precise alignment
+  // reference while hovering, independent of the selected tool.
+  cursorImgPt: null,
   // Active drag for annotation modification. null when idle.
   // Schema (when non-null):
   //   { id, kind: "body", initialPoints, initialPt }
@@ -960,6 +966,7 @@ function renderAnnotations() {
       selectedId: state.selectedId,
       draftPoints: state.draftPoints,
       bindingFromId: state.bindingFromId,
+      cursorImgPt: state.cursorImgPt,
       colorForType,
       opacity: settings.annotationOpacity,
     });
@@ -1265,9 +1272,18 @@ function bindCanvasEvents(api) {
       renderAnnotations();
       return;
     }
+    // Cursor crosshair: every mousemove repaints the dynamic layer
+    // with the new image-natural cursor position so the dashed
+    // crosshair tracks the pointer in real time. renderAnnotations
+    // coalesces via rAF so a flood of pointermove events still
+    // paints at most once per frame.
+    state.cursorImgPt = imgPt;
+    renderAnnotations();
     updateCursorReadout(ev, imgPt);
   });
   api.onMouseLeave(() => {
+    state.cursorImgPt = null;
+    renderAnnotations();
     queueCursorReadout(null);
   });
   api.onMouseUp((_ev, _imgPt) => {

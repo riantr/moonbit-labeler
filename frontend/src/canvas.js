@@ -318,7 +318,7 @@ export function createCanvas(container) {
       }
     }
   }
-  function drawRectShape(c, points, color, fillOpacity, isSelected, imgBounds) {
+  function drawRectShape(c, points, color, fillOpacity, isSelected) {
     if (points.length < 2) return;
     const x1 = Math.min(points[0][0], points[1][0]);
     const y1 = Math.min(points[0][1], points[1][1]);
@@ -333,27 +333,6 @@ export function createCanvas(container) {
     c.lineWidth = isSelected ? 3 : 2;
     c.strokeStyle = color;
     c.strokeRect(x1, y1, w, h);
-    // Crosshair: extend the bbox's center lines out to the image
-    // edges, so the user can eyeball the box's center against the
-    // full canvas (useful for centred / symmetric objects). Drawn
-    // for every rect, not just the selected one — this matches
-    // labelImg / labelme default and was the explicit ask.
-    if (imgBounds && imgBounds.w > 0 && imgBounds.h > 0) {
-      const cx = (x1 + x2) / 2;
-      const cy = (y1 + y2) / 2;
-      c.save();
-      c.strokeStyle = color;
-      c.globalAlpha = 0.45;
-      c.setLineDash([4, 4]);
-      c.lineWidth = 1;
-      c.beginPath();
-      c.moveTo(0, cy);
-      c.lineTo(imgBounds.w, cy);
-      c.moveTo(cx, 0);
-      c.lineTo(cx, imgBounds.h);
-      c.stroke();
-      c.restore();
-    }
   }
   function drawKeypointShape(c, points, color, isSelected) {
     for (const [x, y] of points) {
@@ -571,9 +550,8 @@ export function createCanvas(container) {
     for (const a of label.infos) {
       const color = colorForType(a.type);
       const sel = selectedId === a.id;
-      const imgBounds = { w: natural.w, h: natural.h };
       if (a.shape === "polygon") drawPolygonShape(staticCtx, a.points, color, 0.18, sel);
-      else if (a.shape === "rect") drawRectShape(staticCtx, a.points, color, 0.12, sel, imgBounds);
+      else if (a.shape === "rect") drawRectShape(staticCtx, a.points, color, 0.12, sel);
       else if (a.shape === "keypoint") drawKeypointShape(staticCtx, a.points, color, sel);
       if (a.points && a.points.length > 0) {
         const [cx, cy] = centroid(a);
@@ -587,7 +565,7 @@ export function createCanvas(container) {
     applyDpr(dynamicCtx, natural.w, natural.h);
     dynamicCtx.setTransform(display.dpr, 0, 0, display.dpr, 0, 0);
     dynamicCtx.clearRect(0, 0, natural.w, natural.h);
-    const { mode, draftPoints, bindingFromId, selectedId, colorForType } = state;
+    const { mode, draftPoints, bindingFromId, selectedId, colorForType, cursorImgPt } = state;
     if (bindingFromId) {
       const a = state.label.infos.find((x) => x.id === bindingFromId);
       if (a) {
@@ -603,6 +581,38 @@ export function createCanvas(container) {
       drawDraftRect(dynamicCtx, draftPoints, state.colorForType?.("draft") || "#fbbf24");
     } else if (mode === "polygon" && draftPoints.length > 0) {
       drawDraftPolygon(dynamicCtx, draftPoints, state.colorForType?.("draft") || "#fbbf24");
+    }
+    // Cursor crosshair — two dashed lines through the current
+    // pointer position, extending to the image edges. Drawn
+    // regardless of mode (rect / select / polygon / keypoint /
+    // binding) and regardless of whether any annotation exists, so
+    // the user always has a precise alignment reference while
+    // hovering over the canvas. Hidden when the pointer leaves
+    // the canvas (cursorImgPt is null in that case).
+    if (cursorImgPt) {
+      const [cx, cy] = cursorImgPt;
+      dynamicCtx.save();
+      dynamicCtx.strokeStyle = "rgba(255, 255, 255, 0.55)";
+      dynamicCtx.globalAlpha = 0.45;
+      dynamicCtx.setLineDash([4, 4]);
+      dynamicCtx.lineWidth = 1;
+      dynamicCtx.beginPath();
+      dynamicCtx.moveTo(0, cy);
+      dynamicCtx.lineTo(natural.w, cy);
+      dynamicCtx.moveTo(cx, 0);
+      dynamicCtx.lineTo(cx, natural.h);
+      dynamicCtx.stroke();
+      // Small cross at the cursor itself so the user can pinpoint
+      // exactly where the lines meet even when the image is
+      // textured.
+      dynamicCtx.globalAlpha = 1;
+      dynamicCtx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+      dynamicCtx.lineWidth = 1.5;
+      dynamicCtx.beginPath();
+      dynamicCtx.moveTo(cx - 6, cy); dynamicCtx.lineTo(cx + 6, cy);
+      dynamicCtx.moveTo(cx, cy - 6); dynamicCtx.lineTo(cx, cy + 6);
+      dynamicCtx.stroke();
+      dynamicCtx.restore();
     }
     // Modification handles (selected annotation only). Drawn on the
     // dynamic layer so they track the annotation point-for-point
