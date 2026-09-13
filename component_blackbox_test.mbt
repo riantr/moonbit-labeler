@@ -853,3 +853,53 @@ async test "component: e2e — list_images + read_image + write_label + read_lab
   assert_eq(dir_entries[0], "sample.json")
   rm_rf(root)
 }
+
+///|
+/// `read_image_dims` is what the export drivers call to fill the
+/// `<size>` element of the VOC XML and the normalization base of
+/// YOLO. Before this commit it only handled PNG + JPEG, so any
+/// BMP / WebP / TIFF dataset silently exported XMLs with
+/// `<width>0</width><height>0</height>` (VOC) or skipped the
+/// image entirely (YOLO). BMP is the most common missing one in
+/// security X-ray work, so we now parse the 14-byte file header
+/// + 40-byte BITMAPINFOHEADER (width @ 18, height @ 22, both
+/// little-endian int32). This test pins the contract on a real
+/// file written to disk.
+async test "component: read_image_dims parses BMP, PNG, and JPEG headers" {
+  let root = "_build/read_image_dims_test"
+  rm_rf(root)
+  @fs.mkdir(root, recursive=true) catch {
+    e => fail("test setup: mkdir failed: " + e.to_string())
+  }
+  // BMP: 2x2 from the existing sample_bmp_bytes helper.
+  let bmp_path = root + "/sample.bmp"
+  @fs.write_file(bmp_path, sample_bmp_bytes(), create_mode=@fs.CreateOrTruncate) catch {
+    e => fail("test setup: write bmp failed: " + e.to_string())
+  }
+  let (bw, bh) = @labeler.read_image_dims(bmp_path)
+  assert_eq(bw, 2)
+  assert_eq(bh, 2)
+  // PNG: 1x1 single-pixel IHDR.
+  let png_bytes : Array[Int] = [
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // signature
+    0x00, 0x00, 0x00, 0x0D, // IHDR length = 13
+    0x49, 0x48, 0x44, 0x52, // "IHDR"
+    0x00, 0x00, 0x00, 0x01, // width = 1
+    0x00, 0x00, 0x00, 0x01, // height = 1
+    0x08, 0x06, 0x00, 0x00, 0x00, // 8-bit RGBA, no interlace
+  ]
+  let png_path = root + "/pixel.png"
+  @fs.write_file(png_path, bytes_from(png_bytes), create_mode=@fs.CreateOrTruncate) catch {
+    e => fail("test setup: write png failed: " + e.to_string())
+  }
+  let (pw, ph) = @labeler.read_image_dims(png_path)
+  assert_eq(pw, 1)
+  assert_eq(ph, 1)
+  // Empty path is a guard, not a parse path — should return (0, 0)
+  // without raising, so the export drivers can use it as a
+  // fall-through for the "no image matched" case.
+  let (zw, zh) = @labeler.read_image_dims("")
+  assert_eq(zw, 0)
+  assert_eq(zh, 0)
+  rm_rf(root)
+}

@@ -2225,10 +2225,15 @@ fn format_double(x : Double) -> String {
 ///| --- export helpers (VOC Pascal / YOLO TXT) ---
 
 ///|
-/// Read image dimensions from a JPEG or PNG header. Returns `(0, 0)`
-/// for unsupported formats or on parse failure. Cheap: only the first
-/// few KB are inspected, never the full file.
-async fn read_image_dims(path : String) -> (Int, Int) {
+/// Read image dimensions from a JPEG, PNG, or BMP header. Returns
+/// `(0, 0)` for unsupported formats or on parse failure. Cheap: only
+/// the first few KB are inspected, never the full file.
+///
+/// Exposed as `pub` for the root-level black-box test, which writes
+/// a real 2×2 BMP and asserts the round-trip. Every internal call
+/// site already had a path-relative (private) view of this function;
+/// the public alias doesn't change the call signature.
+pub async fn read_image_dims(path : String) -> (Int, Int) {
   if path == "" {
     return (0, 0)
   }
@@ -2251,6 +2256,29 @@ async fn read_image_dims(path : String) -> (Int, Int) {
       (bytes[21].to_int() << 16) |
       (bytes[22].to_int() << 8) |
       bytes[23].to_int()
+    return (w, h)
+  }
+  // BMP file header is 14 bytes; the DIB header
+  // (BITMAPINFOHEADER — what 99% of files use) is another 40
+  // bytes. Width is at byte 18 and height at byte 22, both as
+  // little-endian int32. We only handle the BMP3 / BITMAPINFOHEADER
+  // variant — that's what every encoder and OS screenshot tool
+  // writes, and what every library reads. (BITMAPV4HEADER /
+  // BITMAPV5HEADER extend the DIB header with colour-space
+  // metadata; the width/height are still at the same offset, so
+  // we don't need to special-case them.) Height can be negative
+  // for top-down DIBs; bndbox coordinates are pixel-space, so we
+  // report the absolute value.
+  if bytes[0] == b'B' && bytes[1] == b'M' && bytes.length() >= 54 {
+    let w = bytes[18].to_int() |
+      (bytes[19].to_int() << 8) |
+      (bytes[20].to_int() << 16) |
+      (bytes[21].to_int() << 24)
+    let raw_h = bytes[22].to_int() |
+      (bytes[23].to_int() << 8) |
+      (bytes[24].to_int() << 16) |
+      (bytes[25].to_int() << 24)
+    let h = if raw_h < 0 { -raw_h } else { raw_h }
     return (w, h)
   }
   // JPEG: scan markers until we hit an SOFn. After the marker (1 byte)
