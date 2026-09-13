@@ -419,15 +419,13 @@ export function createCanvas(container) {
     return [sx / pts.length, sy / pts.length];
   }
   // Hit radius in image-natural px. Used both for handle drawing
-  // size and for the same handle's hit region. 12 px in image
-  // space — large enough that a user hovering "near a point" can
-  // grab it without having to land on a 6 px target, which is
-  // effectively invisible on a thumbnail. The hit radius scales
-  // with image-natural space, so on a small image or a zoomed-out
-  // canvas a point still has a generous grab area. The draw radius
-  // matches so the on-screen handle is at least as large as the
-  // hit zone — the user can see what they're about to click.
-  const HANDLE_R = 12;
+  // size and for the same handle's hit region. 8 px in image
+  // space — large enough that "在点附近" (hovering near a
+  // vertex / corner) reliably lands a drag, but not so large
+  // that the on-screen marker looks chunky on a 1000-px image
+  // at default zoom. The draw radius matches the hit radius so
+  // what the user sees is what they can grab.
+  const HANDLE_R = 8;
   // Render the corner / edge / vertex handles of one selected
   // annotation. Only ever called from paintDynamic — handles are
   // expected to move with the annotation under the cursor, so we
@@ -749,6 +747,16 @@ export function createCanvas(container) {
   container.appendChild(canvas);
 
   let _lastStaticKey = null;
+  // Last full state object passed to render(). Held at module
+  // scope inside createCanvas so hitTestHandle (a method on the
+  // returned object) can read the current selectedId / label
+  // outside of a paint pass. Without this cache, hitTestHandle
+  // would have to take the state as a parameter — and the call
+  // site in main.js doesn't always have the same object identity
+  // (each renderAnnotations builds a fresh object). Updating on
+  // every render keeps the closure honest with the host's view of
+  // the world.
+  let _lastState = null;
   function staticKey(label) {
     if (!label) return null;
     return [
@@ -795,6 +803,7 @@ export function createCanvas(container) {
     render(state) {
       if (natural.w === 0) return;
       if (typeof state.opacity === "number") _opacity = state.opacity;
+      _lastState = state;
       const k = staticKey(state.label);
       if (k !== _lastStaticKey) {
         paintStatic(state);
@@ -821,8 +830,15 @@ export function createCanvas(container) {
     ///   null  →  no handle hit
     /// Body hit is layered on by the caller (existing
     /// hitTestAnnotation) so the same hover/press does both jobs.
+    /// Reads from `_lastState` (set in `render`) rather than a
+    /// closure on a `state` parameter that doesn't exist in this
+    /// scope — using a free `state` reference would ReferenceError
+    /// and silently null out, which is why the previous commit's
+    /// drag never fired in practice.
     hitTestHandle(x, y) {
-      const a = state.label?.infos?.find((it) => it.id === state.selectedId);
+      const a = _lastState?.label?.infos?.find(
+        (it) => it.id === _lastState?.selectedId,
+      );
       if (!a) return null;
       return hitTestHandle(x, y, a);
     },
