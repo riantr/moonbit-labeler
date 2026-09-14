@@ -24,83 +24,83 @@ pub async fn dispatch_op(op : String, payload : Json) -> Json {
   match op {
     "list_images" => {
       let req : ListImagesRequest = @json.from_json(payload)
-      op_list_images(req).to_json()
+      ToJson::to_json(op_list_images(req))
     }
     "read_image" => {
       let req : ReadImageRequest = @json.from_json(payload)
-      op_read_image(req).to_json()
+      ToJson::to_json(op_read_image(req))
     }
     "read_thumb" => {
       let req : ReadThumbRequest = @json.from_json(payload)
-      op_read_thumb(req).to_json()
+      ToJson::to_json(op_read_thumb(req))
     }
     "decode_image" => {
       let req : DecodeImageRequest = @json.from_json(payload)
-      op_decode_image(req).to_json()
+      ToJson::to_json(op_decode_image(req))
     }
     "resize_image" => {
       let req : ResizeImageRequest = @json.from_json(payload)
-      op_resize_image(req).to_json()
+      ToJson::to_json(op_resize_image(req))
     }
     "read_text" => {
       let req : ReadTextRequest = @json.from_json(payload)
-      op_read_text(req).to_json()
+      ToJson::to_json(op_read_text(req))
     }
     "write_text" => {
       let req : WriteTextRequest = @json.from_json(payload)
-      op_write_text(req).to_json()
+      ToJson::to_json(op_write_text(req))
     }
     "read_label" => {
       let req : ReadLabelRequest = @json.from_json(payload)
-      op_read_label(req).to_json()
+      ToJson::to_json(op_read_label(req))
     }
     "write_label" => {
       let req : WriteLabelRequest = @json.from_json(payload)
-      op_write_label(req).to_json()
+      ToJson::to_json(op_write_label(req))
     }
     "parse_label" => {
       let req : ParseLabelRequest = @json.from_json(payload)
-      op_parse_label(req).to_json()
+      ToJson::to_json(op_parse_label(req))
     }
     "serialize_label" => {
       let req : SerializeLabelRequest = @json.from_json(payload)
-      op_serialize_label(req).to_json()
+      ToJson::to_json(op_serialize_label(req))
     }
     "scan_classes" => {
       let req : ScanClassesRequest = @json.from_json(payload)
-      op_scan_classes(req).to_json()
+      ToJson::to_json(op_scan_classes(req))
     }
     "save_classes" => {
       let req : SaveClassesRequest = @json.from_json(payload)
-      op_save_classes(req).to_json()
+      ToJson::to_json(op_save_classes(req))
     }
     "load_classes" => {
       let req : LoadClassesRequest = @json.from_json(payload)
-      op_load_classes(req).to_json()
+      ToJson::to_json(op_load_classes(req))
     }
     "load_classes_from_file" => {
       let req : LoadClassesFromFileRequest = @json.from_json(payload)
-      op_load_classes_from_file(req).to_json()
+      ToJson::to_json(op_load_classes_from_file(req))
     }
     "list_videos" => {
       let req : ListVideosRequest = @json.from_json(payload)
-      op_list_videos(req).to_json()
+      ToJson::to_json(op_list_videos(req))
     }
     "read_video_info" => {
       let req : ReadVideoInfoRequest = @json.from_json(payload)
-      op_read_video_info(req).to_json()
+      ToJson::to_json(op_read_video_info(req))
     }
     "read_video_frame" => {
       let req : ReadVideoFrameRequest = @json.from_json(payload)
-      op_read_video_frame(req).to_json()
+      ToJson::to_json(op_read_video_frame(req))
     }
     "export_voc_folder" => {
       let req : ExportVocRequest = @json.from_json(payload)
-      op_export_voc_folder(req).to_json()
+      ToJson::to_json(op_export_voc_folder(req))
     }
     "export_yolo_folder" => {
       let req : ExportYoloRequest = @json.from_json(payload)
-      op_export_yolo_folder(req).to_json()
+      ToJson::to_json(op_export_yolo_folder(req))
     }
     "pick_folder" =>
       // The pick_folder op requires a CEF CommandWindow (calls the

@@ -93,9 +93,11 @@ async fn handle_request(req : Json) -> Response {
     Err(ready) => return ready
   }
   let payload = extract_payload(req)
-  match (try? @labeler.dispatch_op(op, payload)) {
-    Ok(json) => make_response(id, true, json, "")
-    Err(e) =>
+  try {
+    let json = @labeler.dispatch_op(op, payload)
+    make_response(id, true, json, "")
+  } catch {
+    e =>
       make_response(id, false, null, "op '" + op + "' raised: " + e.to_string())
   }
 }
@@ -123,12 +125,14 @@ pub async fn run_stdio() -> Unit {
     if trimmed.length() == 0 {
       continue
     }
-    let resp = match (try? @json.parse(trimmed)) {
-      Ok(req) => handle_request(req)
-      Err(e) =>
+    let resp = try {
+      let req = @json.parse(trimmed)
+      handle_request(req)
+    } catch {
+      e =>
         make_response(null, false, null, "json parse error: " + e.to_string())
     }
-    @stdio.stdout.write(resp.to_json().stringify())
+    @stdio.stdout.write(ToJson::to_json(resp).stringify())
     @stdio.stdout.write("\n")
   }
   // EOF — emit a clean shutdown marker.

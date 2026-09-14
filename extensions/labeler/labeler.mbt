@@ -3729,7 +3729,7 @@ async fn op_pick_folder(
     return { path: "", cancelled: true, }
   }
   let raw = out.text() catch { _ => "" }
-  let chosen = raw.trim().to_string()
+  let chosen = raw.trim().to_owned()
   if chosen == "" {
     { path: "", cancelled: true, }
   } else {

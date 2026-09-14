@@ -160,35 +160,35 @@ pub fn extension() -> @proton_extension.Extension {
   @proton_extension.typed(
     contract,
     routes,
-    fn(registrar) {
+    (registrar) => {
       // 20 of 21 handlers are stateless and just discard the
       // AppCommandRequestContext. Only `pick_folder` keeps the
       // context because it needs the CEF `CommandWindow` to drive
       // the native folder dialog. The wrap-in-closure is a
       // typed-registrar requirement (signature is
       // `async (CommandContext, Request) -> Response`).
-      registrar.bind(list_images, fn(_ctx, req) { op_list_images(req) })
-      registrar.bind(read_image, fn(_ctx, req) { op_read_image(req) })
-      registrar.bind(read_thumb, fn(_ctx, req) { op_read_thumb(req) })
-      registrar.bind(decode_image, fn(_ctx, req) { op_decode_image(req) })
-      registrar.bind(resize_image, fn(_ctx, req) { op_resize_image(req) })
-      registrar.bind(read_text, fn(_ctx, req) { op_read_text(req) })
-      registrar.bind(write_text, fn(_ctx, req) { op_write_text(req) })
-      registrar.bind(read_label, fn(_ctx, req) { op_read_label(req) })
-      registrar.bind(write_label, fn(_ctx, req) { op_write_label(req) })
-      registrar.bind(parse_label, fn(_ctx, req) { op_parse_label(req) })
-      registrar.bind(serialize_label, fn(_ctx, req) { op_serialize_label(req) })
-      registrar.bind(scan_classes, fn(_ctx, req) { op_scan_classes(req) })
-      registrar.bind(save_classes, fn(_ctx, req) { op_save_classes(req) })
-      registrar.bind(load_classes, fn(_ctx, req) { op_load_classes(req) })
-      registrar.bind(load_classes_from_file, fn(_ctx, req) { op_load_classes_from_file(req) })
-      registrar.bind(list_videos, fn(_ctx, req) { op_list_videos(req) })
-      registrar.bind(read_video_info, fn(_ctx, req) { op_read_video_info(req) })
-      registrar.bind(read_video_frame, fn(_ctx, req) { op_read_video_frame(req) })
-      registrar.bind(export_voc_folder, fn(_ctx, req) { op_export_voc_folder(req) })
-      registrar.bind(export_yolo_folder, fn(_ctx, req) { op_export_yolo_folder(req) })
+      registrar.bind(list_images, (_ctx, req) => op_list_images(req))
+      registrar.bind(read_image, (_ctx, req) => op_read_image(req))
+      registrar.bind(read_thumb, (_ctx, req) => op_read_thumb(req))
+      registrar.bind(decode_image, (_ctx, req) => op_decode_image(req))
+      registrar.bind(resize_image, (_ctx, req) => op_resize_image(req))
+      registrar.bind(read_text, (_ctx, req) => op_read_text(req))
+      registrar.bind(write_text, (_ctx, req) => op_write_text(req))
+      registrar.bind(read_label, (_ctx, req) => op_read_label(req))
+      registrar.bind(write_label, (_ctx, req) => op_write_label(req))
+      registrar.bind(parse_label, (_ctx, req) => op_parse_label(req))
+      registrar.bind(serialize_label, (_ctx, req) => op_serialize_label(req))
+      registrar.bind(scan_classes, (_ctx, req) => op_scan_classes(req))
+      registrar.bind(save_classes, (_ctx, req) => op_save_classes(req))
+      registrar.bind(load_classes, (_ctx, req) => op_load_classes(req))
+      registrar.bind(load_classes_from_file, (_ctx, req) => op_load_classes_from_file(req))
+      registrar.bind(list_videos, (_ctx, req) => op_list_videos(req))
+      registrar.bind(read_video_info, (_ctx, req) => op_read_video_info(req))
+      registrar.bind(read_video_frame, (_ctx, req) => op_read_video_frame(req))
+      registrar.bind(export_voc_folder, (_ctx, req) => op_export_voc_folder(req))
+      registrar.bind(export_yolo_folder, (_ctx, req) => op_export_yolo_folder(req))
       // pick_folder keeps the context (the only one of the 21 that does).
-      registrar.bind(pick_folder, fn(ctx, req) { op_pick_folder(ctx, req) })
+      registrar.bind(pick_folder, (ctx, req) => op_pick_folder(ctx, req))
     },
   )
 }
