@@ -354,3 +354,224 @@ test "dynamic layer — selectedId not in annotations → no handles drawn" {
   assert_eq(fill, 0)
   assert_eq(stroke, 2)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.5.x — cached static layer tests
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.5.x — the static layer's cache_key must be deterministic
+/// for the same model. Two calls with identical state produce
+/// identical keys, so the runtime's render-tree cache lookup hits.
+test "static_cache_key — same model produces same key (cache hit)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "/path/to/img.jpg",
+    imageNaturalSize: { x: 1920.0, y: 1080.0, },
+    pan: { x: 10.0, y: 20.0, },
+    zoom: 1.5,
+    annotations: [
+      {
+        id: "a1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+      },
+    ],
+  }
+  assert_eq(static_cache_key(model), static_cache_key(model))
+}
+
+///|
+/// Phase 5.5.x — imageSource is part of the cache key. Changing the
+/// image source must invalidate the cache (force a repaint).
+test "static_cache_key — imageSource change invalidates cache" {
+  let base : Model = { ..Model::new(), imageSource: "/img1.jpg", }
+  let next : Model = { ..base, imageSource: "/img2.jpg", }
+  assert_not_eq(static_cache_key(base), static_cache_key(next))
+}
+
+///|
+/// Phase 5.5.x — pan offset is part of the cache key. Panning the
+/// view (e.g. user wheel-scrolled or middle-dragged) must invalidate
+/// the static cache.
+test "static_cache_key — pan offset change invalidates cache" {
+  let base : Model = { ..Model::new(), pan: { x: 0.0, y: 0.0, }, }
+  let panned : Model = { ..base, pan: { x: 5.0, y: 0.0, }, }
+  assert_not_eq(static_cache_key(base), static_cache_key(panned))
+}
+
+///|
+/// Phase 5.5.x — zoom is part of the cache key. Zooming in/out must
+/// invalidate the static cache.
+test "static_cache_key — zoom change invalidates cache" {
+  let base : Model = { ..Model::new(), zoom: 1.0, }
+  let zoomed : Model = { ..base, zoom: 2.0, }
+  assert_not_eq(static_cache_key(base), static_cache_key(zoomed))
+}
+
+///|
+/// Phase 5.5.x — annotation set is part of the cache key. Adding,
+/// removing, or mutating an annotation point must invalidate the
+/// cache. This is the key correctness property — without it, the
+/// drag handle mutation (ModifyHandle) would leave a stale rect on
+/// screen until the user pans/zooms (the same bug the legacy
+/// frontend/src/canvas.js had to work around by bumping the cache
+/// key on every drag frame).
+test "static_cache_key — annotation mutation invalidates cache" {
+  let base : Model = {
+    ..Model::new(),
+    annotations: [
+      {
+        id: "a1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+      },
+    ],
+  }
+  let dragged : Model = {
+    ..base,
+    annotations: [
+      {
+        id: "a1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 60.0, y: 50.0, }],
+      },
+    ],
+  }
+  assert_not_eq(static_cache_key(base), static_cache_key(dragged))
+}
+
+///|
+/// Phase 5.5.x — adding a new annotation invalidates the cache.
+test "static_cache_key — adding an annotation invalidates cache" {
+  let base : Model = {
+    ..Model::new(),
+    annotations: [
+      {
+        id: "a1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+      },
+    ],
+  }
+  let two : Model = {
+    ..base,
+    annotations: [
+      {
+        id: "a1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+      },
+      { id: "a2", shape: Keypoint, points: [{ x: 200.0, y: 200.0, }], },
+    ],
+  }
+  assert_not_eq(static_cache_key(base), static_cache_key(two))
+}
+
+///|
+/// Phase 5.5.x — selectedId change invalidates the cache because the
+/// selected annotation renders with a different colour (yellow vs
+/// red), so even if no geometry changes the static layer output
+/// changes.
+test "static_cache_key — selection change invalidates cache" {
+  let base : Model = {
+    ..Model::new(),
+    annotations: [
+      {
+        id: "a1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+      },
+    ],
+    selectedId: None,
+  }
+  let selected : Model = { ..base, selectedId: Some("a1"), }
+  assert_not_eq(static_cache_key(base), static_cache_key(selected))
+}
+
+///|
+/// Phase 5.5.x — imageNaturalSize is part of the cache key. Changing
+/// the natural size (e.g. when the user loads a different image with
+/// different dimensions, or when our 5.6 image-header probe reads
+/// the real size from the file header) must invalidate the cache.
+test "static_cache_key — natural size change invalidates cache" {
+  let base : Model = {
+    ..Model::new(),
+    imageSource: "/img.jpg",
+    imageNaturalSize: { x: 1920.0, y: 1080.0, },
+  }
+  let next : Model = { ..base, imageNaturalSize: { x: 1280.0, y: 720.0, }, }
+  assert_not_eq(static_cache_key(base), static_cache_key(next))
+}
+
+///|
+/// Phase 5.5.x — fitMode is part of the cache key. Switching
+/// Contain ↔ Stretch (e.g. user toggles "fit to window" off) must
+/// invalidate the cache because the DrawImage's fit field is part
+/// of the cached command stream.
+test "static_cache_key — fit mode change invalidates cache" {
+  let base : Model = {
+    ..Model::new(),
+    imageSource: "/img.jpg",
+    fitMode: @core.ImageFit::Contain,
+  }
+  let cover : Model = { ..base, fitMode: @core.ImageFit::Cover, }
+  assert_not_eq(static_cache_key(base), static_cache_key(cover))
+}
+
+///|
+/// Phase 5.5.x — most importantly, the dynamic layer's input fields
+/// (selectedId, cursorImgPt, dragState) do NOT affect the static
+/// cache key. Cursor moves / hover should NOT invalidate the static
+/// layer's cached bitmap — that's the whole point of the layer
+/// split.
+test "static_cache_key — cursor move does NOT invalidate static cache" {
+  let base : Model = {
+    ..Model::new(),
+    imageSource: "/img.jpg",
+    cursorImgPt: Some({ x: 100.0, y: 100.0, }),
+    selectedId: None,
+  }
+  // Move the cursor; nothing else changes.
+  let moved : Model = { ..base, cursorImgPt: Some({ x: 200.0, y: 250.0, }), }
+  // Static cache key is identical — the runtime can reuse the
+  // cached static bitmap while only repainting the dynamic layer.
+  assert_eq(static_cache_key(base), static_cache_key(moved))
+}
+
+///|
+/// Phase 5.5.x — handle drag does NOT invalidate the static cache
+/// key either (the static layer doesn't know about the drag; the
+/// selected annotation's colour is determined by selectedId which is
+/// already part of the key). This is the cornerstone of the
+/// two-layer design: dragging a handle only repaints the dynamic
+/// layer's handles + crosshair, not the entire static bitmap.
+///
+/// Note: in the legacy frontend/src/canvas.js, the static layer
+/// cache key was deliberately bumped during a drag (the comment
+/// explains the ghost-rect workaround). With the new key based on
+/// selectedId (not on cursorImgPt), the key stays stable during a
+/// drag — the static layer is correctly reused, the dynamic layer
+/// redraws the dragged handle, and we get a smooth drag without
+/// the ghost-rect bug.
+test "static_cache_key — handle drag keeps static cache stable" {
+  let ann_id = "a1"
+  let base : Model = {
+    ..Model::new(),
+    annotations: [
+      {
+        id: ann_id,
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+      },
+    ],
+    selectedId: Some(ann_id),
+    cursorImgPt: Some({ x: 0.0, y: 0.0, }),
+  }
+  // Cursor moves during the drag; annotation points still the
+  // same (the drag hasn't actually moved the handle yet — the
+  // first CursorMoved that emits ModifyHandle will change the
+  // points and invalidate the cache).
+  let mid_drag : Model = { ..base, cursorImgPt: Some({ x: 30.0, y: 30.0, }), }
+  assert_eq(static_cache_key(base), static_cache_key(mid_drag))
+}
