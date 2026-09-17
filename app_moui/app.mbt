@@ -1,0 +1,412 @@
+// riantr/moonbit_labeler/app_moui — MoUI app skeleton.
+//
+// Phase 2 (this session): Model + Msg + Update + view shell, modelled
+// on the existing frontend state machine (frontend/src/main.js lines
+// 60-100). The 21 IPC ops stay in extensions/labeler/ and get called
+// as direct MoonBit async functions from update() — see
+// _build/design/moui-migration-design.md §6 for the IPC removal plan.
+//
+// Pattern reference: wzzc-dev/MoUI/docs/app-templates.md §Counter
+// (program() factory + Model::new() + Msg enum + pure update).
+
+// ─────────────────────────────────────────────────────────────────
+// State — exact mirror of frontend/src/main.js §state (lines 60-100)
+// ─────────────────────────────────────────────────────────────────
+
+///|
+pub(all) enum MediaKind {
+  Image
+  Video
+} derive(Debug)
+
+///|
+pub(all) enum Mode {
+  Select
+  Rect
+  Polygon
+  Keypoint
+  EditBinding
+} derive(Debug)
+
+///|
+pub(all) enum ClassType {
+  Object
+  Tag
+  Binding
+} derive(Debug)
+
+///|
+pub(all) enum ToastKind {
+  Info
+  Warn
+  Error
+} derive(Debug)
+
+///|
+pub(all) enum Layer {
+  Static
+  Dynamic
+} derive(Debug)
+
+///|
+pub(all) enum OpResult {
+  Ok(String, String)            // op name, result json (raw text)
+  Err(String, String)            // op name, error message
+} derive(Debug)
+
+///|
+pub(all) struct Point {
+  x : Double
+  y : Double
+} derive(Debug)
+
+///|
+pub(all) struct ImageEntry {
+  name : String
+  path : String
+  size_bytes : Int
+} derive(Debug)
+
+///|
+pub(all) struct VideoEntry {
+  name : String
+  path : String
+  frame_count : Int
+} derive(Debug)
+
+///|
+pub(all) struct ClassEntry {
+  id : String
+  name : String
+  is_default : Bool
+} derive(Debug)
+
+///|
+pub(all) struct Label {
+  raw_json : String
+  dirty : Bool
+} derive(Debug)
+
+///|
+pub(all) struct Model {
+  folder : String
+  labelFolder : String
+  images : Array[ImageEntry]
+  videos : Array[VideoEntry]
+  currentIndex : Int
+  mediaKind : MediaKind
+  label : Label
+  labelPath : String
+  loadedFromDisk : Bool
+  mode : Mode
+  classType : ClassType
+  selectedId : String?
+  draftPoints : Array[Point]
+  bindingFromId : String?
+  classes : Array[ClassEntry]
+  cursorImgPt : Point?
+  cursorCanvasPt : Point?
+  zoom : Double
+  pan : Point
+  staticLayerDirty : Bool
+  dynamicLayerDirty : Bool
+  toastMessage : String?
+  toastKind : ToastKind
+  statusMessage : String
+} derive(Debug)
+
+///|
+pub fn Model::new() -> Model {
+  {
+    folder: "",
+    labelFolder: "",
+    images: [],
+    videos: [],
+    currentIndex: -1,
+    mediaKind: Image,
+    label: { raw_json: "{}", dirty: false },
+    labelPath: "",
+    loadedFromDisk: false,
+    mode: Select,
+    classType: Object,
+    selectedId: None,
+    draftPoints: [],
+    bindingFromId: None,
+    classes: [],
+    cursorImgPt: None,
+    cursorCanvasPt: None,
+    zoom: 1.0,
+    pan: { x: 0.0, y: 0.0 },
+    staticLayerDirty: true,
+    dynamicLayerDirty: true,
+    toastMessage: None,
+    toastKind: Info,
+    statusMessage: "Ready",
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Msg — exhaustive event union
+// ─────────────────────────────────────────────────────────────────
+
+///|
+pub(all) enum Msg {
+  PickFolder
+  PickFolderResult(String)
+  LoadFolder(String)
+  FolderLoaded(Array[ImageEntry], Array[VideoEntry], String, String)
+  LoadFolderFailed(String, String)
+  ScanClasses(String)
+  ClassesLoaded(Array[ClassEntry])
+  SelectIndex(Int)
+  ReadLabelFor(String)
+  LabelLoaded(Label, String, Bool)
+  SaveLabel
+  LabelSaved(String, Bool)
+  SetMode(Mode)
+  SetClassType(ClassType)
+  SelectAnnotation(String?)
+  AddRect(Point, Point)
+  AddPolygon(Array[Point])
+  AddKeypoint(Point)
+  AddBinding(String, Point)
+  BeginDraft(Point)
+  PushDraft(Point)
+  PopDraft
+  FinishDraft
+  CancelDraft
+  DeleteAnnotation(String)
+  ModifyHandle(String, Int, Point)
+  CursorMoved(Point, Point)
+  CursorLeft
+  Zoom(Double)
+  Pan(Point)
+  AddClass(String)
+  UpdateClass(String, String)
+  DeleteClass(String)
+  SetDefaultClass(String)
+  SetSettingOpacity(Double)
+  SetSettingPolygonClosePx(Double)
+  SetSettingAutosaveMs(Int)
+  SwitchMediaKind(MediaKind)
+  LoadVideoFrame(Int)
+  OpResult(OpResult)
+  ExportVoc(String)
+  ExportYolo(String)
+  ShowToast(String, ToastKind)
+  DismissToast
+  MarkDirty(Layer)
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Update — pure, returns new Model + Effect[Msg]
+// ─────────────────────────────────────────────────────────────────
+
+///|
+pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
+  match msg {
+    PickFolder =>
+      (model, @moui.Effect::none())
+    PickFolderResult(path) =>
+      if path == "" {
+        ({ ..model, statusMessage: "Folder pick cancelled" }, @moui.Effect::none())
+      } else {
+        ({ ..model, folder: path }, @moui.Effect::none())
+      }
+    LoadFolder(_path) =>
+      (model, @moui.Effect::none())
+    FolderLoaded(images, videos, folder, label_folder) =>
+      ({
+        ..model,
+        folder,
+        labelFolder: label_folder,
+        images,
+        videos,
+        currentIndex: if images.length() > 0 { 0 } else { -1 },
+        statusMessage: "Loaded",
+      }, @moui.Effect::none())
+    LoadFolderFailed(_path, err) =>
+      ({ ..model, toastMessage: Some("Folder load failed: " + err),
+                  toastKind: Error }, @moui.Effect::none())
+    ScanClasses(_path) =>
+      (model, @moui.Effect::none())
+    ClassesLoaded(classes) =>
+      ({ ..model, classes }, @moui.Effect::none())
+    SetMode(mode) =>
+      ({ ..model, mode, draftPoints: [], bindingFromId: None }, @moui.Effect::none())
+    SetClassType(ct) => ({ ..model, classType: ct }, @moui.Effect::none())
+    SelectAnnotation(id) =>
+      ({ ..model, selectedId: id, staticLayerDirty: true }, @moui.Effect::none())
+    AddRect(_p1, _p2) =>
+      ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
+         staticLayerDirty: true, mode: Select, draftPoints: [] }, @moui.Effect::none())
+    AddPolygon(_pts) =>
+      ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
+         staticLayerDirty: true, mode: Select, draftPoints: [] }, @moui.Effect::none())
+    AddKeypoint(_pt) =>
+      ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
+         staticLayerDirty: true }, @moui.Effect::none())
+    AddBinding(_from_id, _pt) =>
+      ({ ..model, bindingFromId: None, mode: Select,
+         staticLayerDirty: true }, @moui.Effect::none())
+    BeginDraft(pt) =>
+      ({ ..model, draftPoints: [pt], staticLayerDirty: true }, @moui.Effect::none())
+    PushDraft(pt) =>
+      ({ ..model, draftPoints: model.draftPoints + [pt],
+         staticLayerDirty: true }, @moui.Effect::none())
+    PopDraft => {
+      let n = model.draftPoints.length()
+      if n <= 1 {
+        (model, @moui.Effect::none())
+      } else {
+        let kept : Array[Point] = []
+        for i = 0; i < n - 1; i = i + 1 {
+          kept.push(model.draftPoints[i])
+        }
+        ({ ..model, draftPoints: kept, staticLayerDirty: true },
+          @moui.Effect::none())
+      }
+    }
+    FinishDraft =>
+      ({ ..model, draftPoints: [], mode: Select,
+         staticLayerDirty: true }, @moui.Effect::none())
+    CancelDraft =>
+      ({ ..model, draftPoints: [], mode: Select,
+         staticLayerDirty: true }, @moui.Effect::none())
+    DeleteAnnotation(_id) =>
+      ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
+         staticLayerDirty: true }, @moui.Effect::none())
+    ModifyHandle(_id, _handle_idx, _new_pt) =>
+      ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
+         staticLayerDirty: true }, @moui.Effect::none())
+    CursorMoved(img_pt, canvas_pt) =>
+      ({
+        ..model,
+        cursorImgPt: Some(img_pt),
+        cursorCanvasPt: Some(canvas_pt),
+        dynamicLayerDirty: true,
+      }, @moui.Effect::none())
+    CursorLeft =>
+      ({ ..model, cursorImgPt: None, cursorCanvasPt: None,
+         dynamicLayerDirty: true }, @moui.Effect::none())
+    Zoom(z) =>
+      ({ ..model, zoom: z, staticLayerDirty: true, dynamicLayerDirty: true },
+        @moui.Effect::none())
+    Pan(delta) =>
+      ({
+        ..model,
+        pan: { x: model.pan.x + delta.x, y: model.pan.y + delta.y },
+        staticLayerDirty: true,
+        dynamicLayerDirty: true,
+      }, @moui.Effect::none())
+    AddClass(name) =>
+      ({ ..model, classes: model.classes + [{ id: name, name, is_default: false }] },
+        @moui.Effect::none())
+    UpdateClass(_id, _new_name) =>
+      (model, @moui.Effect::none())
+    DeleteClass(_id) =>
+      (model, @moui.Effect::none())
+    SetDefaultClass(_id) =>
+      (model, @moui.Effect::none())
+    SetSettingOpacity(v) =>
+      ({ ..model, statusMessage: "Opacity: " + v.to_string() },
+        @moui.Effect::none())
+    SetSettingPolygonClosePx(v) =>
+      ({ ..model, statusMessage: "Polygon close: " + v.to_string() + "px" },
+        @moui.Effect::none())
+    SetSettingAutosaveMs(v) =>
+      ({ ..model, statusMessage: "Autosave: " + v.to_string() + "ms" },
+        @moui.Effect::none())
+    SwitchMediaKind(kind) =>
+      ({ ..model, mediaKind: kind, currentIndex: -1 }, @moui.Effect::none())
+    LoadVideoFrame(_idx) =>
+      (model, @moui.Effect::none())
+    OpResult(Ok(_op, _json)) =>
+      (model, @moui.Effect::none())
+    OpResult(Err(_op, err)) =>
+      ({ ..model, toastMessage: Some("Op failed: " + err), toastKind: Error },
+        @moui.Effect::none())
+    ExportVoc(_folder) =>
+      (model, @moui.Effect::none())
+    ExportYolo(_folder) =>
+      (model, @moui.Effect::none())
+    ShowToast(message, kind) =>
+      ({ ..model, toastMessage: Some(message), toastKind: kind },
+        @moui.Effect::none())
+    DismissToast => ({ ..model, toastMessage: None }, @moui.Effect::none())
+    SelectIndex(idx) =>
+      ({ ..model, currentIndex: idx, selectedId: None,
+         staticLayerDirty: true, dynamicLayerDirty: true }, @moui.Effect::none())
+    ReadLabelFor(_path) =>
+      (model, @moui.Effect::none())
+    LabelLoaded(label, path, ok) =>
+      ({ ..model, label, labelPath: path, loadedFromDisk: ok,
+         staticLayerDirty: true }, @moui.Effect::none())
+    SaveLabel =>
+      (model, @moui.Effect::none())
+    LabelSaved(path, ok) =>
+      ({
+        ..model,
+        label: { raw_json: model.label.raw_json, dirty: false },
+        statusMessage: if ok { "Saved " + path } else { "Save failed: " + path },
+      }, @moui.Effect::none())
+    MarkDirty(layer) =>
+      match layer {
+        Static => ({ ..model, staticLayerDirty: true }, @moui.Effect::none())
+        Dynamic => ({ ..model, dynamicLayerDirty: true }, @moui.Effect::none())
+      }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// View — placeholder shell using @views
+// ─────────────────────────────────────────────────────────────────
+
+///|
+pub fn view(model : Model) -> @moui.View[Msg] {
+  @views.center(
+    @views.card(
+      @views.column([
+        @views.text("MoonBit Labeler — MoUI app skeleton").title(),
+        @views.text("Phase 2: state machine wired (Model + Msg + Update)."),
+        @views.text("Phase 3-7 deferred to follow-up sessions."),
+        @views.row([
+          @views.text("Folder: " + model.folder),
+          @views.text("Images: " + model.images.length().to_string()),
+          @views.text("Classes: " + model.classes.length().to_string()),
+        ]),
+        match model.toastMessage {
+          Some(msg) => @views.text("toast: " + msg)
+          None => @views.text("Status: " + model.statusMessage)
+        },
+      ]),
+    ),
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Program factory
+// ─────────────────────────────────────────────────────────────────
+
+///|
+pub fn program() -> @moui.Program[Model, Msg] {
+  @moui.Program::new(
+    init=() => (Model::new(), @moui.Effect::none()),
+    update=update,
+    view=view,
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Entry — minimal main that proves the package compiles end-to-end.
+// Real platform entrypoints (windows_skia / linux_skia / macos_skia /
+// web_wasm) live in sibling packages and call @runtime.new_program
+// + .run_app("MoonBit Labeler", runtime).backend(@<plat>.entry()).
+// ─────────────────────────────────────────────────────────────────
+
+///|
+fn main {
+  let _p : @moui.Program[Model, Msg] = program()
+  let _m : Model = Model::new()
+  println("app_moui: skeleton compiled. _p=_m=")
+}

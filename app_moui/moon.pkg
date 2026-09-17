@@ -1,0 +1,17 @@
+// app_moui — MoUI native app skeleton for riantr/moonbit_labeler.
+//
+// Phase 1 (current session): counter-style state machine proving
+// that MoUI's Model + Msg + Update + view shape works in moon 0.1.x
+// native target. The 21 IPC ops from extensions/labeler/ are wired as
+// direct MoonBit function calls (no bridge) in a follow-up session.
+//
+// Pattern reference: wzzc-dev/MoUI/docs/app-templates.md §Counter.
+
+import {
+  "wzzc-dev/moui",
+  "wzzc-dev/moui/views",
+}
+
+supported_targets = "native"
+
+pkgtype(kind: "executable")

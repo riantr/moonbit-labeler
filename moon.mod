@@ -7,6 +7,7 @@ import {
   "moonbit-community/proton@0.2.5",
   "moonbit-community/proton_contract@0.2.5",
   "riantr/moonbit_image@0.3.4",
+  "wzzc-dev/moui@0.1.12",
 }
 
 readme = "README.mbt.md"
