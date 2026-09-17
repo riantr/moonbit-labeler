@@ -1,6 +1,14 @@
 // app_moui/canvas_view.mbt — annotation canvas as MoUI view.
 //
-// Phase 5.3 (this session): draw annotations + selected-handle markers.
+// Phase 5.4 (this session): DPR / HiDPI scaling investigation. Result:
+//   `frame : Rect` in the draw callback is in LOGICAL pixels (CSS-pixel
+//   equivalent). MoUI's host backend converts physical → logical at the
+//   `Event::Resized(SurfaceMetrics)` boundary; the rest of the layout,
+//   paint, and event pipeline operates in logical coordinates only.
+//   See `_build/design/dpi-investigation.md` for the full evidence
+//   chain. Application code does NOT need any DPR scaling.
+//
+// Phase 5.3 (prior session): draw annotations + selected-handle markers.
 // Phase 5.2 (prior session): paint an actual image source via DrawImage
 // (fit-contain + pan/zoom). Phase 5.1 (prior session): minimal
 // placeholder + cursor crosshair.
@@ -24,8 +32,20 @@
 //   CursorMoved dispatches ModifyHandle via Effect::send, which
 //   apply_handle_move folds back into the annotation's points array.
 //
+// Coordinate space conventions (also see dpi-investigation.md):
+//   - `frame : Rect` (draw callback arg)        → logical px
+//   - `ev.position` (on_drag callback arg)      → logical px
+//     (host normalises physical→logical before dispatch)
+//   - `model.pan`, `model.zoom`                 → logical-px units
+//   - `ann.points` (Annotation in model)       → image-natural pixels
+//     (canvas_view does the pan/zoom inversion before hit-testing)
+//   - `12.0` hit-test radius (hittest.mbt:155)  → image-natural px
+//     (independent of DPR; canvas_view calls hit_test_select with
+//     the pan/zoom-inverted cursor)
+//   - All `@common.fill_rect / stroke_rect / draw_image` size/width
+//     arguments                                 → logical px
+//
 // Phase 5.3 does NOT port:
-//   - DPR scaling (frame is in logical pixels; deferred to 5.4)
 //   - image-header probe (caller passes natural size; 5.3 keeps the
 //     5.2 "supply natural_w/h at LoadTestImage time" convention)
 //   - static + dynamic layer composition (single layer for now)
@@ -33,6 +53,8 @@
 //     in update() but no input plumbing — that's 5.11)
 //   - midpoint handle drag refinement (corner handles work; midpoints
 //     drag the opposite edge — good enough for 5.3)
+//   - Polygon draw_path upgrade (still thick-line approximation via
+//     fill_rect sequence; 5.7 will add draw_path)
 
 ///|
 /// Annotation canvas view. Returns a MoUI view that paints a neutral
@@ -335,4 +357,3 @@ fn sqrt_double_inline(x : Double) -> Double {
   }
   guess
 }
-
