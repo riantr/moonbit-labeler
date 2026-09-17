@@ -5,11 +5,13 @@
 // native target. The 21 IPC ops from extensions/labeler/ are wired as
 // direct MoonBit function calls (no bridge) in a follow-up session.
 //
-// Pattern reference: wzzc-dev/MoUI/docs/app-templates.md §Counter.
+// Pattern reference: wzzc-dev/moui/docs/app-templates.md §Counter.
 
 import {
   "wzzc-dev/moui",
+  "wzzc-dev/moui/core" @core,
   "wzzc-dev/moui/views",
+  "wzzc-dev/moui/views/common" @common,
 }
 
 supported_targets = "native"

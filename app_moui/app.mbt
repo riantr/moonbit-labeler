@@ -26,7 +26,7 @@ pub(all) enum Mode {
   Polygon
   Keypoint
   EditBinding
-} derive(Debug)
+} derive(Debug, Eq)
 
 ///|
 pub(all) enum ClassType {
@@ -364,23 +364,26 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
 
 ///|
 pub fn view(model : Model) -> @moui.View[Msg] {
-  @views.center(
-    @views.card(
-      @views.column([
-        @views.text("MoonBit Labeler — MoUI app skeleton").title(),
-        @views.text("Phase 2: state machine wired (Model + Msg + Update)."),
-        @views.text("Phase 3-7 deferred to follow-up sessions."),
-        @views.row([
-          @views.text("Folder: " + model.folder),
-          @views.text("Images: " + model.images.length().to_string()),
-          @views.text("Classes: " + model.classes.length().to_string()),
-        ]),
+  // Phase 5.1: real split_view with sidebar + canvas. Earlier
+  // sessions shipped only a card-of-text shell; this is the first
+  // real chrome layout. canvas_view lives in canvas_view.mbt.
+  @views.split_view(
+    primary=@views.column(
+      [
+        @views.text("Folder: " + model.folder),
+        @views.text("Images: " + model.images.length().to_string()),
+        @views.text("Classes: " + model.classes.length().to_string()),
         match model.toastMessage {
           Some(msg) => @views.text("toast: " + msg)
           None => @views.text("Status: " + model.statusMessage)
         },
-      ]),
+      ],
+      spacing=4.0,
     ),
+    detail=canvas_view(model),
+    primary_width=240.0,
+    detail_width=800.0,
+    height=600.0,
   )
 }
 
