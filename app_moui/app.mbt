@@ -104,6 +104,12 @@ pub(all) struct Model {
   draftPoints : Array[Point]
   bindingFromId : String?
   classes : Array[ClassEntry]
+  // Phase 5.2 — image source. imageSource = "" means no image loaded
+  // (placeholder rect shown instead). When non-empty, the renderer
+  // fetches/decodes the file lazily at first paint.
+  imageSource : String
+  imageNaturalSize : Point
+  fitMode : @core.ImageFit
   cursorImgPt : Point?
   cursorCanvasPt : Point?
   zoom : Double
@@ -133,6 +139,13 @@ pub fn Model::new() -> Model {
     draftPoints: [],
     bindingFromId: None,
     classes: [],
+    // Phase 5.2 — empty source means "draw placeholder rect".
+    // Natural size is read from the image header at LoadTestImage
+    // time. For the default 800x600 placeholder we mirror the old
+    // canvas_view.mbt size.
+    imageSource: "",
+    imageNaturalSize: { x: 800.0, y: 600.0 },
+    fitMode: @core.ImageFit::Contain,
     cursorImgPt: None,
     cursorCanvasPt: None,
     zoom: 1.0,
@@ -190,6 +203,14 @@ pub(all) enum Msg {
   SetSettingAutosaveMs(Int)
   SwitchMediaKind(MediaKind)
   LoadVideoFrame(Int)
+  // Phase 5.2 — image source load + fit-mode toggle.
+  // LoadTestImage(path, natural_w, natural_h) — caller supplies the
+  //   natural pixel size (read from the JPEG/PNG header or
+  //   guessed). Phase 5.3 will replace with a real image-header
+  //   probe using riantr/moonbit_image.
+  // SetFitMode(fit) — switch between Contain / Cover / Stretch.
+  LoadTestImage(String, Double, Double)
+  SetFitMode(@core.ImageFit)
   OpResult(OpResult)
   ExportVoc(String)
   ExportYolo(String)
@@ -355,6 +376,17 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         Static => ({ ..model, staticLayerDirty: true }, @moui.Effect::none())
         Dynamic => ({ ..model, dynamicLayerDirty: true }, @moui.Effect::none())
       }
+    LoadTestImage(path, natural_w, natural_h) =>
+      ({
+        ..model,
+        imageSource: path,
+        imageNaturalSize: { x: natural_w, y: natural_h },
+        statusMessage: "Loaded test image: " + path,
+        staticLayerDirty: true,
+      }, @moui.Effect::none())
+    SetFitMode(fit) =>
+      ({ ..model, fitMode: fit, staticLayerDirty: true },
+        @moui.Effect::none())
   }
 }
 
