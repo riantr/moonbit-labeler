@@ -36,31 +36,30 @@ pub fn handle_points(ann : Annotation) -> Array[Point] {
         let mx = (p1.x + p2.x) / 2.0
         let my = (p1.y + p2.y) / 2.0
         [
-          { x: p1.x, y: p1.y },           // 0 TL
-          { x: mx, y: p1.y },             // 1 T
-          { x: p2.x, y: p1.y },           // 2 TR
-          { x: p2.x, y: my },             // 3 R
-          { x: p2.x, y: p2.y },           // 4 BR
-          { x: mx, y: p2.y },             // 5 B
-          { x: p1.x, y: p2.y },           // 6 BL
-          { x: p1.x, y: my },             // 7 L
+          { x: p1.x, y: p1.y, }, // 0 TL
+          { x: mx, y: p1.y, }, // 1 T
+          { x: p2.x, y: p1.y, }, // 2 TR
+          { x: p2.x, y: my, }, // 3 R
+          { x: p2.x, y: p2.y, }, // 4 BR
+          { x: mx, y: p2.y, }, // 5 B
+          { x: p1.x, y: p2.y, }, // 6 BL
+          { x: p1.x, y: my, }, // 7 L
         ]
       }
-    Polygon =>
-      // One handle per vertex — copy the points array.
-      {
-        let acc : Array[Point] = []
-        for p in ann.points {
-          acc.push({ x: p.x, y: p.y })
-        }
-        acc
+    // One handle per vertex — copy the points array.
+    Polygon => {
+      let acc : Array[Point] = []
+      for p in ann.points {
+        acc.push({ x: p.x, y: p.y, })
       }
+      acc
+    }
     Keypoint =>
       // Single handle at the only point.
       if ann.points.length() < 1 {
         []
       } else {
-        [{ x: ann.points[0].x, y: ann.points[0].y }]
+        [{ x: ann.points[0].x, y: ann.points[0].y, }]
       }
   }
 }
@@ -207,28 +206,28 @@ pub fn apply_handle_move(
         // 5 B, 6 BL, 7 L.
         let new_p1 = match handle_idx {
           0 => new_pt
-          1 => { x: new_pt.x, y: p1.y }
-          2 => { x: new_pt.x, y: p1.y }
-          3 => { x: p2.x, y: new_pt.y }
+          1 => { x: new_pt.x, y: p1.y, }
+          2 => { x: new_pt.x, y: p1.y, }
+          3 => { x: p2.x, y: new_pt.y, }
           4 => new_pt
-          5 => { x: new_pt.x, y: p2.y }
-          6 => { x: new_pt.x, y: p2.y }
-          7 => { x: p1.x, y: new_pt.y }
-          _ => { x: p1.x, y: p1.y }
+          5 => { x: new_pt.x, y: p2.y, }
+          6 => { x: new_pt.x, y: p2.y, }
+          7 => { x: p1.x, y: new_pt.y, }
+          _ => { x: p1.x, y: p1.y, }
         }
         let new_p2 = match handle_idx {
-          0 => { x: p2.x, y: p2.y }
-          1 => { x: p2.x, y: new_pt.y }
+          0 => { x: p2.x, y: p2.y, }
+          1 => { x: p2.x, y: new_pt.y, }
           2 => new_pt
           3 => new_pt
           4 => new_pt
-          5 => { x: p2.x, y: new_pt.y }
-          6 => { x: p1.x, y: p2.y }
-          7 => { x: p1.x, y: new_pt.y }
-          _ => { x: p2.x, y: p2.y }
+          5 => { x: p2.x, y: new_pt.y, }
+          6 => { x: p1.x, y: p2.y, }
+          7 => { x: p1.x, y: new_pt.y, }
+          _ => { x: p2.x, y: p2.y, }
         }
         let new_points : Array[Point] = [new_p1, new_p2]
-        Some({ ..ann, points: new_points })
+        Some({ ..ann, points: new_points, })
       }
     Polygon =>
       if handle_idx < 0 || handle_idx >= ann.points.length() {
@@ -237,16 +236,16 @@ pub fn apply_handle_move(
         let new_points : Array[Point] = []
         for i = 0; i < ann.points.length(); i = i + 1 {
           if i == handle_idx {
-            new_points.push({ x: new_pt.x, y: new_pt.y })
+            new_points.push({ x: new_pt.x, y: new_pt.y, })
           } else {
-            new_points.push({ x: ann.points[i].x, y: ann.points[i].y })
+            new_points.push({ x: ann.points[i].x, y: ann.points[i].y, })
           }
         }
-        Some({ ..ann, points: new_points })
+        Some({ ..ann, points: new_points, })
       }
     Keypoint =>
       if handle_idx == 0 && ann.points.length() >= 1 {
-        Some({ ..ann, points: [{ x: new_pt.x, y: new_pt.y }] })
+        Some({ ..ann, points: [{ x: new_pt.x, y: new_pt.y, }], })
       } else {
         None
       }

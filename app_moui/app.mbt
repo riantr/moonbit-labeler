@@ -278,55 +278,106 @@ pub(all) enum Msg {
 ///|
 pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
   match msg {
-    PickFolder =>
-      (model, @moui.Effect::none())
+    PickFolder => (model, @moui.Effect::none())
     PickFolderResult(path) =>
       if path == "" {
-        ({ ..model, statusMessage: "Folder pick cancelled" }, @moui.Effect::none())
+        (
+          { ..model, statusMessage: "Folder pick cancelled", },
+          @moui.Effect::none(),
+        )
       } else {
-        ({ ..model, folder: path }, @moui.Effect::none())
+        ({ ..model, folder: path, }, @moui.Effect::none())
       }
-    LoadFolder(_path) =>
-      (model, @moui.Effect::none())
+    LoadFolder(_path) => (model, @moui.Effect::none())
     FolderLoaded(images, videos, folder, label_folder) =>
-      ({
-        ..model,
-        folder,
-        labelFolder: label_folder,
-        images,
-        videos,
-        currentIndex: if images.length() > 0 { 0 } else { -1 },
-        statusMessage: "Loaded",
-      }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          folder,
+          labelFolder: label_folder,
+          images,
+          videos,
+          currentIndex: if images.length() > 0 {
+            0
+          } else {
+            -1
+          },
+          statusMessage: "Loaded",
+        },
+        @moui.Effect::none(),
+      )
     LoadFolderFailed(_path, err) =>
-      ({ ..model, toastMessage: Some("Folder load failed: " + err),
-                  toastKind: Error }, @moui.Effect::none())
-    ScanClasses(_path) =>
-      (model, @moui.Effect::none())
-    ClassesLoaded(classes) =>
-      ({ ..model, classes }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          toastMessage: Some("Folder load failed: " + err),
+          toastKind: Error,
+        },
+        @moui.Effect::none(),
+      )
+    ScanClasses(_path) => (model, @moui.Effect::none())
+    ClassesLoaded(classes) => ({ ..model, classes, }, @moui.Effect::none())
     SetMode(mode) =>
-      ({ ..model, mode, draftPoints: [], bindingFromId: None }, @moui.Effect::none())
-    SetClassType(ct) => ({ ..model, classType: ct }, @moui.Effect::none())
+      (
+        { ..model, mode, draftPoints: [], bindingFromId: None, },
+        @moui.Effect::none(),
+      )
+    SetClassType(ct) => ({ ..model, classType: ct, }, @moui.Effect::none())
     SelectAnnotation(id) =>
-      ({ ..model, selectedId: id, staticLayerDirty: true }, @moui.Effect::none())
+      (
+        { ..model, selectedId: id, staticLayerDirty: true, },
+        @moui.Effect::none(),
+      )
     AddRect(_p1, _p2) =>
-      ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
-         staticLayerDirty: true, mode: Select, draftPoints: [] }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          label: { raw_json: model.label.raw_json, dirty: true, },
+          staticLayerDirty: true,
+          mode: Select,
+          draftPoints: [],
+        },
+        @moui.Effect::none(),
+      )
     AddPolygon(_pts) =>
-      ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
-         staticLayerDirty: true, mode: Select, draftPoints: [] }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          label: { raw_json: model.label.raw_json, dirty: true, },
+          staticLayerDirty: true,
+          mode: Select,
+          draftPoints: [],
+        },
+        @moui.Effect::none(),
+      )
     AddKeypoint(_pt) =>
-      ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
-         staticLayerDirty: true }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          label: { raw_json: model.label.raw_json, dirty: true, },
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     AddBinding(_from_id, _pt) =>
-      ({ ..model, bindingFromId: None, mode: Select,
-         staticLayerDirty: true }, @moui.Effect::none())
+      (
+        { ..model, bindingFromId: None, mode: Select, staticLayerDirty: true, },
+        @moui.Effect::none(),
+      )
     BeginDraft(pt) =>
-      ({ ..model, draftPoints: [pt], staticLayerDirty: true }, @moui.Effect::none())
+      (
+        { ..model, draftPoints: [pt], staticLayerDirty: true, },
+        @moui.Effect::none(),
+      )
     PushDraft(pt) =>
-      ({ ..model, draftPoints: model.draftPoints + [pt],
-         staticLayerDirty: true }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          draftPoints: model.draftPoints + [pt],
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     PopDraft => {
       let n = model.draftPoints.length()
       if n <= 1 {
@@ -336,143 +387,228 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         for i = 0; i < n - 1; i = i + 1 {
           kept.push(model.draftPoints[i])
         }
-        ({ ..model, draftPoints: kept, staticLayerDirty: true },
-          @moui.Effect::none())
+        (
+          { ..model, draftPoints: kept, staticLayerDirty: true, },
+          @moui.Effect::none(),
+        )
       }
     }
     FinishDraft =>
-      ({ ..model, draftPoints: [], mode: Select,
-         staticLayerDirty: true }, @moui.Effect::none())
+      (
+        { ..model, draftPoints: [], mode: Select, staticLayerDirty: true, },
+        @moui.Effect::none(),
+      )
     CancelDraft =>
-      ({ ..model, draftPoints: [], mode: Select,
-         staticLayerDirty: true }, @moui.Effect::none())
+      (
+        { ..model, draftPoints: [], mode: Select, staticLayerDirty: true, },
+        @moui.Effect::none(),
+      )
     DeleteAnnotation(_id) =>
-      ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
-         staticLayerDirty: true }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          label: { raw_json: model.label.raw_json, dirty: true, },
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     ModifyHandle(_id, _handle_idx, _new_pt) =>
-      ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
-         staticLayerDirty: true }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          label: { raw_json: model.label.raw_json, dirty: true, },
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     CursorMoved(img_pt, canvas_pt) =>
       // Phase 5.3 — handle drags emit ModifyHandle; otherwise
       // hit-test: prefer handles of the selected annotation, fall
       // back to body hit for selection. 12 px handle radius
       // (matches frontend canvas.js v0.2.9); 4 px body radius.
-      ({
-        ..model,
-        cursorImgPt: Some(img_pt),
-        cursorCanvasPt: Some(canvas_pt),
-        selectedId: hit_test_select(img_pt, model.annotations, model.selectedId),
-        staticLayerDirty: true,
-        dynamicLayerDirty: true,
-      }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          cursorImgPt: Some(img_pt),
+          cursorCanvasPt: Some(canvas_pt),
+          selectedId: hit_test_select(
+            img_pt,
+            model.annotations,
+            model.selectedId,
+          ),
+          staticLayerDirty: true,
+          dynamicLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     CursorLeft =>
-      ({ ..model, cursorImgPt: None, cursorCanvasPt: None,
-         dynamicLayerDirty: true }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          cursorImgPt: None,
+          cursorCanvasPt: None,
+          dynamicLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     Zoom(z) =>
-      ({ ..model, zoom: z, staticLayerDirty: true, dynamicLayerDirty: true },
-        @moui.Effect::none())
+      (
+        { ..model, zoom: z, staticLayerDirty: true, dynamicLayerDirty: true, },
+        @moui.Effect::none(),
+      )
     Pan(delta) =>
-      ({
-        ..model,
-        pan: { x: model.pan.x + delta.x, y: model.pan.y + delta.y },
-        staticLayerDirty: true,
-        dynamicLayerDirty: true,
-      }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          pan: { x: model.pan.x + delta.x, y: model.pan.y + delta.y, },
+          staticLayerDirty: true,
+          dynamicLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     AddClass(name) =>
-      ({ ..model, classes: model.classes + [{ id: name, name, is_default: false }] },
-        @moui.Effect::none())
-    UpdateClass(_id, _new_name) =>
-      (model, @moui.Effect::none())
-    DeleteClass(_id) =>
-      (model, @moui.Effect::none())
-    SetDefaultClass(_id) =>
-      (model, @moui.Effect::none())
+      (
+        {
+          ..model,
+          classes: model.classes + [{ id: name, name, is_default: false, }],
+        },
+        @moui.Effect::none(),
+      )
+    UpdateClass(_id, _new_name) => (model, @moui.Effect::none())
+    DeleteClass(_id) => (model, @moui.Effect::none())
+    SetDefaultClass(_id) => (model, @moui.Effect::none())
     SetSettingOpacity(v) =>
-      ({ ..model, statusMessage: "Opacity: " + v.to_string() },
-        @moui.Effect::none())
+      (
+        { ..model, statusMessage: "Opacity: " + v.to_string(), },
+        @moui.Effect::none(),
+      )
     SetSettingPolygonClosePx(v) =>
-      ({ ..model, statusMessage: "Polygon close: " + v.to_string() + "px" },
-        @moui.Effect::none())
+      (
+        { ..model, statusMessage: "Polygon close: " + v.to_string() + "px", },
+        @moui.Effect::none(),
+      )
     SetSettingAutosaveMs(v) =>
-      ({ ..model, statusMessage: "Autosave: " + v.to_string() + "ms" },
-        @moui.Effect::none())
+      (
+        { ..model, statusMessage: "Autosave: " + v.to_string() + "ms", },
+        @moui.Effect::none(),
+      )
     SwitchMediaKind(kind) =>
-      ({ ..model, mediaKind: kind, currentIndex: -1 }, @moui.Effect::none())
-    LoadVideoFrame(_idx) =>
-      (model, @moui.Effect::none())
-    OpResult(Ok(_op, _json)) =>
-      (model, @moui.Effect::none())
+      ({ ..model, mediaKind: kind, currentIndex: -1, }, @moui.Effect::none())
+    LoadVideoFrame(_idx) => (model, @moui.Effect::none())
+    OpResult(Ok(_op, _json)) => (model, @moui.Effect::none())
     OpResult(Err(_op, err)) =>
-      ({ ..model, toastMessage: Some("Op failed: " + err), toastKind: Error },
-        @moui.Effect::none())
-    ExportVoc(_folder) =>
-      (model, @moui.Effect::none())
-    ExportYolo(_folder) =>
-      (model, @moui.Effect::none())
+      (
+        { ..model, toastMessage: Some("Op failed: " + err), toastKind: Error, },
+        @moui.Effect::none(),
+      )
+    ExportVoc(_folder) => (model, @moui.Effect::none())
+    ExportYolo(_folder) => (model, @moui.Effect::none())
     ShowToast(message, kind) =>
-      ({ ..model, toastMessage: Some(message), toastKind: kind },
-        @moui.Effect::none())
-    DismissToast => ({ ..model, toastMessage: None }, @moui.Effect::none())
+      (
+        { ..model, toastMessage: Some(message), toastKind: kind, },
+        @moui.Effect::none(),
+      )
+    DismissToast => ({ ..model, toastMessage: None, }, @moui.Effect::none())
     SelectIndex(idx) =>
-      ({ ..model, currentIndex: idx, selectedId: None,
-         staticLayerDirty: true, dynamicLayerDirty: true }, @moui.Effect::none())
-    ReadLabelFor(_path) =>
-      (model, @moui.Effect::none())
+      (
+        {
+          ..model,
+          currentIndex: idx,
+          selectedId: None,
+          staticLayerDirty: true,
+          dynamicLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    ReadLabelFor(_path) => (model, @moui.Effect::none())
     LabelLoaded(label, path, ok) =>
-      ({ ..model, label, labelPath: path, loadedFromDisk: ok,
-         staticLayerDirty: true }, @moui.Effect::none())
-    SaveLabel =>
-      (model, @moui.Effect::none())
+      (
+        {
+          ..model,
+          label,
+          labelPath: path,
+          loadedFromDisk: ok,
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    SaveLabel => (model, @moui.Effect::none())
     LabelSaved(path, ok) =>
-      ({
-        ..model,
-        label: { raw_json: model.label.raw_json, dirty: false },
-        statusMessage: if ok { "Saved " + path } else { "Save failed: " + path },
-      }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          label: { raw_json: model.label.raw_json, dirty: false, },
+          statusMessage: if ok {
+            "Saved " + path
+          } else {
+            "Save failed: " + path
+          },
+        },
+        @moui.Effect::none(),
+      )
     MarkDirty(layer) =>
       match layer {
-        Static => ({ ..model, staticLayerDirty: true }, @moui.Effect::none())
-        Dynamic => ({ ..model, dynamicLayerDirty: true }, @moui.Effect::none())
+        Static => ({ ..model, staticLayerDirty: true, }, @moui.Effect::none())
+        Dynamic => ({ ..model, dynamicLayerDirty: true, }, @moui.Effect::none())
       }
     LoadTestImage(path, natural_w, natural_h) =>
-      ({
-        ..model,
-        imageSource: path,
-        imageNaturalSize: { x: natural_w, y: natural_h },
-        statusMessage: "Loaded test image: " + path,
-        staticLayerDirty: true,
-      }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          imageSource: path,
+          imageNaturalSize: { x: natural_w, y: natural_h, },
+          statusMessage: "Loaded test image: " + path,
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     SetFitMode(fit) =>
-      ({ ..model, fitMode: fit, staticLayerDirty: true },
-        @moui.Effect::none())
+      ({ ..model, fitMode: fit, staticLayerDirty: true, }, @moui.Effect::none())
     SetAnnotations(annotations, bindings) =>
-      ({
-        ..model,
-        annotations,
-        bindings,
-        selectedId: None,
-        dragState: None,
-        staticLayerDirty: true,
-      }, @moui.Effect::none())
+      (
+        {
+          ..model,
+          annotations,
+          bindings,
+          selectedId: None,
+          dragState: None,
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     BeginDragHandle(ann_id, handle_idx) =>
       // Phase 5.3 — start dragging handle. If the cursor is in the
       // canvas, snapshot its current image position as the drag
       // origin; otherwise defer until the first CursorMoved.
       match model.cursorImgPt {
         Some(img_pt) =>
-          ({ ..model,
-             dragState: Some({ ann_id, handle_idx, start_img_pt: img_pt }),
-             staticLayerDirty: true },
-            @moui.Effect::none())
+          (
+            {
+              ..model,
+              dragState: Some({ ann_id, handle_idx, start_img_pt: img_pt, }),
+              staticLayerDirty: true,
+            },
+            @moui.Effect::none(),
+          )
         None =>
-          ({ ..model,
-             dragState: Some({ ann_id, handle_idx, start_img_pt: { x: 0.0, y: 0.0 } }),
-             staticLayerDirty: true },
-            @moui.Effect::none())
+          (
+            {
+              ..model,
+              dragState: Some({
+                ann_id,
+                handle_idx,
+                start_img_pt: { x: 0.0, y: 0.0, },
+              }),
+              staticLayerDirty: true,
+            },
+            @moui.Effect::none(),
+          )
       }
     EndDragHandle =>
-      ({ ..model, dragState: None, staticLayerDirty: true },
-        @moui.Effect::none())
+      (
+        { ..model, dragState: None, staticLayerDirty: true, },
+        @moui.Effect::none(),
+      )
   }
 }
 

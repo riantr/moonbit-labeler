@@ -9,9 +9,9 @@
 
 import {
   "wzzc-dev/moui",
-  "wzzc-dev/moui/core" @core,
+  "wzzc-dev/moui/core",
   "wzzc-dev/moui/views",
-  "wzzc-dev/moui/views/common" @common,
+  "wzzc-dev/moui/views/common",
 }
 
 supported_targets = "native"
