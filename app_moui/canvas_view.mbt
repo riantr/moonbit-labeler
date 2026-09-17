@@ -1,29 +1,41 @@
 // app_moui/canvas_view.mbt — annotation canvas as MoUI view.
 //
-// Phase 5.4 (this session): DPR / HiDPI scaling investigation. Result:
-//   `frame : Rect` in the draw callback is in LOGICAL pixels (CSS-pixel
-//   equivalent). MoUI's host backend converts physical → logical at the
-//   `Event::Resized(SurfaceMetrics)` boundary; the rest of the layout,
-//   paint, and event pipeline operates in logical coordinates only.
-//   See `_build/design/dpi-investigation.md` for the full evidence
-//   chain. Application code does NOT need any DPR scaling.
+// Phase 5.5 (this session): split the single canvas into two stacked
+// canvas sub-views so the bulk render (background + image + all
+// annotations) sits on a "static" layer and the moving overlay
+// (selected-annotation handles + cursor crosshair) sits on a
+// "dynamic" layer. This mirrors `frontend/src/canvas.js`'s two
+// offscreen-canvas design — the static layer is the same on every
+// frame until the user pans/zooms/loads an image / mutates an
+// annotation, so we can repaint only the dynamic layer on cursor
+// moves. MoUI doesn't yet honour a custom paint cache_key from
+// `views.canvas(...)` (it always declares `paint=Uncacheable`), so
+// the actual GPU/CPU savings require a follow-up that wraps the
+// static sub-view in a custom ViewNode with `paint=Exact(key)` —
+// that's 5.5.x. This commit delivers the layer *separation* (logical
+// correctness, type-level guarantee that the dynamic layer doesn't
+// redraw annotations and vice-versa).
 //
+// Phase 5.4 (prior session): DPR / HiDPI scaling investigation —
+// no-op, see docs/moui-dpi-investigation.md.
 // Phase 5.3 (prior session): draw annotations + selected-handle markers.
 // Phase 5.2 (prior session): paint an actual image source via DrawImage
 // (fit-contain + pan/zoom). Phase 5.1 (prior session): minimal
 // placeholder + cursor crosshair.
 //
 // What this canvas draws, in order:
-//   1. Neutral background (#1f1f1f).
-//   2. If model.imageSource == "", 320×240 placeholder rect; else
-//      emits a DrawImage with fit-contain math + pan/zoom applied.
-//   3. Each annotation in model.annotations:
-//      - Rect: red stroke rect (yellow stroke if selected).
-//      - Polygon: yellow stroke polyline (cyan stroke if selected).
-//      - Keypoint: 4 px filled circle (white if selected).
-//   4. For the selected annotation only, draw the 8 (rect) / N
-//      (polygon) / 1 (keypoint) handles as small filled squares.
-//   5. Cursor crosshair (when cursorImgPt is Some).
+//   Static layer (background → image OR placeholder → annotations):
+//     1. Neutral background (#1f1f1f).
+//     2. If model.imageSource == "", 320×240 placeholder rect; else
+//        emits a DrawImage with fit-contain math + pan/zoom applied.
+//     3. Each annotation in model.annotations:
+//        - Rect: red stroke rect (yellow stroke if selected).
+//        - Polygon: yellow stroke polyline (cyan stroke if selected).
+//        - Keypoint: 4 px filled circle (white if selected).
+//   Dynamic layer (selected handles + cursor crosshair):
+//     4. For the selected annotation only, draw the 8 (rect) / N
+//        (polygon) / 1 (keypoint) handles as small filled squares.
+//     5. Cursor crosshair (when cursorImgPt is Some).
 //
 // Drag flow (wiring side is in update()):
 //   cursor drag emits CursorMoved → hit_test_handle first (radius
@@ -31,6 +43,8 @@
 //   send BeginDragHandle. While dragState is Some, every
 //   CursorMoved dispatches ModifyHandle via Effect::send, which
 //   apply_handle_move folds back into the annotation's points array.
+//   The on_drag handler is attached to the OUTER stack view so both
+//   sub-layers receive consistent pointer events.
 //
 // Coordinate space conventions (also see dpi-investigation.md):
 //   - `frame : Rect` (draw callback arg)        → logical px
@@ -45,10 +59,11 @@
 //   - All `@common.fill_rect / stroke_rect / draw_image` size/width
 //     arguments                                 → logical px
 //
-// Phase 5.3 does NOT port:
-//   - image-header probe (caller passes natural size; 5.3 keeps the
+// Phase 5.5 does NOT port:
+//   - actual cached paint for the static layer (5.5.x: custom
+//     ViewNode with `paint=Exact(static_key)`)
+//   - image-header probe (caller passes natural size; 5.5 keeps the
 //     5.2 "supply natural_w/h at LoadTestImage time" convention)
-//   - static + dynamic layer composition (single layer for now)
 //   - wheel zoom + drag pan input plumbing (Zoom/Pan Msgs are wired
 //     in update() but no input plumbing — that's 5.11)
 //   - midpoint handle drag refinement (corner handles work; midpoints
@@ -57,92 +72,26 @@
 //     fill_rect sequence; 5.7 will add draw_path)
 
 ///|
-/// Annotation canvas view. Returns a MoUI view that paints a neutral
-/// background + (optionally) a real image + (optionally) annotations
-/// + selected handles + cursor crosshair. The draw callback receives
-/// `frame : @core.Rect` which is the canvas's actual viewport —
-/// MoUI layout guarantees this is the right size on every paint.
+/// Annotation canvas view (top-level). Returns a MoUI view that paints
+/// a neutral background + (optionally) a real image + (optionally)
+/// annotations + selected handles + cursor crosshair, split across two
+/// stacked canvas sub-views.
+///
+/// The outer view is a `@layout.stack` whose children are drawn at the
+/// same origin (z-ordered: first child painted first → under; last
+/// child painted last → on top). We put the static layer first
+/// (under) and the dynamic layer second (over).
+///
+/// `on_drag` is attached to the OUTER view so pointer events on
+/// either sub-view funnel through one handler. The canvas-view model
+/// state mutation is still single-source-of-truth (`model.cursorImgPt`,
+/// `model.selectedId`, etc.), so there's no risk of the two layers
+/// disagreeing about what's selected.
 pub fn canvas_view(model : Model) -> @moui.View[Msg] {
-  let measure = fn(constraints : @core.Constraints) -> @core.Size {
-    constraints.max
-  }
-  // draw: background → image OR placeholder → annotations → handles
-  // → cursor crosshair.
-  let draw = fn(pctx, frame : @core.Rect) -> Unit {
-    // 1. Neutral background.
-    @common.fill_rect(
-      pctx,
-      frame,
-      @core.Color::rgba(r=0.121, g=0.121, b=0.121, a=1.0),
-    )
-    // 2. Image OR placeholder.
-    if model.imageSource == "" {
-      let placeholder : @core.Rect = @core.Rect::new(
-        x=frame.origin.x + (frame.size.width - 320.0) / 2.0,
-        y=frame.origin.y + (frame.size.height - 240.0) / 2.0,
-        width=320.0,
-        height=240.0,
-      )
-      @common.fill_rect(
-        pctx,
-        placeholder,
-        @core.Color::rgba(r=0.18, g=0.18, b=0.18, a=1.0),
-      )
-      @common.stroke_rect(
-        pctx,
-        placeholder,
-        @core.Color::rgba(r=0.4, g=0.4, b=0.4, a=1.0),
-        1.0,
-      )
-    } else {
-      let dst : @core.Rect = fit_contain_rect(
-        frame,
-        model.imageNaturalSize.x,
-        model.imageNaturalSize.y,
-      )
-      let zoomed : @core.Rect = @core.Rect::new(
-        x=dst.origin.x + model.pan.x,
-        y=dst.origin.y + model.pan.y,
-        width=dst.size.width * model.zoom,
-        height=dst.size.height * model.zoom,
-      )
-      @common.draw_image(pctx, {
-        source: model.imageSource,
-        frame: zoomed,
-        opacity: 1.0,
-        fit: model.fitMode,
-      })
-    }
-    // 3. Annotations (drawn in iteration order; later wins z-order).
-    for ann in model.annotations {
-      let is_sel = match model.selectedId {
-        Some(id) => id == ann.id
-        None => false
-      }
-      draw_annotation(pctx, ann, is_sel, model.pan, model.zoom)
-    }
-    // 4. Selected-annotation handles.
-    match model.selectedId {
-      Some(sel_id) =>
-        for ann in model.annotations {
-          if ann.id == sel_id {
-            draw_handles(pctx, ann, model.pan, model.zoom)
-          }
-        }
-      None => ()
-    }
-    // 5. Cursor crosshair.
-    match model.cursorImgPt {
-      Some(img_pt) => draw_cursor_crosshair(pctx, img_pt, model.pan, model.zoom)
-      None => ()
-    }
-  }
-  let canvas = @views.canvas(
-    measure~,
-    draw~,
-    semantics_label="Annotation canvas",
-  )
-  canvas.on_drag(fn(ev) {
+  let static_layer = static_layer_view(model)
+  let dynamic_layer = dynamic_layer_view(model)
+  let stacked = @layout.stack([static_layer, dynamic_layer])
+  stacked.on_drag(fn(ev) {
     CursorMoved(
       {
         x: (ev.position.x - model.pan.x) / model.zoom,
@@ -151,6 +100,141 @@ pub fn canvas_view(model : Model) -> @moui.View[Msg] {
       { x: ev.position.x, y: ev.position.y, },
     )
   })
+}
+
+///|
+/// Static layer canvas: background + image (or placeholder) +
+/// annotations. Conceptually the "world" that only changes when the
+/// image source, pan/zoom transform, or annotation set mutates. The
+/// draw callback receives `frame : @core.Rect` which is the canvas's
+/// actual viewport — MoUI layout guarantees this is the right size
+/// on every paint.
+fn static_layer_view(model : Model) -> @moui.View[Msg] {
+  let measure = fn(constraints : @core.Constraints) -> @core.Size {
+    constraints.max
+  }
+  let draw = fn(pctx, frame : @core.Rect) -> Unit {
+    draw_static_layer(pctx, model, frame)
+  }
+  @views.canvas(measure~, draw~, semantics_label="Annotation canvas (static)")
+}
+
+///|
+/// Dynamic layer canvas: selected-annotation handles + cursor
+/// crosshair. Conceptually the "overlay" that repaints on every
+/// cursor move / drag frame. Sits on top of the static layer via
+/// `@layout.stack`.
+///
+/// Note: in 5.5 the dynamic layer is a separate canvas sub-view so
+/// the API surface reflects the layer split, but the runtime
+/// repaints both sub-views every frame (both `views.canvas` views
+/// declare `paint=Uncacheable`). The runtime paint-cache optimization
+/// lands in 5.5.x via a custom ViewNode with `paint=Exact(key)`.
+fn dynamic_layer_view(model : Model) -> @moui.View[Msg] {
+  let measure = fn(constraints : @core.Constraints) -> @core.Size {
+    constraints.max
+  }
+  let draw = fn(pctx, frame : @core.Rect) -> Unit {
+    draw_dynamic_layer(pctx, model, frame)
+  }
+  @views.canvas(measure~, draw~, semantics_label="Annotation canvas (dynamic)")
+}
+
+///|
+/// Issue the static layer's DrawCommands into `pctx`. Public for
+/// blackbox tests (so 5.5 layer-split tests can inspect the
+/// command stream without driving MoUI's full paint pass — which
+/// isn't wired to a renderer until phase 10).
+pub fn draw_static_layer(
+  pctx : @common.PaintContext,
+  model : Model,
+  frame : @core.Rect,
+) -> Unit {
+  // 1. Neutral background.
+  @common.fill_rect(
+    pctx,
+    frame,
+    @core.Color::rgba(r=0.121, g=0.121, b=0.121, a=1.0),
+  )
+  // 2. Image OR placeholder.
+  if model.imageSource == "" {
+    let placeholder : @core.Rect = @core.Rect::new(
+      x=frame.origin.x + (frame.size.width - 320.0) / 2.0,
+      y=frame.origin.y + (frame.size.height - 240.0) / 2.0,
+      width=320.0,
+      height=240.0,
+    )
+    @common.fill_rect(
+      pctx,
+      placeholder,
+      @core.Color::rgba(r=0.18, g=0.18, b=0.18, a=1.0),
+    )
+    @common.stroke_rect(
+      pctx,
+      placeholder,
+      @core.Color::rgba(r=0.4, g=0.4, b=0.4, a=1.0),
+      1.0,
+    )
+  } else {
+    let dst : @core.Rect = fit_contain_rect(
+      frame,
+      model.imageNaturalSize.x,
+      model.imageNaturalSize.y,
+    )
+    let zoomed : @core.Rect = @core.Rect::new(
+      x=dst.origin.x + model.pan.x,
+      y=dst.origin.y + model.pan.y,
+      width=dst.size.width * model.zoom,
+      height=dst.size.height * model.zoom,
+    )
+    @common.draw_image(pctx, {
+      source: model.imageSource,
+      frame: zoomed,
+      opacity: 1.0,
+      fit: model.fitMode,
+    })
+  }
+  // 3. Annotations (drawn in iteration order; later wins z-order).
+  for ann in model.annotations {
+    let is_sel = match model.selectedId {
+      Some(id) => id == ann.id
+      None => false
+    }
+    draw_annotation(pctx, ann, is_sel, model.pan, model.zoom)
+  }
+}
+
+///|
+/// Issue the dynamic layer's DrawCommands into `pctx`. Public for
+/// blackbox tests. The dynamic layer does NOT paint the background,
+/// image, placeholder, or annotation bodies — only the selected
+/// handles + the cursor crosshair. The alpha channel is preserved
+/// (no Clear) so the static layer shows through.
+pub fn draw_dynamic_layer(
+  pctx : @common.PaintContext,
+  model : Model,
+  frame : @core.Rect,
+) -> Unit {
+  // 1. Selected-annotation handles.
+  match model.selectedId {
+    Some(sel_id) =>
+      for ann in model.annotations {
+        if ann.id == sel_id {
+          draw_handles(pctx, ann, model.pan, model.zoom)
+        }
+      }
+    None => ()
+  }
+  // 2. Cursor crosshair.
+  match model.cursorImgPt {
+    Some(img_pt) => draw_cursor_crosshair(pctx, img_pt, model.pan, model.zoom)
+    None => ()
+  }
+  // Reference `frame` so the param shape matches the canvas
+  // draw signature; the dynamic layer is full-frame and lets
+  // the static layer's background show through every non-handle
+  // pixel.
+  ignore(frame)
 }
 
 ///|

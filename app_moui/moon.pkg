@@ -12,6 +12,7 @@ import {
   "wzzc-dev/moui/core",
   "wzzc-dev/moui/views",
   "wzzc-dev/moui/views/common",
+  "wzzc-dev/moui/views/layout",
 }
 
 supported_targets = "native"

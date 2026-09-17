@@ -1,5 +1,14 @@
 // app_moui/canvas_view_test.mbt — blackbox tests for canvas_view helpers.
 //
+// Phase 5.5: add blackbox tests for the static + dynamic layer split.
+// We don't drive MoUI's actual paint pass (no renderer is wired in
+// 5.5; that lands in phase 10). Instead we test the *contract* of
+// the split: img_to_screen is pan/zoom-correct, the cursor crosshair
+// only appears when cursorImgPt is Some, and handle-marker positions
+// are pure functions of (selected annotation, pan, zoom). The
+// actual stack / ViewNode paint-channel wiring is verified at
+// compile time (moon check) and via the renderer in phase 10.
+//
 // Phase 5.4: add a DPR-invariance test for fit_contain_rect (the
 // contract that makes HiDPI display handling transparent — see
 // _build/design/dpi-investigation.md).
@@ -156,4 +165,192 @@ test "hit_test_select — image-natural coords make hit-test DPR-invariant" {
     radius,
   )
   inspect(hit, content="Some((ann-1, 0))")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.5 — static + dynamic layer split tests
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.5 — count the kinds of DrawCommands emitted by each layer.
+/// Used to assert the static/dynamic split: the static layer must
+/// issue at least one FillRect (background) and one FillRect
+/// (placeholder), but ZERO DrawImage / cursor-crosshair stroke
+/// pairs; the dynamic layer must NOT issue any background FillRect.
+fn count_draw_kinds(cmds : Array[@core.DrawCommand]) -> (Int, Int, Int) {
+  let mut fill = 0
+  let mut stroke = 0
+  let mut draw_image = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::FillRect(_) => fill = fill + 1
+      @core.DrawCommand::StrokeRect(_) => stroke = stroke + 1
+      @core.DrawCommand::DrawImage(_) => draw_image = draw_image + 1
+      _ => ()
+    }
+  }
+  (fill, stroke, draw_image)
+}
+
+///|
+/// Phase 5.5 — when imageSource == "" (placeholder mode), the
+/// static layer emits background + placeholder FillRect +
+/// placeholder StrokeRect. There must be no DrawImage and no
+/// cursor crosshair (crosshair lives on the dynamic layer).
+test "static layer — placeholder mode: background + placeholder rect, no image, no crosshair" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    selectedId: Some("ann-1"),
+    cursorImgPt: Some({ x: 50.0, y: 50.0, }),
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let (fill, stroke, draw_image) = count_draw_kinds(cmds)
+  // Background FillRect + placeholder FillRect = 2 FillRects;
+  // placeholder border StrokeRect + annotation stroke_rect = 2
+  // StrokeRects (one per non-fill outline); 0 DrawImages.
+  assert_eq(fill, 2)
+  assert_eq(stroke, 2)
+  assert_eq(draw_image, 0)
+}
+
+///|
+/// Phase 5.5 — when imageSource is non-empty, the static layer
+/// emits background FillRect + 1 DrawImage + annotation strokes.
+/// No cursor crosshair (crosshair lives on the dynamic layer).
+test "static layer — image mode: background + DrawImage + annotation strokes, no crosshair" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "/fake/path.jpg",
+    imageNaturalSize: { x: 1920.0, y: 1080.0, },
+    selectedId: None,
+    cursorImgPt: Some({ x: 50.0, y: 50.0, }),
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let (fill, stroke, draw_image) = count_draw_kinds(cmds)
+  // 1 FillRect (background only — no placeholder FillRect in image mode)
+  // + 1 DrawImage (the source image) + 1 StrokeRect (annotation rect).
+  assert_eq(fill, 1)
+  assert_eq(stroke, 1)
+  assert_eq(draw_image, 1)
+}
+
+///|
+/// Phase 5.5 — the dynamic layer must NOT draw the background,
+/// image, placeholder, or any annotation body strokes. It must
+/// only draw handles (when selectedId is Some) and/or the cursor
+/// crosshair (when cursorImgPt is Some). With both set, we expect:
+///   - 0 background FillRect
+///   - 8 handle FillRects (rect has 8 handles)
+///   - 2 crosshair StrokeRects (vertical + horizontal bars)
+test "dynamic layer — selected + cursor: 8 handles + 2 crosshair strokes, no background" {
+  let model : Model = {
+    ..Model::new(),
+    selectedId: Some("ann-1"),
+    cursorImgPt: Some({ x: 50.0, y: 50.0, }),
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_dynamic_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let (fill, stroke, draw_image) = count_draw_kinds(cmds)
+  // 8 handle FillRects; 2 crosshair StrokeRects; no background
+  // FillRect (the dynamic layer is transparent over the static
+  // layer).
+  assert_eq(fill, 8)
+  assert_eq(stroke, 2)
+  assert_eq(draw_image, 0)
+}
+
+///|
+/// Phase 5.5 — when nothing is selected AND no cursor, the dynamic
+/// layer is empty. This is the steady-state during idle (the user
+/// isn't hovering over the canvas). The static layer still emits
+/// its full background+image+annotations, but the dynamic layer
+/// should produce ZERO DrawCommands.
+test "dynamic layer — empty when no selection and no cursor" {
+  let model : Model = { ..Model::new(), selectedId: None, cursorImgPt: None, }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_dynamic_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  assert_eq(cmds.length(), 0)
+}
+
+///|
+/// Phase 5.5 — even when annotations exist, if selectedId points
+/// to a non-existent annotation, the dynamic layer emits nothing
+/// for handles. Only the cursor crosshair (2 StrokeRects).
+test "dynamic layer — selectedId not in annotations → no handles drawn" {
+  let model : Model = {
+    ..Model::new(),
+    selectedId: Some("nonexistent"),
+    cursorImgPt: Some({ x: 50.0, y: 50.0, }),
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_dynamic_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let (fill, stroke, _) = count_draw_kinds(cmds)
+  assert_eq(fill, 0)
+  assert_eq(stroke, 2)
 }
