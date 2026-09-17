@@ -50,14 +50,45 @@ pub(all) enum Layer {
 
 ///|
 pub(all) enum OpResult {
-  Ok(String, String)            // op name, result json (raw text)
-  Err(String, String)            // op name, error message
+  Ok(String, String) // op name, result json (raw text)
+  Err(String, String) // op name, error message
 } derive(Debug)
 
 ///|
 pub(all) struct Point {
   x : Double
   y : Double
+} derive(Debug)
+
+///|
+pub(all) enum Shape {
+  Rect
+  Polygon
+  Keypoint
+} derive(Debug)
+
+///|
+pub(all) struct Annotation {
+  id : String
+  shape : Shape
+  points : Array[Point]
+} derive(Debug)
+
+///|
+pub(all) struct Binding {
+  id : String
+  from : String
+  to : String
+} derive(Debug)
+
+///|
+/// Active drag state — when Some, the next CursorMoved should
+/// move the (id, handle_idx) handle instead of selecting a new
+/// annotation. Begun by BeginDragHandle, ended by EndDragHandle.
+pub(all) struct DragState {
+  ann_id : String
+  handle_idx : Int
+  start_img_pt : Point
 } derive(Debug)
 
 ///|
@@ -110,6 +141,10 @@ pub(all) struct Model {
   imageSource : String
   imageNaturalSize : Point
   fitMode : @core.ImageFit
+  // Phase 5.3 — annotations + bindings + active handle drag.
+  annotations : Array[Annotation]
+  bindings : Array[Binding]
+  dragState : DragState?
   cursorImgPt : Point?
   cursorCanvasPt : Point?
   zoom : Double
@@ -130,7 +165,7 @@ pub fn Model::new() -> Model {
     videos: [],
     currentIndex: -1,
     mediaKind: Image,
-    label: { raw_json: "{}", dirty: false },
+    label: { raw_json: "{}", dirty: false, },
     labelPath: "",
     loadedFromDisk: false,
     mode: Select,
@@ -144,12 +179,18 @@ pub fn Model::new() -> Model {
     // time. For the default 800x600 placeholder we mirror the old
     // canvas_view.mbt size.
     imageSource: "",
-    imageNaturalSize: { x: 800.0, y: 600.0 },
+    imageNaturalSize: { x: 800.0, y: 600.0, },
     fitMode: @core.ImageFit::Contain,
+    // Phase 5.3 — annotations + bindings live in model so hit-test
+    // can run without re-parsing the raw label JSON on every mouse
+    // move. SetAnnotations syncs them from the parsed JSON.
+    annotations: [],
+    bindings: [],
+    dragState: None,
     cursorImgPt: None,
     cursorCanvasPt: None,
     zoom: 1.0,
-    pan: { x: 0.0, y: 0.0 },
+    pan: { x: 0.0, y: 0.0, },
     staticLayerDirty: true,
     dynamicLayerDirty: true,
     toastMessage: None,
@@ -211,6 +252,17 @@ pub(all) enum Msg {
   // SetFitMode(fit) — switch between Contain / Cover / Stretch.
   LoadTestImage(String, Double, Double)
   SetFitMode(@core.ImageFit)
+  // Phase 5.3 — annotation set / handle drag.
+  // SetAnnotations(annotations, bindings) — bulk-replace the model's
+  //   annotation set + binding list. Used to sync the model after
+  //   parsing the label JSON (parser added in 5.x).
+  // BeginDragHandle(ann_id, handle_idx) — start dragging the n-th
+  //   handle of the given annotation. While dragState is Some, every
+  //   CursorMoved emits ModifyHandle instead of hit-testing.
+  // EndDragHandle — release the active drag (no-op when None).
+  SetAnnotations(Array[Annotation], Array[Binding])
+  BeginDragHandle(String, Int)
+  EndDragHandle
   OpResult(OpResult)
   ExportVoc(String)
   ExportYolo(String)
@@ -301,10 +353,16 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
       ({ ..model, label: { raw_json: model.label.raw_json, dirty: true },
          staticLayerDirty: true }, @moui.Effect::none())
     CursorMoved(img_pt, canvas_pt) =>
+      // Phase 5.3 — handle drags emit ModifyHandle; otherwise
+      // hit-test: prefer handles of the selected annotation, fall
+      // back to body hit for selection. 12 px handle radius
+      // (matches frontend canvas.js v0.2.9); 4 px body radius.
       ({
         ..model,
         cursorImgPt: Some(img_pt),
         cursorCanvasPt: Some(canvas_pt),
+        selectedId: hit_test_select(img_pt, model.annotations, model.selectedId),
+        staticLayerDirty: true,
         dynamicLayerDirty: true,
       }, @moui.Effect::none())
     CursorLeft =>
@@ -387,6 +445,34 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
     SetFitMode(fit) =>
       ({ ..model, fitMode: fit, staticLayerDirty: true },
         @moui.Effect::none())
+    SetAnnotations(annotations, bindings) =>
+      ({
+        ..model,
+        annotations,
+        bindings,
+        selectedId: None,
+        dragState: None,
+        staticLayerDirty: true,
+      }, @moui.Effect::none())
+    BeginDragHandle(ann_id, handle_idx) =>
+      // Phase 5.3 — start dragging handle. If the cursor is in the
+      // canvas, snapshot its current image position as the drag
+      // origin; otherwise defer until the first CursorMoved.
+      match model.cursorImgPt {
+        Some(img_pt) =>
+          ({ ..model,
+             dragState: Some({ ann_id, handle_idx, start_img_pt: img_pt }),
+             staticLayerDirty: true },
+            @moui.Effect::none())
+        None =>
+          ({ ..model,
+             dragState: Some({ ann_id, handle_idx, start_img_pt: { x: 0.0, y: 0.0 } }),
+             staticLayerDirty: true },
+            @moui.Effect::none())
+      }
+    EndDragHandle =>
+      ({ ..model, dragState: None, staticLayerDirty: true },
+        @moui.Effect::none())
   }
 }
 
@@ -427,8 +513,8 @@ pub fn view(model : Model) -> @moui.View[Msg] {
 pub fn program() -> @moui.Program[Model, Msg] {
   @moui.Program::new(
     init=() => (Model::new(), @moui.Effect::none()),
-    update=update,
-    view=view,
+    update~,
+    view~,
   )
 }
 
