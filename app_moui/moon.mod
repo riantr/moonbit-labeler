@@ -4,6 +4,8 @@ version = "0.1.0"
 
 import {
   "wzzc-dev/moui@0.1.12",
+  "moonbitlang/async@0.21.2",
+  "riantr/moonbit_image@0.3.4",
 }
 
 readme = "README.mbt.md"

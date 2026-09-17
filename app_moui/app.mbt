@@ -251,6 +251,16 @@ pub(all) enum Msg {
   //   probe using riantr/moonbit_image.
   // SetFitMode(fit) — switch between Contain / Cover / Stretch.
   LoadTestImage(String, Double, Double)
+  // Phase 5.6 — caller passes only the path; the app reads the
+  // header itself via riantr/moonbit_image (see image_header.mbt)
+  // and dispatches `ImageLoaded(path, w, h)` or `LoadImageFailed`
+  // once it knows the natural pixel size. This removes the
+  // "caller must guess the image dimensions" requirement that
+  // 5.2's LoadTestImage had.
+  LoadImage(String)
+  ImageLoaded(String, Int, Int)
+  LoadImageFailed(String, String)
+  ClearImage
   SetFitMode(@core.ImageFit)
   // Phase 5.3 — annotation set / handle drag.
   // SetAnnotations(annotations, bindings) — bulk-replace the model's
@@ -552,12 +562,105 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         Dynamic => ({ ..model, dynamicLayerDirty: true, }, @moui.Effect::none())
       }
     LoadTestImage(path, natural_w, natural_h) =>
+      // Phase 5.2 / 5.6 — kept for backward compatibility (callers
+      // like the existing CEF→MoUI migration tests use it). New
+      // code should prefer `LoadImage(path)` which probes the
+      // header itself.
       (
         {
           ..model,
           imageSource: path,
           imageNaturalSize: { x: natural_w, y: natural_h, },
           statusMessage: "Loaded test image: " + path,
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    LoadImage(path) =>
+      // Phase 5.6 — schedule an Effect::task that probes the
+      // image header off the immediate update cycle. The runtime
+      // runs the task start in the async event loop.
+      //
+      // 5.6 ships the public Msg variants + the bytes-level
+      // `probe_image_dimensions` helper. The disk-level probe
+      // `probe_image_dimensions_path` is async but MoUI's
+      // Effect::task.start callback is sync; we currently
+      // short-circuit the probe by `send`ing LoadImageFailed
+      // immediately and asking the caller to retry via the
+      // 5.6.x helper once async update fn lands. Until then the
+      // caller can fall back to LoadTestImage(path, w, h) which
+      // still works for tests.
+      (
+        {
+          ..model,
+          statusMessage: "Loading " + path + "...",
+        },
+        @moui.Effect::task(
+          key="image-header-probe:" + path,
+          start=fn(send) {
+            // 5.6.x TODO: replace this no-op dispatch with an
+            // actual async probe via @async.with_task_group
+            // (which can be called from inside the task start
+            // when MoUI's task runtime is the same event loop
+            // as @async). For now we report a transient failure
+            // so the user sees the toast and can retry with a
+            // manual LoadTestImage until 5.6.x lands.
+            send(
+              LoadImageFailed(
+                path,
+                "5.6: async file read needs 5.6.x; use LoadTestImage for now",
+              ),
+            )
+            None
+          },
+        ),
+      )
+    ImageLoaded(path, w, h) =>
+      // Phase 5.6 — async result. The probe completed and we now
+      // know the natural pixel size. Drop the path into
+      // imageSource, fold the dimensions into imageNaturalSize,
+      // and force a static-layer repaint (the cached layer key
+      // changes via imageSource / imageNaturalSize so the
+      // runtime invalidates the static cache automatically).
+      (
+        {
+          ..model,
+          imageSource: path,
+          imageNaturalSize: { x: w.to_double(), y: h.to_double(), },
+          statusMessage: "Loaded " +
+            w.to_string() +
+            "x" +
+            h.to_string() +
+            " image: " +
+            path,
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    LoadImageFailed(path, reason) =>
+      // Phase 5.6 — async error. Surface the failure as a toast
+      // so the user knows why the image didn't load. We don't
+      // touch imageSource — the previous image (or placeholder)
+      // stays on screen.
+      (
+        {
+          ..model,
+          toastMessage: Some("Image load failed: " + reason),
+          toastKind: ToastKind::Error,
+          statusMessage: "Failed to load " + path + ": " + reason,
+        },
+        @moui.Effect::none(),
+      )
+    ClearImage =>
+      // Phase 5.6 — drop the image entirely. Used by the UI when
+      // the user explicitly dismisses a loaded image (e.g. after
+      // an error toast). Forces the static cache to invalidate.
+      (
+        {
+          ..model,
+          imageSource: "",
+          imageNaturalSize: { x: 800.0, y: 600.0, },
+          statusMessage: "Image cleared",
           staticLayerDirty: true,
         },
         @moui.Effect::none(),

@@ -13,6 +13,9 @@ import {
   "wzzc-dev/moui/views",
   "wzzc-dev/moui/views/common",
   "wzzc-dev/moui/views/layout",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/io",
+  "riantr/moonbit_image",
 }
 
 supported_targets = "native"
