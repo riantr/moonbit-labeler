@@ -577,19 +577,17 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         @moui.Effect::none(),
       )
     LoadImage(path) =>
-      // Phase 5.6 — schedule an Effect::task that probes the
-      // image header off the immediate update cycle. The runtime
-      // runs the task start in the async event loop.
-      //
-      // 5.6 ships the public Msg variants + the bytes-level
-      // `probe_image_dimensions` helper. The disk-level probe
-      // `probe_image_dimensions_path` is async but MoUI's
-      // Effect::task.start callback is sync; we currently
-      // short-circuit the probe by `send`ing LoadImageFailed
-      // immediately and asking the caller to retry via the
-      // 5.6.x helper once async update fn lands. Until then the
-      // caller can fall back to LoadTestImage(path, w, h) which
-      // still works for tests.
+      // Phase 5.6.x — dispatch an Effect::task that probes the
+      // image header. Currently the sync wrapper
+      // probe_image_dimensions_path returns None because MoonBit
+      // 0.1.20260904 + MoUI 0.1.12 don't expose a public
+      // sync→async bridge (see image_header.mbt doc for the
+      // three paths forward: async update fn, public
+      // coroutine.spawn, or documented Pointer FFI). Until one
+      // of those lands, LoadImage dispatches a transient
+      // LoadImageFailed so the user sees a clean error rather
+      // than a crash, and the loadable image path goes through
+      // LoadTestImage (still supported as a deprecated shim).
       (
         {
           ..model,
@@ -598,19 +596,30 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         @moui.Effect::task(
           key="image-header-probe:" + path,
           start=fn(send) {
-            // 5.6.x TODO: replace this no-op dispatch with an
-            // actual async probe via @async.with_task_group
-            // (which can be called from inside the task start
-            // when MoUI's task runtime is the same event loop
-            // as @async). For now we report a transient failure
-            // so the user sees the toast and can retry with a
-            // manual LoadTestImage until 5.6.x lands.
-            send(
-              LoadImageFailed(
-                path,
-                "5.6: async file read needs 5.6.x; use LoadTestImage for now",
-              ),
-            )
+            match probe_image_dimensions_path(path) {
+              Some((w, h)) =>
+                if w > 0 && h > 0 {
+                  send(ImageLoaded(path, w, h))
+                } else {
+                  send(
+                    LoadImageFailed(
+                      path,
+                      "image has zero width or height",
+                    ),
+                  )
+                }
+              None =>
+                // 5.6.x: this branch is hit when the sync wrapper
+                // can't call @fs.read_file. The async helper
+                // probe_image_dimensions_path_async exists for the
+                // future async-update-fn path.
+                send(
+                  LoadImageFailed(
+                    path,
+                    "5.6.x: sync wrapper can't bridge to async fs; use LoadTestImage or wait for async update fn",
+                  ),
+                )
+            }
             None
           },
         ),
