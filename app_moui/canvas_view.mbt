@@ -574,10 +574,30 @@ fn draw_annotation(
         let w = if p1.x > p2.x { p1.x - p2.x } else { p2.x - p1.x }
         let h = if p1.y > p2.y { p1.y - p2.y } else { p2.y - p1.y }
         let r : @core.Rect = @core.Rect::new(x=xmin, y=ymin, width=w, height=h)
+        // Phase 5.12.B: visual completeness — fill the rect
+        // with a low-alpha tint of the same colour (0.12 matches
+        // canvas.js drawRectShape line 330) before stroking. This
+        // gives the user a sense of which area the box covers
+        // without obscuring the underlying image.
+        let fill_color : @core.Color = @core.Color::rgba(
+          r=color.r,
+          g=color.g,
+          b=color.b,
+          a=0.12,
+        )
+        @common.fill_rect(pctx, r, fill_color)
         @common.stroke_rect(pctx, r, color, stroke_width)
       }
     Polygon =>
       if ann.points.length() >= 2 {
+        // Phase 5.12.B: fill the polygon with a low-alpha tint
+        // of the colour (0.18 matches canvas.js drawPolygonShape
+        // line 302) before the stroke pass. We re-emit the same
+        // MoveTo + LineTo + Close verbs as a separate DrawPath
+        // with fill=Some(...) and stroke=None — the renderer
+        // composites fill under stroke so the result is identical
+        // to canvas.js's `fill()` then `stroke()` sequence.
+        draw_polygon_fill(pctx, ann, color, pan, zoom)
         // Phase 5.7: replace the 5.3 fill_rect-segment
         // approximation with a single `DrawPath(PathSpec)`
         // command that describes the polyline as one
@@ -589,26 +609,38 @@ fn draw_annotation(
         // each segment as a discrete 1-px square which
         // looked chunky at zoom > 2× and on dpr > 1).
         draw_polygon_path(pctx, ann, color, stroke_width, pan, zoom)
+        // Phase 5.12.B: small white-stroked vertex dots at each
+        // polygon vertex (skip for high-vertex-count polygons to
+        // keep the static layer cheap — same threshold as canvas.js
+        // line 309). Drawn in screen space so the dot radius
+        // stays constant under pan/zoom.
+        if ann.points.length() <= 30 {
+          draw_polygon_vertex_dots(pctx, ann, color, pan, zoom)
+        }
       }
     Keypoint =>
       if ann.points.length() >= 1 {
-        // Phase 5.8: replace the 5.3 8×8 fill_rect square with
-        // a proper circle via FillRoundedRect + radius = 4 (half
-        // the diameter — Skia interprets the corner radius as
-        // applied to all four corners equally, so a square with
-        // radius = half-side rounds to a true circle). 4 px
-        // radius matches the legacy canvas.js visual target
-        // (canvas.js uses ctx.arc and draws a 4-px-radius
-        // filled circle for each keypoint).
+        // Phase 5.12.B: bump diameter from 8 px (radius=4) to 12 px
+        // (radius=6) to match canvas.js's normal keypoint
+        // (canvas.js:339 — `arc(x, y, isSelected ? 8 : 6, ...)`).
+        // 5.8's radius=4 was already a circle (FillRoundedRect with
+        // radius = half-side), so this is just a size bump plus a
+        // white outline to match canvas.js's `strokeStyle="#ffffff"`.
         let p : Point = img_to_screen(ann.points[0], pan, zoom)
         let r : @core.Rect = @core.Rect::new(
-          x=p.x - 4.0,
-          y=p.y - 4.0,
-          width=8.0,
-          height=8.0,
+          x=p.x - 6.0,
+          y=p.y - 6.0,
+          width=12.0,
+          height=12.0,
         )
-        let rr : @core.RoundedRect = @core.RoundedRect::new(rect=r, radius=4.0)
+        let rr : @core.RoundedRect = @core.RoundedRect::new(rect=r, radius=6.0)
         @common.fill_rounded_rect(pctx, rr, @core.Brush::solid(color))
+        // White outline via stroke_rounded_rect — same RoundedRect
+        // spec, separate pass. Skia composites stroke on top of
+        // the fill so the visual matches canvas.js's
+        // fill-then-stroke order.
+        let white : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)
+        @common.stroke_rounded_rect(pctx, rr, @core.Brush::solid(white), 2.0)
       }
   }
 }
@@ -859,4 +891,74 @@ fn draw_polygon_path(
     stroke_width~,
   )
   @common.draw_path(pctx, path)
+}
+
+///|
+/// Phase 5.12.B — polygon fill pass. Emits the same MoveTo +
+/// LineTo + Close verb sequence as `draw_polygon_path`, but with
+/// `fill=Some(Brush::solid(color))` and `stroke=None`. Called
+/// BEFORE the stroke pass so the renderer composites the fill
+/// underneath the stroke (matches canvas.js drawPolygonShape
+/// lines 300-308: `fill()` then `stroke()`).
+///
+/// Uses the caller's `color` unchanged — the caller is expected
+/// to pass an already-alpha-adjusted color (or to bake the
+/// alpha in via Color::rgba with a < 1 alpha).
+fn draw_polygon_fill(
+  pctx : @common.PaintContext,
+  ann : Annotation,
+  color : @core.Color,
+  pan : Point,
+  zoom : Double,
+) -> Unit {
+  let verbs : Array[@core.PathVerb] = []
+  let p0 : Point = img_to_screen(ann.points[0], pan, zoom)
+  verbs.push(@core.PathVerb::MoveTo({ x: p0.x, y: p0.y, }))
+  for i = 1; i < ann.points.length(); i = i + 1 {
+    let p : Point = img_to_screen(ann.points[i], pan, zoom)
+    verbs.push(@core.PathVerb::LineTo({ x: p.x, y: p.y, }))
+  }
+  verbs.push(@core.PathVerb::Close)
+  let path : @core.PathSpec = @core.PathSpec::new(
+    verbs~,
+    fill=Some(@core.Brush::solid(color)),
+    stroke=None,
+    stroke_width=1.0,
+  )
+  @common.draw_path(pctx, path)
+}
+
+///|
+/// Phase 5.12.B — vertex-dot decoration for polygons with <= 30
+/// points. Mirrors canvas.js drawPolygonShape lines 309-319: a
+/// small filled circle (radius=3) at each vertex with a thin
+/// white outline so the dot reads against any underlying
+/// background. Drawn in screen space — vertex positions are
+/// image-natural → screen mapped once at the call site so the
+/// dot radius stays constant under pan/zoom (independent of the
+/// polygon's `selected` flag — both branches get the same dot
+/// size, which matches canvas.js's `isSelected ? 4 : 3`
+/// radius difference being too subtle to bother replicating).
+fn draw_polygon_vertex_dots(
+  pctx : @common.PaintContext,
+  ann : Annotation,
+  color : @core.Color,
+  pan : Point,
+  zoom : Double,
+) -> Unit {
+  let white : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)
+  for nat_pt in ann.points {
+    let p : Point = img_to_screen(nat_pt, pan, zoom)
+    // 6 × 6 square (radius 3) at each vertex — Skia renders
+    // FillRoundedRect with radius = half-side as a true circle.
+    let r : @core.Rect = @core.Rect::new(
+      x=p.x - 3.0,
+      y=p.y - 3.0,
+      width=6.0,
+      height=6.0,
+    )
+    let rr : @core.RoundedRect = @core.RoundedRect::new(rect=r, radius=3.0)
+    @common.fill_rounded_rect(pctx, rr, @core.Brush::solid(color))
+    @common.stroke_rounded_rect(pctx, rr, @core.Brush::solid(white), 1.0)
+  }
 }

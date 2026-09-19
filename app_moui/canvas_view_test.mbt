@@ -221,10 +221,10 @@ test "static layer — placeholder mode: background + placeholder rect, no image
   draw_static_layer(pctx, model, frame)
   let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
   let (fill, stroke, draw_image) = count_draw_kinds(cmds)
-  // Background FillRect + placeholder FillRect = 2 FillRects;
-  // placeholder border StrokeRect + annotation stroke_rect = 2
-  // StrokeRects (one per non-fill outline); 0 DrawImages.
-  assert_eq(fill, 2)
+  // Background FillRect + placeholder FillRect + Rect fill
+  // (5.12.B) = 3 FillRects; placeholder border StrokeRect +
+  // annotation stroke_rect = 2 StrokeRects; 0 DrawImages.
+  assert_eq(fill, 3)
   assert_eq(stroke, 2)
   assert_eq(draw_image, 0)
 }
@@ -258,9 +258,9 @@ test "static layer — image mode: background + DrawImage + annotation strokes, 
   draw_static_layer(pctx, model, frame)
   let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
   let (fill, stroke, draw_image) = count_draw_kinds(cmds)
-  // 1 FillRect (background only — no placeholder FillRect in image mode)
-  // + 1 DrawImage (the source image) + 1 StrokeRect (annotation rect).
-  assert_eq(fill, 1)
+  // 1 FillRect (background) + 1 Rect-fill (5.12.B) = 2 FillRects
+  // + 1 DrawImage + 1 StrokeRect (annotation rect outline).
+  assert_eq(fill, 2)
   assert_eq(stroke, 1)
   assert_eq(draw_image, 1)
 }
@@ -401,12 +401,15 @@ test "polygon — emits exactly 1 DrawPath command (no fill_rect approximation)"
       _ => ()
     }
   }
-  // 1 path (the polygon), 2 FillRects (background + placeholder).
-  // The 5.7 polygon draw emits zero FillRects — the legacy 5.3
-  // approximation would have emitted N*2+ FillRects (one per
-  // pixel of the thick-line approximation; for a 100px segment
-  // that's ~200 fill_rects).
-  assert_eq(path_count, 1)
+  // 2 paths (polygon fill + stroke — 5.12.B adds the fill pass
+  // before the stroke pass, both via DrawPath with the same
+  // MoveTo + LineTo + Close verbs), 2 FillRects (background +
+  // placeholder), and 4 vertex-dot FillRoundedRectBrush (one
+  // per polygon vertex, since the test polygon has 4 vertices
+  // <= the 5.12.B 30-point threshold). The 5.7 polygon draw
+  // emits zero FillRects for the polygon edge itself — the
+  // legacy 5.3 approximation would have emitted N*2+ FillRects.
+  assert_eq(path_count, 2)
   assert_eq(fill_rect_count, 2) // background + placeholder
 }
 
@@ -694,17 +697,20 @@ test "keypoint — FillRoundedRectBrush rect + radius + brush match expected" {
       _ => ()
     }
   }
-  // Rect: centred on (100, 200) → x=96, y=196, w=8, h=8.
+  // Rect: centred on (100, 200) → x=94, y=194, w=12, h=12
+  // (5.12.B: bumped from 8×8 / radius=4 to 12×12 / radius=6
+  // to match canvas.js drawKeypointShape line 339's
+  // `arc(x, y, isSelected ? 8 : 6, ...)` normal radius of 6).
   let rect : @core.Rect = match found_rect {
     Some(r) => r
     None => fail("expected FillRoundedRectBrush")
   }
-  assert_eq(rect.origin.x, 96.0)
-  assert_eq(rect.origin.y, 196.0)
-  assert_eq(rect.size.width, 8.0)
-  assert_eq(rect.size.height, 8.0)
-  // Radius: 4 (half the 8 px diameter — renders as a circle).
-  assert_eq(found_radius, 4.0)
+  assert_eq(rect.origin.x, 94.0)
+  assert_eq(rect.origin.y, 194.0)
+  assert_eq(rect.size.width, 12.0)
+  assert_eq(rect.size.height, 12.0)
+  // Radius: 6 (half the 12 px diameter — renders as a circle).
+  assert_eq(found_radius, 6.0)
   // Brush: red palette (unselected).
   let c : @core.Color = match found_color {
     Some(color) => color
@@ -721,9 +727,10 @@ test "keypoint — FillRoundedRectBrush rect + radius + brush match expected" {
 /// when the canvas is zoomed (because we apply the zoom to
 /// the rect via img_to_screen, but the radius is a constant
 /// inside `draw_annotation` — this matches the legacy canvas.js
-/// behaviour where the keypoint marker is a fixed 4-px-radius
-/// dot regardless of zoom). This is a separate test from the
-/// above because the rect math depends on pan/zoom.
+/// behaviour where the keypoint marker is a fixed 6-px-radius
+/// dot regardless of zoom). 5.12.B bumped the radius from 4 to
+/// 6 to match canvas.js's normal keypoint size; the
+/// pan/zoom-independence property still holds.
 test "keypoint — radius stays constant under pan + zoom" {
   let model : Model = {
     ..Model::new(),
@@ -750,7 +757,7 @@ test "keypoint — radius stays constant under pan + zoom" {
       _ => ()
     }
   }
-  assert_eq(radius, 4.0)
+  assert_eq(radius, 6.0)
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1345,4 +1352,291 @@ test "Zoom(z) — sets zoom without touching pan" {
   assert_eq(next.zoom, 3.5)
   assert_eq(next.pan.x, 30.0)
   assert_eq(next.pan.y, 40.0)
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.12.B — draw_annotation visual-completeness upgrades
+// ─────────────────────────────────────────────────────────────────
+//
+// 5.12.B fills the visual gaps left by 5.3-5.11 relative to
+// canvas.js (35 KB reference):
+//   - Rect: add a low-alpha FillRect BEFORE the StrokeRect so
+//     users see which area the box covers
+//   - Polygon: emit a fill DrawPath BEFORE the stroke DrawPath
+//     (same MoveTo + LineTo + Close verbs, fill-only)
+//   - Polygon: small white-stroked vertex dots at each vertex
+//     when N <= 30 (skipped for high-vertex-count polygons to
+//     keep the static layer cheap)
+//   - Keypoint: 12 px diameter (radius 6) + white outline via
+//     StrokeRoundedRectBrush — matches canvas.js drawKeypointShape
+//     lines 339-345
+//
+// The tests below assert command-stream shape, not pixel output
+// (no renderer wired in until Phase 10 wires windows_skia).
+
+///|
+/// Phase 5.12.B — a Rect annotation now emits a FillRect
+/// (alpha 0.12 tint) before the StrokeRect (outline). The fill
+/// uses the same RGB as the outline but with alpha 0.12; the
+/// stroke stays at alpha 1.0 with the selected/unselected width
+/// delta.
+test "rect — emits fill_rect (alpha 0.12) + stroke_rect (5.12.B)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "r-1",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut fill_for_rect : @core.Color? = None
+  let mut stroke_for_rect : @core.Color? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::FillRect(_, color) =>
+        // Skip the background fill_rect (covers full frame) and
+        // the placeholder fill_rect (320×240). The annotation's
+        // fill_rect is the smaller one — pick by area.
+        if color.a < 0.5 {
+          // 5.12.B's annotation fill uses alpha 0.12.
+          fill_for_rect = Some(color)
+        }
+      @core.DrawCommand::StrokeRect(_, color, _) =>
+        // The annotation's StrokeRect is the one with stroke
+        // width 1.0 (unselected) — the placeholder border uses
+        // a different width. Actually 5.5.x set width=2.0 for
+        // the placeholder border; verify both colors and find
+        // the one matching the annotation palette.
+        if color.r > 0.9 && color.g < 0.5 {
+          // red palette
+          stroke_for_rect = Some(color)
+        }
+      _ => ()
+    }
+  }
+  let fill_c : @core.Color = match fill_for_rect {
+    Some(c) => c
+    None => fail("expected annotation fill_rect with low alpha")
+  }
+  assert_eq(fill_c.a, 0.12)
+  let stroke_c : @core.Color = match stroke_for_rect {
+    Some(c) => c
+    None => fail("expected annotation stroke_rect")
+  }
+  assert_eq(stroke_c.a, 1.0)
+}
+
+///|
+/// Phase 5.12.B — a Polygon annotation now emits 2 DrawPath
+/// commands: the fill pass (MoveTo + LineTo + Close, fill only)
+/// BEFORE the stroke pass (MoveTo + LineTo + Close, stroke only).
+/// Both passes use the same verb sequence so the renderer
+/// composites fill under stroke.
+test "polygon — emits fill DrawPath + stroke DrawPath (5.12.B)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "poly-1",
+        shape: Polygon,
+        points: [
+          { x: 100.0, y: 100.0, },
+          { x: 200.0, y: 100.0, },
+          { x: 200.0, y: 200.0, },
+        ],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut path_with_fill : Int = 0
+  let mut path_with_stroke : Int = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(spec) => {
+        let fill_present = match spec.fill {
+          Some(_) => true
+          None => false
+        }
+        let stroke_present = match spec.stroke {
+          Some(_) => true
+          None => false
+        }
+        if fill_present && !stroke_present {
+          path_with_fill = path_with_fill + 1
+        }
+        if stroke_present && !fill_present {
+          path_with_stroke = path_with_stroke + 1
+        }
+      }
+      _ => ()
+    }
+  }
+  assert_eq(path_with_fill, 1)
+  assert_eq(path_with_stroke, 1)
+}
+
+///|
+/// Phase 5.12.B — a Polygon with N vertices (N <= 30) emits
+/// exactly N vertex dots, each composed of a fill pass + a
+/// white stroke pass (both FillRoundedRectBrush). For a triangle
+/// (3 vertices) that's 3 × 2 = 6 FillRoundedRectBrush commands
+/// dedicated to vertex decoration (in addition to the 2 paths
+/// for fill + stroke of the polygon body itself).
+test "polygon — emits vertex dots for N <= 30 (5.12.B)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "tri-1",
+        shape: Polygon,
+        points: [
+          { x: 100.0, y: 100.0, },
+          { x: 200.0, y: 100.0, },
+          { x: 150.0, y: 200.0, },
+        ],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut vertex_fill_count = 0
+  let mut vertex_stroke_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::FillRoundedRectBrush(spec, _) =>
+        // Vertex dots use a 6×6 rect (radius 3). The keypoint
+        // body is 12×12 (radius 6), so we filter by size.
+        if spec.radius == 3.0 {
+          vertex_fill_count = vertex_fill_count + 1
+        }
+      @core.DrawCommand::StrokeRoundedRectBrush(spec, _, _) =>
+        // White outline pass for each vertex dot — same radius.
+        if spec.radius == 3.0 {
+          vertex_stroke_count = vertex_stroke_count + 1
+        }
+      _ => ()
+    }
+  }
+  // 3 vertices × 2 commands (fill + stroke) per vertex = 3 fills
+  // and 3 strokes.
+  assert_eq(vertex_fill_count, 3)
+  assert_eq(vertex_stroke_count, 3)
+}
+
+///|
+/// Phase 5.12.B — a Polygon with > 30 vertices SKIPS vertex
+/// dots entirely. The threshold matches canvas.js line 309
+/// (`if (points.length <= 30)`). 31 vertices is enough to be
+/// over the threshold while staying cheap to set up.
+test "polygon — skips vertex dots for N > 30 (5.12.B)" {
+  let points : Array[Point] = []
+  for i = 0; i < 31; i = i + 1 {
+    let fi : Double = i.to_double()
+    points.push({ x: 100.0 + fi * 5.0, y: 100.0 + fi * 5.0, })
+  }
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [{ id: "poly-big", shape: Polygon, points, }],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut vertex_fill_count = 0
+  let mut vertex_stroke_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::FillRoundedRectBrush(spec, _) =>
+        if spec.radius == 3.0 {
+          vertex_fill_count = vertex_fill_count + 1
+        }
+      @core.DrawCommand::StrokeRoundedRectBrush(spec, _, _) =>
+        if spec.radius == 3.0 {
+          vertex_stroke_count = vertex_stroke_count + 1
+        }
+      _ => ()
+    }
+  }
+  assert_eq(vertex_fill_count, 0)
+  assert_eq(vertex_stroke_count, 0)
+}
+
+///|
+/// Phase 5.12.B — the keypoint emits a StrokeRoundedRectBrush
+/// (white outline, 2 px) immediately after the
+/// FillRoundedRectBrush (body colour). Both share the same
+/// RoundedRect spec (12×12, radius 6).
+test "keypoint — emits fill body + white outline (5.12.B)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      { id: "kp-1", shape: Keypoint, points: [{ x: 100.0, y: 200.0, }], },
+    ],
+    selectedId: None,
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut fill_count = 0
+  let mut stroke_count = 0
+  let mut white_outline_width : Double = -1.0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::FillRoundedRectBrush(spec, _) =>
+        if spec.radius == 6.0 {
+          fill_count = fill_count + 1
+        }
+      @core.DrawCommand::StrokeRoundedRectBrush(spec, _, w) =>
+        if spec.radius == 6.0 {
+          stroke_count = stroke_count + 1
+          white_outline_width = w
+        }
+      _ => ()
+    }
+  }
+  assert_eq(fill_count, 1)
+  assert_eq(stroke_count, 1)
+  assert_eq(white_outline_width, 2.0)
 }
