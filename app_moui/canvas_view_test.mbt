@@ -2057,3 +2057,336 @@ test "ZoomAroundScreenPoint — marks layers dirty (5.12.D)" {
   assert_true(next.staticLayerDirty)
   assert_true(next.dynamicLayerDirty)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.13 — label text overlay tests
+// ─────────────────────────────────────────────────────────────────
+//
+// 5.13 wires `draw_label_text` into the static layer's
+// `draw_annotation`. Every annotation with a non-empty id emits
+// a DrawText(TextRun) command at its centroid. Text content is
+// `ann.id` (a future batch will plumb class_id → class_name
+// through to render canvas.js's `a.type`).
+
+///|
+/// Phase 5.13 — a Rect annotation with id "ann-1" emits a
+/// DrawText command whose `text` field equals "ann-1".
+test "label text — Rect emits DrawText with ann.id (5.13)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut found_text : String? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) => found_text = Some(text_run.text)
+      _ => ()
+    }
+  }
+  let label : String = match found_text {
+    Some(t) => t
+    None => fail("expected DrawText for annotation id")
+  }
+  assert_eq(label, "ann-1")
+}
+
+///|
+/// Phase 5.13 — a Polygon annotation also emits a label text
+/// at its centroid (the average of all vertex positions, which
+/// is what `binding_centroid` returns for any shape).
+test "label text — Polygon emits DrawText with ann.id (5.13)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "poly-7",
+        shape: Polygon,
+        points: [
+          { x: 100.0, y: 100.0, },
+          { x: 200.0, y: 100.0, },
+          { x: 150.0, y: 200.0, },
+        ],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut found_text : String? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) => found_text = Some(text_run.text)
+      _ => ()
+    }
+  }
+  let label : String = match found_text {
+    Some(t) => t
+    None => fail("expected DrawText for polygon id")
+  }
+  assert_eq(label, "poly-7")
+}
+
+///|
+/// Phase 5.13 — a Keypoint annotation also emits a label text.
+/// The centroid is the single keypoint position (binding_centroid
+/// for N=1 returns the point itself).
+test "label text — Keypoint emits DrawText with ann.id (5.13)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      { id: "kp-3", shape: Keypoint, points: [{ x: 250.0, y: 250.0, }], },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut found_text : String? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) => found_text = Some(text_run.text)
+      _ => ()
+    }
+  }
+  let label : String = match found_text {
+    Some(t) => t
+    None => fail("expected DrawText for keypoint id")
+  }
+  assert_eq(label, "kp-3")
+}
+
+///|
+/// Phase 5.13 — the label text uses the same color as the
+/// annotation body. Selected annotations get the yellow palette
+/// (5.3 convention); unselected get red. This test verifies
+/// the unselected branch; selected gets a separate test below.
+test "label text — color matches unselected annotation palette (5.13)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "ann-red",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+    selectedId: None,
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut found_color : @core.Color? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) =>
+        found_color = Some(text_run.color)
+      _ => ()
+    }
+  }
+  let c : @core.Color = match found_color {
+    Some(color) => color
+    None => fail("expected DrawText for unselected annotation")
+  }
+  assert_eq(c.r, 0.95)
+  assert_eq(c.g, 0.25)
+  assert_eq(c.b, 0.25)
+  assert_eq(c.a, 1.0)
+}
+
+///|
+/// Phase 5.13 — selected annotations get the yellow palette for
+/// their label (matches the 5.3 convention where selected = yellow
+/// for both body and label).
+test "label text — color matches selected annotation palette (5.13)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "ann-sel",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+    selectedId: Some("ann-sel"),
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut found_color : @core.Color? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) =>
+        found_color = Some(text_run.color)
+      _ => ()
+    }
+  }
+  let c : @core.Color = match found_color {
+    Some(color) => color
+    None => fail("expected DrawText for selected annotation")
+  }
+  assert_eq(c.r, 1.0)
+  assert_eq(c.g, 0.85)
+  assert_eq(c.b, 0.2)
+}
+
+///|
+/// Phase 5.13 — an annotation with empty id SKIPS the label text
+/// emission (no DrawText command for it). This matches the
+/// "mid-construction" guard described in the helper's docstring.
+test "label text — empty ann.id skips DrawText (5.13)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut text_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(_) => text_count = text_count + 1
+      _ => ()
+    }
+  }
+  assert_eq(text_count, 0)
+}
+
+///|
+/// Phase 5.13 — the label text font is 12 px system-ui
+/// sans-serif (matches canvas.js drawLabelText line 405's
+/// `"12px system-ui, sans-serif"`).
+test "label text — font is 12 px system_ui (5.13)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "ann-font",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut found_size : Double = -1.0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) => found_size = text_run.font.size
+      _ => ()
+    }
+  }
+  assert_eq(found_size, 12.0)
+}
+
+///|
+/// Phase 5.13 — multiple annotations each emit their own label.
+/// With 3 Rect annotations, the static layer emits 3 DrawText
+/// commands (one per annotation body). The labels are
+/// independent (no aliasing between commands).
+test "label text — multiple annotations each emit one label (5.13)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "a1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+      },
+      {
+        id: "a2",
+        shape: Rect,
+        points: [{ x: 60.0, y: 0.0, }, { x: 110.0, y: 50.0, }],
+      },
+      {
+        id: "a3",
+        shape: Rect,
+        points: [{ x: 0.0, y: 60.0, }, { x: 50.0, y: 110.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let labels : Array[String] = []
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) => labels.push(text_run.text)
+      _ => ()
+    }
+  }
+  assert_eq(labels.length(), 3)
+  assert_eq(labels[0], "a1")
+  assert_eq(labels[1], "a2")
+  assert_eq(labels[2], "a3")
+}

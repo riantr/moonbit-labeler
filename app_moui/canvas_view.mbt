@@ -667,6 +667,23 @@ fn draw_annotation(
         @common.stroke_rounded_rect(pctx, rr, @core.Brush::solid(white), 2.0)
       }
   }
+  // Phase 5.13 — emit a label-text DrawCommand at the centroid
+  // for every annotation (matches canvas.js drawLabelText
+  // line 562 — labels live on the static layer and re-cache
+  // alongside the annotation body via the 5.5.x cache key).
+  // Text content is `ann.id` for now; a future 5.14+ commits
+  // class-id plumbing so we can render the class name
+  // (canvas.js uses `a.type` which is the class name).
+  // Skipped when the id is empty (e.g. mid-construction
+  // annotations).
+  if ann.id != "" {
+    let centroid_screen : Point = img_to_screen(
+      binding_centroid(ann),
+      pan,
+      zoom,
+    )
+    draw_label_text(pctx, ann.id, centroid_screen, color)
+  }
 }
 
 ///|
@@ -867,6 +884,64 @@ fn draw_cursor_crosshair(
   let white = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)
   @common.stroke_rect(pctx, v_bar, white, 1.0)
   @common.stroke_rect(pctx, h_bar, white, 1.0)
+}
+
+///|
+/// Phase 5.13 — emit a label-text DrawCommand at the given
+/// screen-space centroid. Used by `draw_annotation` to overlay
+/// `ann.id` (and eventually `ann.class_name`) on top of every
+/// annotation body so the user can read which one is which
+/// without clicking.
+///
+/// Visual spec mirrors canvas.js drawLabelText (lines 404-413):
+///   - font: 12 px system-ui sans-serif
+///   - alignment: TextCenter (canvas.js uses ctx.textAlign =
+///     "center")
+///   - position: cy - 8 (text baseline sits 8 px above the
+///     centroid so the label reads inside the annotation body
+///     instead of overlapping the bottom edge)
+///   - color: same colour as the annotation body
+///
+/// MoUI's TextRun doesn't expose a stroke pass, so we omit
+/// the canvas.js black-halo (`strokeText`) for now. The label
+/// will be slightly harder to read on dark images, but the
+/// 12 px sans-serif weight keeps it legible on most natural
+/// images. A halo pass can land in a later 5.x batch if the
+/// readability gap matters.
+///
+/// `centroid_screen` is the screen-space point the label
+/// centres on — typically `img_to_screen(binding_centroid(ann),
+/// pan, zoom)`.
+fn draw_label_text(
+  pctx : @common.PaintContext,
+  text : String,
+  centroid_screen : Point,
+  color : @core.Color,
+) -> Unit {
+  let font : @core.FontSpec = @core.FontSpec::new(
+    families=@core.FontFamilyStack::system_ui(),
+    size=12.0,
+  )
+  // Frame: 200 × 20 wide enough for typical annotation ids
+  // ("ann-1", "ann-23" etc. easily fit; long ids get clipped
+  // by the frame but that's a graceful degradation, not a
+  // crash). The frame's top-left is offset so TextCenter
+  // places the text at the desired baseline (centroid y - 8,
+  // matching canvas.js's `cy - 8` lift).
+  let frame : @core.Rect = @core.Rect::new(
+    x=centroid_screen.x - 100.0,
+    y=centroid_screen.y - 18.0,
+    width=200.0,
+    height=20.0,
+  )
+  let text_run : @core.TextRun = @core.TextRun::new(
+    text~,
+    frame~,
+    font~,
+    color~,
+    align=@core.TextAlign::TextCenter,
+  )
+  @common.draw_text(pctx, text_run)
 }
 
 // ─────────────────────────────────────────────────────────────────
