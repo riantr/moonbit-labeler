@@ -72,6 +72,15 @@ pub(all) struct Annotation {
   id : String
   shape : Shape
   points : Array[Point]
+  // Phase 5.14 — reference into model.classes for label-text
+  // rendering. Empty string ("") means "no class assigned";
+  // the canvas falls back to `id` for the label text in that
+  // case. Populated by the IPC layer (op_set_annotations
+  // parses `type` from the JSON label file into class_id once
+  // the IPC bridge lands; until then, callers can set it
+  // directly in tests). classType is intentionally NOT
+  // duplicated here — we look it up from classes when needed.
+  class_id : String
 } derive(Debug)
 
 ///|

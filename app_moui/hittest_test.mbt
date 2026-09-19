@@ -6,6 +6,7 @@ test "handle_points — rect returns 4 corners + 4 midpoints" {
     id: "r",
     shape: Rect,
     points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
+    class_id: "",
   }
   let hs = handle_points(ann)
   assert_eq(hs.length(), 8)
@@ -35,6 +36,7 @@ test "handle_points — keypoint returns 1 handle at the only point" {
     id: "k",
     shape: Keypoint,
     points: [{ x: 50.0, y: 60.0, }],
+    class_id: "",
   }
   let hs = handle_points(ann)
   assert_eq(hs.length(), 1)
@@ -48,6 +50,7 @@ test "hit_test_handle — finds handle at TL of selected rect" {
     id: "r",
     shape: Rect,
     points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
+    class_id: "",
   }
   // Cursor on TL (within 12 px)
   let hit = hit_test_handle({ x: 11.0, y: 19.0, }, [ann], "r", 12.0)
@@ -66,11 +69,13 @@ test "hit_test_body — selects rect whose bbox contains the cursor" {
     id: "r",
     shape: Rect,
     points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
+    class_id: "",
   }
   let k : Annotation = {
     id: "k",
     shape: Keypoint,
     points: [{ x: 500.0, y: 500.0, }],
+    class_id: "",
   }
   // Cursor inside rect → returns "r"
   let hit = hit_test_body({ x: 50.0, y: 50.0, }, [r, k], 4.0)
@@ -89,6 +94,7 @@ test "hit_test_select — prefers handle over body when selected" {
     id: "r",
     shape: Rect,
     points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
+    class_id: "",
   }
   // Cursor on TL handle — selection stays as "r"
   let sel = hit_test_select({ x: 11.0, y: 19.0, }, [r], Some("r"))
@@ -107,6 +113,7 @@ test "apply_handle_move — rect TL corner drag moves p1 to new_pt" {
     id: "r",
     shape: Rect,
     points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
+    class_id: "",
   }
   let moved = apply_handle_move(ann, 0, { x: 5.0, y: 15.0, })
   match moved {
@@ -127,6 +134,7 @@ test "apply_handle_move — polygon vertex drag" {
     id: "p",
     shape: Polygon,
     points: [{ x: 0.0, y: 0.0, }, { x: 10.0, y: 0.0, }, { x: 10.0, y: 10.0, }],
+    class_id: "",
   }
   let moved = apply_handle_move(ann, 2, { x: 50.0, y: 50.0, })
   match moved {

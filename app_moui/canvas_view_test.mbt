@@ -152,6 +152,7 @@ test "hit_test_select — image-natural coords make hit-test DPR-invariant" {
     id: ann_id,
     shape: Rect,
     points: [{ x: 100.0, y: 100.0, }, { x: 200.0, y: 200.0, }],
+    class_id: "",
   }
   let annotations : Array[Annotation] = [ann]
   // A click at the TL handle (image-natural (100,100)) should hit
@@ -208,6 +209,7 @@ test "static layer — placeholder mode: background + placeholder rect, no image
         id: "ann-1",
         shape: Rect,
         points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
   }
@@ -245,6 +247,7 @@ test "static layer — image mode: background + DrawImage + annotation strokes, 
         id: "ann-1",
         shape: Rect,
         points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
   }
@@ -283,6 +286,7 @@ test "dynamic layer — selected + cursor: 8 handles + 2 crosshair strokes, no b
         id: "ann-1",
         shape: Rect,
         points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
   }
@@ -338,6 +342,7 @@ test "dynamic layer — selectedId not in annotations → no handles drawn" {
         id: "ann-1",
         shape: Rect,
         points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
   }
@@ -380,6 +385,7 @@ test "polygon — emits exactly 1 DrawPath command (no fill_rect approximation)"
           { x: 200.0, y: 200.0, },
           { x: 100.0, y: 200.0, },
         ],
+        class_id: "",
       },
     ],
   }
@@ -432,6 +438,7 @@ test "polygon — DrawPath verb sequence is MoveTo + N LineTo + Close" {
           { x: 100.0, y: 100.0, },
           { x: 10.0, y: 100.0, },
         ],
+        class_id: "",
       },
     ],
   }
@@ -501,6 +508,7 @@ test "polygon — DrawPath stroke brush + width match annotation selection" {
           { x: 50.0, y: 0.0, },
           { x: 50.0, y: 50.0, },
         ],
+        class_id: "",
       },
     ],
     selectedId: None,
@@ -588,6 +596,7 @@ test "polygon — 2-point polygon emits MoveTo + LineTo + Close (3 verbs)" {
         id: "poly-1",
         shape: Polygon,
         points: [{ x: 10.0, y: 10.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
       },
     ],
   }
@@ -628,7 +637,12 @@ test "keypoint — emits exactly 1 FillRoundedRectBrush command (no plain fill_r
     ..Model::new(),
     imageSource: "",
     annotations: [
-      { id: "kp-1", shape: Keypoint, points: [{ x: 100.0, y: 100.0, }], },
+      {
+        id: "kp-1",
+        shape: Keypoint,
+        points: [{ x: 100.0, y: 100.0, }],
+        class_id: "",
+      },
     ],
   }
   let frame : @core.Rect = @core.Rect::new(
@@ -668,7 +682,12 @@ test "keypoint — FillRoundedRectBrush rect + radius + brush match expected" {
     ..Model::new(),
     imageSource: "",
     annotations: [
-      { id: "kp-1", shape: Keypoint, points: [{ x: 100.0, y: 200.0, }], },
+      {
+        id: "kp-1",
+        shape: Keypoint,
+        points: [{ x: 100.0, y: 200.0, }],
+        class_id: "",
+      },
     ],
     selectedId: None,
   }
@@ -738,7 +757,12 @@ test "keypoint — radius stays constant under pan + zoom" {
     pan: { x: 50.0, y: 100.0, },
     zoom: 2.0,
     annotations: [
-      { id: "kp-1", shape: Keypoint, points: [{ x: 100.0, y: 100.0, }], },
+      {
+        id: "kp-1",
+        shape: Keypoint,
+        points: [{ x: 100.0, y: 100.0, }],
+        class_id: "",
+      },
     ],
   }
   let frame : @core.Rect = @core.Rect::new(
@@ -779,6 +803,7 @@ test "bindings — empty bindings list emits 0 DrawPath commands" {
         id: "rect-1",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
     bindings: [],
@@ -817,11 +842,13 @@ test "bindings — single binding emits 2 DrawPath commands (line + arrow head)"
         id: "from-rect",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
       {
         id: "to-rect",
         shape: Rect,
         points: [{ x: 200.0, y: 200.0, }, { x: 300.0, y: 300.0, }],
+        class_id: "",
       },
     ],
     bindings: [{ id: "b-1", from: "from-rect", to: "to-rect", }],
@@ -862,6 +889,7 @@ test "bindings — missing from/to id silently skipped" {
         id: "from-rect",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
     bindings: [{ id: "b-1", from: "from-rect", to: "nonexistent", }],
@@ -901,11 +929,13 @@ test "bindings — line path has stroke+no-fill; arrow head has fill+no-stroke" 
         id: "from-rect",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
       {
         id: "to-rect",
         shape: Rect,
         points: [{ x: 200.0, y: 200.0, }, { x: 300.0, y: 300.0, }],
+        class_id: "",
       },
     ],
     bindings: [{ id: "b-1", from: "from-rect", to: "to-rect", }],
@@ -982,6 +1012,7 @@ test "binding_centroid — averages all points regardless of shape" {
     id: "r",
     shape: Rect,
     points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+    class_id: "",
   }
   let r_pt : Point = binding_centroid(rect)
   assert_eq(r_pt.x, 50.0)
@@ -991,6 +1022,7 @@ test "binding_centroid — averages all points regardless of shape" {
     id: "k",
     shape: Keypoint,
     points: [{ x: 75.0, y: 25.0, }],
+    class_id: "",
   }
   let k_pt : Point = binding_centroid(kp)
   assert_eq(k_pt.x, 75.0)
@@ -1000,6 +1032,7 @@ test "binding_centroid — averages all points regardless of shape" {
     id: "p",
     shape: Polygon,
     points: [{ x: 0.0, y: 0.0, }, { x: 60.0, y: 90.0, }, { x: 60.0, y: 90.0, }],
+    class_id: "",
   }
   let p_pt : Point = binding_centroid(poly)
   // (0 + 60 + 60) / 3 = 40, (0 + 90 + 90) / 3 = 60.
@@ -1027,6 +1060,7 @@ test "static_cache_key — same model produces same key (cache hit)" {
         id: "a1",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
       },
     ],
   }
@@ -1077,6 +1111,7 @@ test "static_cache_key — annotation mutation invalidates cache" {
         id: "a1",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
       },
     ],
   }
@@ -1087,6 +1122,7 @@ test "static_cache_key — annotation mutation invalidates cache" {
         id: "a1",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 60.0, y: 50.0, }],
+        class_id: "",
       },
     ],
   }
@@ -1103,6 +1139,7 @@ test "static_cache_key — adding an annotation invalidates cache" {
         id: "a1",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
       },
     ],
   }
@@ -1113,8 +1150,14 @@ test "static_cache_key — adding an annotation invalidates cache" {
         id: "a1",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
       },
-      { id: "a2", shape: Keypoint, points: [{ x: 200.0, y: 200.0, }], },
+      {
+        id: "a2",
+        shape: Keypoint,
+        points: [{ x: 200.0, y: 200.0, }],
+        class_id: "",
+      },
     ],
   }
   assert_not_eq(static_cache_key(base), static_cache_key(two))
@@ -1133,6 +1176,7 @@ test "static_cache_key — selection change invalidates cache" {
         id: "a1",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
       },
     ],
     selectedId: None,
@@ -1215,6 +1259,7 @@ test "static_cache_key — handle drag keeps static cache stable" {
         id: ann_id,
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
       },
     ],
     selectedId: Some(ann_id),
@@ -1389,6 +1434,7 @@ test "rect — emits fill_rect (alpha 0.12) + stroke_rect (5.12.B)" {
         id: "r-1",
         shape: Rect,
         points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
   }
@@ -1457,6 +1503,7 @@ test "polygon — emits fill DrawPath + stroke DrawPath (5.12.B)" {
           { x: 200.0, y: 100.0, },
           { x: 200.0, y: 200.0, },
         ],
+        class_id: "",
       },
     ],
   }
@@ -1516,6 +1563,7 @@ test "polygon — emits vertex dots for N <= 30 (5.12.B)" {
           { x: 200.0, y: 100.0, },
           { x: 150.0, y: 200.0, },
         ],
+        class_id: "",
       },
     ],
   }
@@ -1566,7 +1614,7 @@ test "polygon — skips vertex dots for N > 30 (5.12.B)" {
   let model : Model = {
     ..Model::new(),
     imageSource: "",
-    annotations: [{ id: "poly-big", shape: Polygon, points, }],
+    annotations: [{ id: "poly-big", shape: Polygon, points, class_id: "", }],
   }
   let frame : @core.Rect = @core.Rect::new(
     x=0.0,
@@ -1606,7 +1654,12 @@ test "keypoint — emits fill body + white outline (5.12.B)" {
     ..Model::new(),
     imageSource: "",
     annotations: [
-      { id: "kp-1", shape: Keypoint, points: [{ x: 100.0, y: 200.0, }], },
+      {
+        id: "kp-1",
+        shape: Keypoint,
+        points: [{ x: 100.0, y: 200.0, }],
+        class_id: "",
+      },
     ],
     selectedId: None,
   }
@@ -1863,6 +1916,7 @@ test "binding-from ring — emits 10 px ring at source centroid (5.12.C)" {
         id: "ann-1",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
   }
@@ -1911,6 +1965,7 @@ test "binding-from ring — dangling id silently skipped (5.12.C)" {
         id: "ann-1",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
   }
@@ -2080,6 +2135,7 @@ test "label text — Rect emits DrawText with ann.id (5.13)" {
         id: "ann-1",
         shape: Rect,
         points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
   }
@@ -2123,6 +2179,7 @@ test "label text — Polygon emits DrawText with ann.id (5.13)" {
           { x: 200.0, y: 100.0, },
           { x: 150.0, y: 200.0, },
         ],
+        class_id: "",
       },
     ],
   }
@@ -2158,7 +2215,12 @@ test "label text — Keypoint emits DrawText with ann.id (5.13)" {
     ..Model::new(),
     imageSource: "",
     annotations: [
-      { id: "kp-3", shape: Keypoint, points: [{ x: 250.0, y: 250.0, }], },
+      {
+        id: "kp-3",
+        shape: Keypoint,
+        points: [{ x: 250.0, y: 250.0, }],
+        class_id: "",
+      },
     ],
   }
   let frame : @core.Rect = @core.Rect::new(
@@ -2198,6 +2260,7 @@ test "label text — color matches unselected annotation palette (5.13)" {
         id: "ann-red",
         shape: Rect,
         points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
     selectedId: None,
@@ -2242,6 +2305,7 @@ test "label text — color matches selected annotation palette (5.13)" {
         id: "ann-sel",
         shape: Rect,
         points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
     selectedId: Some("ann-sel"),
@@ -2285,6 +2349,7 @@ test "label text — empty ann.id skips DrawText (5.13)" {
         id: "",
         shape: Rect,
         points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
   }
@@ -2320,6 +2385,7 @@ test "label text — font is 12 px system_ui (5.13)" {
         id: "ann-font",
         shape: Rect,
         points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
       },
     ],
   }
@@ -2356,16 +2422,19 @@ test "label text — multiple annotations each emit one label (5.13)" {
         id: "a1",
         shape: Rect,
         points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
       },
       {
         id: "a2",
         shape: Rect,
         points: [{ x: 60.0, y: 0.0, }, { x: 110.0, y: 50.0, }],
+        class_id: "",
       },
       {
         id: "a3",
         shape: Rect,
         points: [{ x: 0.0, y: 60.0, }, { x: 50.0, y: 110.0, }],
+        class_id: "",
       },
     ],
   }
@@ -2389,4 +2458,203 @@ test "label text — multiple annotations each emit one label (5.13)" {
   assert_eq(labels[0], "a1")
   assert_eq(labels[1], "a2")
   assert_eq(labels[2], "a3")
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.14 — Annotation.class_id + class_lookup_name tests
+// ─────────────────────────────────────────────────────────────────
+//
+// 5.14.A adds class_id to Annotation and upgrades
+// draw_annotation's label text from "ann.id" to the class name
+// looked up via class_lookup_name. The IPC layer (op_set_annotations
+// in extensions/labeler/labeler.mbt) will populate class_id from
+// the JSON label file's `type` field once the IPC bridge lands;
+// until then, tests can construct annotations with class_id set
+// directly to exercise the dataflow.
+
+///|
+/// Phase 5.14.A — class_lookup_name returns the matching
+/// ClassEntry.name when ann.class_id resolves. Without this
+/// the label text would show "car-1" instead of "car", which
+/// is what canvas.js's drawLabelText(cx, cy, a.type, ...)
+/// renders (a.type is the class *name*, not id).
+test "class_lookup_name — resolves class_id to class_name (5.14)" {
+  let ann : Annotation = {
+    id: "car-1",
+    shape: Rect,
+    points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+    class_id: "cls-car",
+  }
+  let classes : Array[ClassEntry] = [
+    { id: "cls-car", name: "car", is_default: true, },
+    { id: "cls-person", name: "person", is_default: false, },
+  ]
+  assert_eq(class_lookup_name(ann, classes), "car")
+}
+
+///|
+/// Phase 5.14.A — empty class_id falls back to ann.id. This
+/// preserves the 5.13 behaviour for annotations that haven't
+/// been assigned a class yet (mid-construction, or a class_id
+/// reset to "" when the user deletes the class).
+test "class_lookup_name — empty class_id falls back to ann.id (5.14)" {
+  let ann : Annotation = {
+    id: "ann-7",
+    shape: Rect,
+    points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+    class_id: "",
+  }
+  let classes : Array[ClassEntry] = [
+    { id: "cls-car", name: "car", is_default: true, },
+  ]
+  assert_eq(class_lookup_name(ann, classes), "ann-7")
+}
+
+///|
+/// Phase 5.14.A — orphan class_id (no matching ClassEntry in
+/// the model.classes list) falls back to ann.id. The user
+/// still sees *something* identifying this annotation, just
+/// not the now-deleted class name.
+test "class_lookup_name — orphan class_id falls back to ann.id (5.14)" {
+  let ann : Annotation = {
+    id: "ann-x",
+    shape: Rect,
+    points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+    class_id: "cls-deleted",
+  }
+  let classes : Array[ClassEntry] = [
+    { id: "cls-car", name: "car", is_default: true, },
+  ]
+  assert_eq(class_lookup_name(ann, classes), "ann-x")
+}
+
+///|
+/// Phase 5.14.A — empty classes list: even with a non-empty
+/// class_id, if no ClassEntry matches, we fall back to id. The
+/// canvas view never gets a label == "" in practice (the caller
+/// guards on ann.id != "") so a totally unmatched class_id
+/// still surfaces the id as the label text.
+test "class_lookup_name — empty classes list falls back to id (5.14)" {
+  let ann : Annotation = {
+    id: "ann-y",
+    shape: Rect,
+    points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+    class_id: "cls-z",
+  }
+  let classes : Array[ClassEntry] = []
+  assert_eq(class_lookup_name(ann, classes), "ann-y")
+}
+
+///|
+/// Phase 5.14.A — draw_annotation renders the class name as
+/// label text when class_id resolves. This is the end-to-end
+/// check that the class_lookup_name call site in
+/// draw_annotation is wired correctly.
+test "label text — renders class_name when class_id resolves (5.14)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    classes: [{ id: "cls-car", name: "car", is_default: true, }],
+    annotations: [
+      {
+        id: "car-1",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "cls-car",
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut found_text : String? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) => found_text = Some(text_run.text)
+      _ => ()
+    }
+  }
+  let label : String = match found_text {
+    Some(t) => t
+    None => fail("expected DrawText")
+  }
+  assert_eq(label, "car")
+}
+
+///|
+/// Phase 5.14.A — when class_id is empty, the label falls
+/// back to ann.id. End-to-end check that the fallback
+/// branch in class_lookup_name is reachable from the render
+/// path.
+test "label text — empty class_id renders ann.id (5.14 fallback)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    classes: [{ id: "cls-car", name: "car", is_default: true, }],
+    annotations: [
+      {
+        id: "ann-7",
+        shape: Rect,
+        points: [{ x: 10.0, y: 10.0, }, { x: 100.0, y: 100.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut found_text : String? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) => found_text = Some(text_run.text)
+      _ => ()
+    }
+  }
+  let label : String = match found_text {
+    Some(t) => t
+    None => fail("expected DrawText")
+  }
+  assert_eq(label, "ann-7")
+}
+
+///|
+/// Phase 5.14.A — the static_cache_key includes class_name
+/// changes. When an annotation's class is renamed in
+/// model.classes (same class_id, different name), the cache
+/// key must change so the static layer repaints with the new
+/// label. This guards against a regression where class-name
+/// changes go undetected by the cache.
+test "static_cache_key — class name change invalidates cache (5.14)" {
+  let ann_id = "car-1"
+  let ann : Annotation = {
+    id: ann_id,
+    shape: Rect,
+    points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+    class_id: "cls-car",
+  }
+  let before : Model = {
+    ..Model::new(),
+    classes: [{ id: "cls-car", name: "car", is_default: true, }],
+    annotations: [ann],
+  }
+  let after : Model = {
+    ..before,
+    classes: [{ id: "cls-car", name: "automobile", is_default: true, }],
+  }
+  // Same class_id, different name → different cache key
+  // (because annotations_fingerprint picks up the class_name
+  // after lookup — see canvas_view::annotations_fingerprint).
+  assert_true(static_cache_key(before) != static_cache_key(after))
 }

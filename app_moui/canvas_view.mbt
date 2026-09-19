@@ -279,7 +279,8 @@ pub fn static_cache_key(model : Model) -> String {
   let mut s = "static|"
   s = s + model.imageSource
   s = s + "|"
-  s = s + annotations_fingerprint(model.annotations, model.selectedId)
+  s = s +
+    annotations_fingerprint(model.annotations, model.classes, model.selectedId)
   s = s + "|"
   s = s + model.pan.x.to_string()
   s = s + ","
@@ -341,6 +342,7 @@ fn fit_mode_tag(fit : @core.ImageFit) -> String {
 /// the same fingerprint.
 fn annotations_fingerprint(
   anns : Array[Annotation],
+  classes : Array[ClassEntry],
   selected : String?,
 ) -> String {
   let mut s = anns.length().to_string()
@@ -349,6 +351,15 @@ fn annotations_fingerprint(
     s = s + ann.id
     s = s + ":"
     s = s + shape_tag(ann.shape)
+    s = s + ":"
+    // Phase 5.14 — include the resolved class_name in the
+    // fingerprint. This way, renaming a class in
+    // model.classes (same class_id, different name) invalidates
+    // the cached static bitmap and the next paint rebuilds
+    // the label text. Without this, class renames would be
+    // invisible until the user pans/zooms (which independently
+    // invalidates the cache).
+    s = s + class_lookup_name(ann, classes)
     s = s + ":"
     for p in ann.points {
       s = s + p.x.to_string()
@@ -439,7 +450,7 @@ fn issue_static_commands(
       Some(id) => id == ann.id
       None => false
     }
-    draw_annotation(pctx, ann, is_sel, model.pan, model.zoom)
+    draw_annotation(pctx, ann, is_sel, model.pan, model.zoom, model.classes)
   }
   // 4. Bindings (from → to arrows). Phase 5.9. Drawn after the
   // annotations so the arrow heads sit on top of the connected
@@ -573,13 +584,16 @@ fn handle_marker(p : Point) -> @core.Rect {
 ///|
 /// Draw a single annotation. Phase 5.3 ships rect + polygon +
 /// keypoint. `selected` swaps the colour to a brighter palette so
-/// the user can see which annotation is active.
+/// the user can see which annotation is active. `classes` is the
+/// model.classes array; passed through to draw_label_text for
+/// class-name lookup (Phase 5.14).
 fn draw_annotation(
   pctx : @common.PaintContext,
   ann : Annotation,
   selected : Bool,
   pan : Point,
   zoom : Double,
+  classes : Array[ClassEntry],
 ) -> Unit {
   let color = if selected {
     @core.Color::rgba(r=1.0, g=0.85, b=0.2, a=1.0) // yellow
@@ -674,15 +688,20 @@ fn draw_annotation(
   // Text content is `ann.id` for now; a future 5.14+ commits
   // class-id plumbing so we can render the class name
   // (canvas.js uses `a.type` which is the class name).
-  // Skipped when the id is empty (e.g. mid-construction
-  // annotations).
+  // Phase 5.13 + 5.14 — emit the label text. 5.13 used
+  // `ann.id`; 5.14 upgrades to the class name looked up from
+  // `classes` via `ann.class_id`. Falls back to `ann.id` when
+  // the class_id is unset ("") or doesn't resolve (orphan id,
+  // deleted class). Skipped entirely when `ann.id == ""`
+  // (mid-construction annotations).
   if ann.id != "" {
+    let label : String = class_lookup_name(ann, classes)
     let centroid_screen : Point = img_to_screen(
       binding_centroid(ann),
       pan,
       zoom,
     )
-    draw_label_text(pctx, ann.id, centroid_screen, color)
+    draw_label_text(pctx, label, centroid_screen, color)
   }
 }
 
@@ -887,11 +906,47 @@ fn draw_cursor_crosshair(
 }
 
 ///|
+/// Phase 5.14 — look up the class name for an annotation's
+/// `class_id` field, falling back to `ann.id` when the class
+/// is unset (empty string) or doesn't resolve (orphan id).
+///
+/// Mirrors canvas.js's implicit class-name lookup: canvas.js
+/// reads `a.type` (which is the class *name*, not id) from
+/// the JSON label file directly. We have an extra layer of
+/// indirection (class_id → class_name via model.classes) so
+/// that class renames don't have to rewrite every annotation.
+///
+/// Returns the class name if `ann.class_id` matches a
+/// ClassEntry.id in `classes`; otherwise `ann.id`. The fallback
+/// to `ann.id` (not the empty string) is important for the
+/// orphan case — we still want the user to see *something*
+/// identifying this annotation even if its class record is
+/// gone, and the id is the most useful identifier we have.
+///
+/// Empty `ann.id` is handled by the caller (`draw_annotation`
+/// guards on `ann.id != ""` before calling).
+pub fn class_lookup_name(
+  ann : Annotation,
+  classes : Array[ClassEntry],
+) -> String {
+  if ann.class_id == "" {
+    return ann.id
+  }
+  for c in classes {
+    if c.id == ann.class_id {
+      return c.name
+    }
+  }
+  // Orphan class_id (no matching ClassEntry). Fall back to id
+  // so the user sees something identifying.
+  ann.id
+}
+
+///|
 /// Phase 5.13 — emit a label-text DrawCommand at the given
 /// screen-space centroid. Used by `draw_annotation` to overlay
-/// `ann.id` (and eventually `ann.class_name`) on top of every
-/// annotation body so the user can read which one is which
-/// without clicking.
+/// the class name (5.14 lookup) on top of every annotation body
+/// so the user can read which one is which without clicking.
 ///
 /// Visual spec mirrors canvas.js drawLabelText (lines 404-413):
 ///   - font: 12 px system-ui sans-serif
