@@ -1640,3 +1640,296 @@ test "keypoint — emits fill body + white outline (5.12.B)" {
   assert_eq(stroke_count, 1)
   assert_eq(white_outline_width, 2.0)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.12.C — draft rendering + binding-from marker tests
+// ─────────────────────────────────────────────────────────────────
+//
+// 5.12.C wires three new dynamic-layer helpers:
+//   draw_draft_polygon   — alpha-0.15 fill + 2 px stroke +
+//                          vertex dots while user is in
+//                          Polygon mode with draftPoints > 0.
+//   draw_draft_rect      — alpha-0.15 fill + 2 px stroke while
+//                          user is in Rect mode with exactly 2
+//                          draftPoints.
+//   draw_binding_from_marker
+//                        — 10 px radius unfilled yellow ring
+//                          at the source centroid while
+//                          bindingFromId is Some.
+//
+// All three are dispatched from draw_dynamic_layer under
+// `model.mode` / `model.bindingFromId` guards.
+
+///|
+/// Phase 5.12.C — in Polygon mode with 3 draft points, the
+/// dynamic layer emits 2 DrawPaths (fill + stroke) plus 3
+/// vertex dots × 2 commands (fill + white outline) = 6
+/// FillRoundedRectBrush-style commands. The static layer is
+/// untouched (draft state lives on the dynamic layer only).
+test "draft polygon — 3 points emits fill + stroke + vertex dots (5.12.C)" {
+  let model : Model = {
+    ..Model::new(),
+    mode: Polygon,
+    draftPoints: [
+      { x: 100.0, y: 100.0, },
+      { x: 200.0, y: 100.0, },
+      { x: 150.0, y: 200.0, },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_dynamic_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut path_with_fill = 0
+  let mut path_with_stroke = 0
+  let mut vertex_fill_count = 0
+  let mut vertex_stroke_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(spec) => {
+        let fill_present = match spec.fill {
+          Some(_) => true
+          None => false
+        }
+        let stroke_present = match spec.stroke {
+          Some(_) => true
+          None => false
+        }
+        if fill_present && !stroke_present {
+          path_with_fill = path_with_fill + 1
+        }
+        if stroke_present && !fill_present {
+          path_with_stroke = path_with_stroke + 1
+        }
+      }
+      @core.DrawCommand::FillRoundedRectBrush(spec, _) =>
+        // Draft vertex dots use 8×8 / radius 4 (vs annotation
+        // vertex dots at 6×6 / radius 3 in 5.12.B, vs keypoint
+        // at 12×12 / radius 6 in 5.12.B). Filter by radius.
+        if spec.radius == 4.0 {
+          vertex_fill_count = vertex_fill_count + 1
+        }
+      @core.DrawCommand::StrokeRoundedRectBrush(spec, _, _) =>
+        if spec.radius == 4.0 {
+          vertex_stroke_count = vertex_stroke_count + 1
+        }
+      _ => ()
+    }
+  }
+  // 2 DrawPaths (fill + stroke) for the polyline; 3 vertex
+  // dots × 2 commands each = 3 fills + 3 strokes.
+  assert_eq(path_with_fill, 1)
+  assert_eq(path_with_stroke, 1)
+  assert_eq(vertex_fill_count, 3)
+  assert_eq(vertex_stroke_count, 3)
+}
+
+///|
+/// Phase 5.12.C — in Polygon mode with just 2 draft points
+/// (the user's clicked once + once more but hasn't closed the
+/// polygon yet), there's no fill pass (a 2-vertex polygon is
+/// just a line; fill would render as a degenerate triangle of
+/// zero area) — only the stroke pass + 2 vertex dots.
+test "draft polygon — 2 points skips fill, only stroke + dots (5.12.C)" {
+  let model : Model = {
+    ..Model::new(),
+    mode: Polygon,
+    draftPoints: [{ x: 100.0, y: 100.0, }, { x: 200.0, y: 200.0, }],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_dynamic_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut path_with_fill = 0
+  let mut path_with_stroke = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(spec) => {
+        let fill_present = match spec.fill {
+          Some(_) => true
+          None => false
+        }
+        let stroke_present = match spec.stroke {
+          Some(_) => true
+          None => false
+        }
+        if fill_present && !stroke_present {
+          path_with_fill = path_with_fill + 1
+        }
+        if stroke_present && !fill_present {
+          path_with_stroke = path_with_stroke + 1
+        }
+      }
+      _ => ()
+    }
+  }
+  assert_eq(path_with_fill, 0)
+  assert_eq(path_with_stroke, 1)
+}
+
+///|
+/// Phase 5.12.C — in Rect mode with exactly 2 draft points,
+/// the dynamic layer emits 1 FillRect (alpha 0.15 fill) + 1
+/// StrokeRect (outline). The order matches canvas.js: fill
+/// under stroke so the user sees the area tinted before the
+/// outline.
+test "draft rect — 2 points emits fill + stroke (5.12.C)" {
+  let model : Model = {
+    ..Model::new(),
+    mode: Rect,
+    draftPoints: [{ x: 100.0, y: 100.0, }, { x: 200.0, y: 200.0, }],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_dynamic_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut fill_count = 0
+  let mut stroke_count = 0
+  let mut fill_alpha : Double = -1.0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::FillRect(_, color) => {
+        fill_count = fill_count + 1
+        fill_alpha = color.a
+      }
+      @core.DrawCommand::StrokeRect(_, _, _) => stroke_count = stroke_count + 1
+      _ => ()
+    }
+  }
+  assert_eq(fill_count, 1)
+  assert_eq(stroke_count, 1)
+  assert_eq(fill_alpha, 0.15)
+}
+
+///|
+/// Phase 5.12.C — in Rect mode with only 1 draft point, the
+/// dynamic layer does NOT emit any draft rect (a single point
+/// can't define a rect). The user is still dragging.
+test "draft rect — 1 point emits nothing (5.12.C)" {
+  let model : Model = {
+    ..Model::new(),
+    mode: Rect,
+    draftPoints: [{ x: 100.0, y: 100.0, }],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_dynamic_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut fill_count = 0
+  let mut stroke_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::FillRect(_) => fill_count = fill_count + 1
+      @core.DrawCommand::StrokeRect(_, _, _) => stroke_count = stroke_count + 1
+      _ => ()
+    }
+  }
+  assert_eq(fill_count, 0)
+  assert_eq(stroke_count, 0)
+}
+
+///|
+/// Phase 5.12.C — when bindingFromId is set, the dynamic
+/// layer emits a single StrokeRoundedRectBrush (radius=10,
+/// 2 px stroke) at the source annotation's centroid. This is
+/// the "click the destination next" affordance.
+test "binding-from ring — emits 10 px ring at source centroid (5.12.C)" {
+  let model : Model = {
+    ..Model::new(),
+    mode: EditBinding,
+    bindingFromId: Some("ann-1"),
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_dynamic_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut ring_count = 0
+  let mut ring_radius : Double = -1.0
+  let mut ring_stroke : Double = -1.0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::StrokeRoundedRectBrush(spec, _, w) => {
+        ring_count = ring_count + 1
+        ring_radius = spec.radius
+        ring_stroke = w
+      }
+      _ => ()
+    }
+  }
+  // The ring uses radius=10 → renders as a 20 px circle outline
+  // (the same trick as 5.8 / 5.12.B's keypoint, but for stroke
+  // only). 2 px stroke matches canvas.js lineWidth=2.
+  assert_eq(ring_count, 1)
+  assert_eq(ring_radius, 10.0)
+  assert_eq(ring_stroke, 2.0)
+}
+
+///|
+/// Phase 5.12.C — when bindingFromId is set but the source
+/// annotation has been deleted (id no longer in annotations),
+/// the dynamic layer emits no ring (graceful skip, matches 5.9's
+/// draw_bindings policy on dangling binding refs).
+test "binding-from ring — dangling id silently skipped (5.12.C)" {
+  let model : Model = {
+    ..Model::new(),
+    mode: EditBinding,
+    bindingFromId: Some("deleted-1"),
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_dynamic_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut ring_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::StrokeRoundedRectBrush(_) =>
+        ring_count = ring_count + 1
+      _ => ()
+    }
+  }
+  assert_eq(ring_count, 0)
+}

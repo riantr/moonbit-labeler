@@ -483,7 +483,31 @@ pub fn draw_dynamic_layer(
       }
     None => ()
   }
-  // 2. Cursor crosshair.
+  // 2. Phase 5.12.C — in-progress draft (polygon fill+stroke,
+  // rect fill+stroke). Drawn after handles so the user's
+  // in-progress shape covers the static annotation layer where
+  // they overlap. Skipped if mode is Select / EditBinding /
+  // Keypoint (none of those accumulate draftPoints in a way the
+  // user expects a preview for — Keypoint draws one point at a
+  // time and the click-to-place feedback is the cursor crosshair
+  // alone).
+  match model.mode {
+    Polygon =>
+      if model.draftPoints.length() > 0 {
+        draw_draft_polygon(pctx, model.draftPoints, model.pan, model.zoom)
+      }
+    Rect =>
+      if model.draftPoints.length() == 2 {
+        draw_draft_rect(pctx, model.draftPoints, model.pan, model.zoom)
+      }
+    _ => ()
+  }
+  // 3. Phase 5.12.C — binding-from ring (10 px circle outline at
+  // the source centroid while the user is in EditBinding mode
+  // and has picked the source). Drawn after draft so the ring
+  // overlays any draft state cleanly.
+  draw_binding_from_marker(pctx, model, model.pan, model.zoom)
+  // 4. Cursor crosshair.
   match model.cursorImgPt {
     Some(img_pt) => draw_cursor_crosshair(pctx, img_pt, model.pan, model.zoom)
     None => ()
@@ -843,6 +867,190 @@ fn draw_cursor_crosshair(
   let white = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)
   @common.stroke_rect(pctx, v_bar, white, 1.0)
   @common.stroke_rect(pctx, h_bar, white, 1.0)
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.12.C — draft rendering + binding-from marker
+// ─────────────────────────────────────────────────────────────────
+//
+// Drawn on the dynamic layer (not cached) because the user is
+// actively mutating `model.draftPoints` / `model.bindingFromId`
+// on every mouse move while a shape is being drawn or a binding
+// is being placed. Caching this would defeat the purpose.
+//
+// `color` is the draft/binding accent color (matches the legacy
+// canvas.js "#fbbf24" — a 3-bit web yellow). The same colour is
+// used for draft-polygon, draft-rect, and binding-from circle
+// so users learn one cue for "in-progress state".
+
+///|
+/// Phase 5.12.C — draft polygon rendering. When the user is in
+/// Polygon mode and has clicked N >= 3 points, this draws the
+/// in-progress polygon with a translucent fill (alpha 0.15,
+/// matching canvas.js drawDraftPolygon line 366) plus the
+/// polyline outline + small white-stroked vertex dots.
+///
+/// `points` is `model.draftPoints` (image-natural coords); we
+/// convert to screen once per vertex via `img_to_screen`.
+fn draw_draft_polygon(
+  pctx : @common.PaintContext,
+  points : Array[Point],
+  pan : Point,
+  zoom : Double,
+) -> Unit {
+  if points.length() == 0 {
+    return
+  }
+  // Same yellow as canvas.js's "#fbbf24" draft accent.
+  let color : @core.Color = @core.Color::rgba(r=0.984, g=0.749, b=0.141, a=1.0)
+  let white : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)
+  // Build the verb sequence once for both fill (when N >= 3)
+  // and stroke (always when N >= 2).
+  let verbs : Array[@core.PathVerb] = []
+  let p0 : Point = img_to_screen(points[0], pan, zoom)
+  verbs.push(@core.PathVerb::MoveTo({ x: p0.x, y: p0.y, }))
+  for i = 1; i < points.length(); i = i + 1 {
+    let p : Point = img_to_screen(points[i], pan, zoom)
+    verbs.push(@core.PathVerb::LineTo({ x: p.x, y: p.y, }))
+  }
+  // Close the polyline so fill() reaches back to vertex 0.
+  verbs.push(@core.PathVerb::Close)
+  // Fill pass — only when the polygon has at least 3 vertices
+  // (a 2-vertex polygon is just a line; fill would render as a
+  // degenerate triangle of zero area).
+  if points.length() >= 3 {
+    let fill_color : @core.Color = @core.Color::rgba(
+      r=color.r,
+      g=color.g,
+      b=color.b,
+      a=0.15,
+    )
+    let fill_path : @core.PathSpec = @core.PathSpec::new(
+      verbs~,
+      fill=Some(@core.Brush::solid(fill_color)),
+      stroke=None,
+      stroke_width=1.0,
+    )
+    @common.draw_path(pctx, fill_path)
+  }
+  // Stroke pass — always when N >= 2 (a 1-point "polygon" is
+  // just a single vertex with no shape).
+  if points.length() >= 2 {
+    let stroke_path : @core.PathSpec = @core.PathSpec::new(
+      verbs~,
+      fill=None,
+      stroke=Some(@core.Brush::solid(color)),
+      stroke_width=2.0,
+    )
+    @common.draw_path(pctx, stroke_path)
+  }
+  // Vertex dots — small fill + white outline at each vertex in
+  // screen space (constant 8 px diameter so they're readable at
+  // any zoom). Matches canvas.js drawDraftPolygon lines
+  // 379-387.
+  for nat_pt in points {
+    let p : Point = img_to_screen(nat_pt, pan, zoom)
+    let r : @core.Rect = @core.Rect::new(
+      x=p.x - 4.0,
+      y=p.y - 4.0,
+      width=8.0,
+      height=8.0,
+    )
+    let rr : @core.RoundedRect = @core.RoundedRect::new(rect=r, radius=4.0)
+    @common.fill_rounded_rect(pctx, rr, @core.Brush::solid(color))
+    @common.stroke_rounded_rect(pctx, rr, @core.Brush::solid(white), 1.5)
+  }
+}
+
+///|
+/// Phase 5.12.C — draft rect rendering. The user is in Rect
+/// mode and has clicked 2 points (top-left + bottom-right).
+/// We fill the rect (alpha 0.15, matching canvas.js
+/// drawDraftRect line 395) and stroke the outline.
+///
+/// `points` is `model.draftPoints` — exactly 2 entries
+/// (top-left + bottom-right) when the caller dispatches. The
+/// function guards against N != 2 anyway so a malformed
+/// caller doesn't render garbage.
+fn draw_draft_rect(
+  pctx : @common.PaintContext,
+  points : Array[Point],
+  pan : Point,
+  zoom : Double,
+) -> Unit {
+  if points.length() != 2 {
+    return
+  }
+  let color : @core.Color = @core.Color::rgba(r=0.984, g=0.749, b=0.141, a=1.0)
+  let p1 : Point = img_to_screen(points[0], pan, zoom)
+  let p2 : Point = img_to_screen(points[1], pan, zoom)
+  let xmin = if p1.x < p2.x { p1.x } else { p2.x }
+  let ymin = if p1.y < p2.y { p1.y } else { p2.y }
+  let w = if p1.x > p2.x { p1.x - p2.x } else { p2.x - p1.x }
+  let h = if p1.y > p2.y { p1.y - p2.y } else { p2.y - p1.y }
+  let r : @core.Rect = @core.Rect::new(x=xmin, y=ymin, width=w, height=h)
+  let fill_color : @core.Color = @core.Color::rgba(
+    r=color.r,
+    g=color.g,
+    b=color.b,
+    a=0.15,
+  )
+  @common.fill_rect(pctx, r, fill_color)
+  @common.stroke_rect(pctx, r, color, 2.0)
+}
+
+///|
+/// Phase 5.12.C — binding-from highlight. While the user is in
+/// EditBinding mode and has clicked the source annotation
+/// (`model.bindingFromId == Some(ann_id)`), this draws a 10 px
+/// yellow ring at the source's centroid so they have a clear
+/// visual target for "click the destination next".
+///
+/// Matches canvas.js paintDynamic lines 574-583: a 10 px
+/// radius unfilled circle (lineWidth 2, strokeStyle "#fbbf24")
+/// at the source annotation's centroid.
+///
+/// Looks up the source annotation from `model.annotations` by
+/// id; silently skips if the id no longer resolves (e.g. the
+/// user deleted the source annotation mid-binding — same
+/// graceful-skip policy as 5.9's draw_bindings).
+fn draw_binding_from_marker(
+  pctx : @common.PaintContext,
+  model : Model,
+  pan : Point,
+  zoom : Double,
+) -> Unit {
+  let color : @core.Color = @core.Color::rgba(r=0.984, g=0.749, b=0.141, a=1.0)
+  // Early-return pattern: assign the id with `let id = match`
+  // returns, then continue. MoonBit doesn't allow `return`
+  // inside a match arm that lives inside an expression position.
+  let from_id : String? = model.bindingFromId
+  match from_id {
+    None => ()
+    Some(id) =>
+      for ann in model.annotations {
+        if ann.id == id {
+          // 20 × 20 bounding box centred on the centroid (radius
+          // 10). RoundedRect with radius = half-side renders as a
+          // circle via the same FillRoundedRect trick 5.8 uses
+          // for keypoints.
+          let c : Point = img_to_screen(binding_centroid(ann), pan, zoom)
+          let r : @core.Rect = @core.Rect::new(
+            x=c.x - 10.0,
+            y=c.y - 10.0,
+            width=20.0,
+            height=20.0,
+          )
+          let rr : @core.RoundedRect = @core.RoundedRect::new(
+            rect=r,
+            radius=10.0,
+          )
+          // Stroke only — the ring must be transparent inside so
+          // the underlying image / annotation remains visible.
+          @common.stroke_rounded_rect(pctx, rr, @core.Brush::solid(color), 2.0)
+        }
+      }
+  }
 }
 
 ///|
