@@ -532,14 +532,17 @@ fn draw_annotation(
       }
     Polygon =>
       if ann.points.length() >= 2 {
-        // Polygon: draw each segment as a thin rectangle (the
-        // primitive set is fill_rect / stroke_rect — no polyline
-        // helper). 5.7 will upgrade this to draw_path.
-        for i = 0; i < ann.points.length() - 1; i = i + 1 {
-          let a = img_to_screen(ann.points[i], pan, zoom)
-          let b = img_to_screen(ann.points[i + 1], pan, zoom)
-          draw_thick_line(pctx, a, b, color, stroke_width)
-        }
+        // Phase 5.7: replace the 5.3 fill_rect-segment
+        // approximation with a single `DrawPath(PathSpec)`
+        // command that describes the polyline as one
+        // MoveTo + N LineTo + Close sequence. The Skia
+        // (or whichever backend) renderer walks the verbs
+        // to draw the stroke in one pass, with proper line
+        // joins and caps — which is what the user actually
+        // expects visually (the 5.3 approximation rendered
+        // each segment as a discrete 1-px square which
+        // looked chunky at zoom > 2× and on dpr > 1).
+        draw_polygon_path(pctx, ann, color, stroke_width, pan, zoom)
       }
     Keypoint =>
       if ann.points.length() >= 1 {
@@ -603,56 +606,49 @@ fn draw_cursor_crosshair(
 }
 
 ///|
-/// Approximate a 1-D line segment as a series of filled unit squares
-/// (a "thick line" via the fill_rect primitive). Phase 5.7 will
-/// replace this with draw_path. For now it gives us a visually
-/// visible 1-2 px line for polygon edges.
-fn draw_thick_line(
+/// Phase 5.7 — emit a single `DrawPath(PathSpec)` command for the
+/// polygon. The path describes a closed polyline: MoveTo(vertex 0),
+/// LineTo(vertex 1), LineTo(vertex 2), ..., Close. The renderer's
+/// stroke walker handles line joins / caps properly — the legacy
+/// fill_rect-segment approximation looked chunky at zoom > 2× and
+/// on dpr > 1 displays.
+///
+/// Stroke colour is the same `selected vs unselected` palette the
+/// rect/keypoint branches use; stroke_width is `1.0` (unselected)
+/// or `2.0` (selected), matching the 5.3 visual hierarchy.
+fn draw_polygon_path(
   pctx : @common.PaintContext,
-  a : Point,
-  b : Point,
+  ann : Annotation,
   color : @core.Color,
   stroke_width : Double,
+  pan : Point,
+  zoom : Double,
 ) -> Unit {
-  let dx = b.x - a.x
-  let dy = b.y - a.y
-  let len_sq = dx * dx + dy * dy
-  if len_sq <= 0.0 {
-    return
+  // Convert the app's local `Point` to the `@core.Point` that
+  // PathVerb's enum variants take. Both structs have identical
+  // fields (x : Double, y : Double), but MoonBit treats them as
+  // distinct types, so we marshal by field here.
+  let verbs : Array[@core.PathVerb] = []
+  // MoveTo(vertex 0). The transform converts image-natural to
+  // screen-space once, here, so the renderer doesn't need a
+  // per-vertex matrix push.
+  let p0 : Point = img_to_screen(ann.points[0], pan, zoom)
+  verbs.push(@core.PathVerb::MoveTo({ x: p0.x, y: p0.y, }))
+  // LineTo(vertex 1..N).
+  for i = 1; i < ann.points.length(); i = i + 1 {
+    let p : Point = img_to_screen(ann.points[i], pan, zoom)
+    verbs.push(@core.PathVerb::LineTo({ x: p.x, y: p.y, }))
   }
-  let len = sqrt_double_inline(len_sq)
-  let steps = (len * 2.0).to_int() + 1
-  let half = stroke_width / 2.0
-  let mut i = 0
-  while i <= steps {
-    let t = (Float::from_int(i) / Float::from_int(steps)).to_double()
-    let px = a.x + dx * t
-    let py = a.y + dy * t
-    let r : @core.Rect = @core.Rect::new(
-      x=px - half,
-      y=py - half,
-      width=stroke_width,
-      height=stroke_width,
-    )
-    @common.fill_rect(pctx, r, color)
-    i = i + 1
-  }
-}
-
-///|
-/// Local sqrt — same Newton iteration as hit_test.mbt::sqrt_double,
-/// duplicated here to keep canvas_view self-contained for the
-/// draw helpers.
-fn sqrt_double_inline(x : Double) -> Double {
-  if x <= 0.0 {
-    return 0.0
-  }
-  let mut guess = x / 2.0
-  if guess < 1.0 {
-    guess = 1.0
-  }
-  for _i = 0; _i < 8; _i = _i + 1 {
-    guess = (guess + x / guess) / 2.0
-  }
-  guess
+  // Close the polygon (back to vertex 0). The Close verb is
+  // semantically equivalent to a LineTo(vertex 0) followed by
+  // a path-close marker that the Skia stroke walker uses to
+  // emit a proper miter join at the seam.
+  verbs.push(@core.PathVerb::Close)
+  let path : @core.PathSpec = @core.PathSpec::new(
+    verbs~,
+    fill=None,
+    stroke=Some(@core.Brush::solid(color)),
+    stroke_width~,
+  )
+  @common.draw_path(pctx, path)
 }

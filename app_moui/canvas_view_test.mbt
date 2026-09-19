@@ -356,6 +356,261 @@ test "dynamic layer — selectedId not in annotations → no handles drawn" {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Phase 5.7 — polygon DrawPath upgrade tests
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.7 — polygon annotation now emits ONE `DrawPath`
+/// command (instead of N `FillRect` commands approximating a
+/// thick line). Verify by counting command kinds in the static
+/// layer's command stream: there should be 0 `FillRect` from the
+/// polygon edge itself, and exactly 1 `DrawPath` whose `verbs`
+/// is `[MoveTo(p0), LineTo(p1), ..., LineTo(pN), Close]`.
+test "polygon — emits exactly 1 DrawPath command (no fill_rect approximation)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "poly-1",
+        shape: Polygon,
+        points: [
+          { x: 100.0, y: 100.0, },
+          { x: 200.0, y: 100.0, },
+          { x: 200.0, y: 200.0, },
+          { x: 100.0, y: 200.0, },
+        ],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut path_count = 0
+  let mut fill_rect_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(_) => path_count = path_count + 1
+      @core.DrawCommand::FillRect(_) => fill_rect_count = fill_rect_count + 1
+      _ => ()
+    }
+  }
+  // 1 path (the polygon), 2 FillRects (background + placeholder).
+  // The 5.7 polygon draw emits zero FillRects — the legacy 5.3
+  // approximation would have emitted N*2+ FillRects (one per
+  // pixel of the thick-line approximation; for a 100px segment
+  // that's ~200 fill_rects).
+  assert_eq(path_count, 1)
+  assert_eq(fill_rect_count, 2) // background + placeholder
+}
+
+///|
+/// Phase 5.7 — the polygon's `DrawPath` has the right verb
+/// sequence: MoveTo(vertex 0), LineTo(vertex 1..N), Close.
+/// We destructure the first `DrawPath` command and verify the
+/// verbs count and kind sequence.
+test "polygon — DrawPath verb sequence is MoveTo + N LineTo + Close" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "poly-1",
+        shape: Polygon,
+        points: [
+          { x: 10.0, y: 10.0, },
+          { x: 100.0, y: 10.0, },
+          { x: 100.0, y: 100.0, },
+          { x: 10.0, y: 100.0, },
+        ],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  // Find the DrawPath command and check its verbs.
+  let mut found_verbs : Array[@core.PathVerb] = []
+  let mut found_path = false
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(spec) => {
+        found_path = true
+        found_verbs = spec.verbs
+      }
+      _ => ()
+    }
+  }
+  assert_eq(found_path, true)
+  // 4 points → 1 MoveTo + 3 LineTo + 1 Close = 5 verbs.
+  assert_eq(found_verbs.length(), 5)
+  // First verb: MoveTo(vertex 0) = (10, 10) (no pan/zoom).
+  match found_verbs[0] {
+    @core.PathVerb::MoveTo(p) => {
+      assert_eq(p.x, 10.0)
+      assert_eq(p.y, 10.0)
+    }
+    _ => fail("first verb should be MoveTo")
+  }
+  // Last verb: Close.
+  match found_verbs[4] {
+    @core.PathVerb::Close => ()
+    _ => fail("last verb should be Close")
+  }
+  // Middle 3 verbs: LineTo each.
+  let mut line_to_count = 0
+  for v in found_verbs[1:4] {
+    match v {
+      @core.PathVerb::LineTo(_) => line_to_count = line_to_count + 1
+      _ => ()
+    }
+  }
+  assert_eq(line_to_count, 3)
+}
+
+///|
+/// Phase 5.7 — the polygon's `DrawPath` has the right stroke
+/// brush (Solid(red)) and stroke_width (1.0 unselected, 2.0
+/// when the polygon is the selected annotation).
+test "polygon — DrawPath stroke brush + width match annotation selection" {
+  // Unselected polygon: red brush, 1.0 stroke width.
+  let model_unsel : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "poly-1",
+        shape: Polygon,
+        points: [
+          { x: 0.0, y: 0.0, },
+          { x: 50.0, y: 0.0, },
+          { x: 50.0, y: 50.0, },
+        ],
+      },
+    ],
+    selectedId: None,
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model_unsel, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut unsel_width : Double = -1.0
+  let mut unsel_stroke_color : @core.Color? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(spec) => {
+        unsel_width = spec.stroke_width
+        match spec.stroke {
+          Some(@core.Brush::Solid(c)) => unsel_stroke_color = Some(c)
+          _ => ()
+        }
+      }
+      _ => ()
+    }
+  }
+  assert_eq(unsel_width, 1.0)
+  // We don't inspect the brush directly (Brush has no Show derive)
+  // — instead match on the Solid variant and assert the colour
+  // components. Red palette: r=0.95, g=0.25, b=0.25, a=1.0.
+  let c : @core.Color = match unsel_stroke_color {
+    Some(color) => color
+    None => fail("expected unsel stroke to be a Solid brush")
+  }
+  assert_eq(c.r, 0.95)
+  assert_eq(c.g, 0.25)
+  assert_eq(c.b, 0.25)
+  assert_eq(c.a, 1.0)
+
+  // Selected polygon: yellow brush, 2.0 stroke width.
+  let model_sel : Model = {
+    ..model_unsel,
+    selectedId: Some("poly-1"),
+  }
+  let pctx2 = @common.PaintContext::new()
+  draw_static_layer(pctx2, model_sel, frame)
+  let cmds2 : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx2)
+  let mut sel_width : Double = -1.0
+  let mut sel_stroke_color : @core.Color? = None
+  for c in cmds2 {
+    match c {
+      @core.DrawCommand::DrawPath(spec) => {
+        sel_width = spec.stroke_width
+        match spec.stroke {
+          Some(@core.Brush::Solid(c)) => sel_stroke_color = Some(c)
+          _ => ()
+        }
+      }
+      _ => ()
+    }
+  }
+  assert_eq(sel_width, 2.0)
+  // Selected palette: yellow (r=1.0, g=0.85, b=0.2, a=1.0).
+  let c : @core.Color = match sel_stroke_color {
+    Some(color) => color
+    None => fail("expected sel stroke to be a Solid brush")
+  }
+  assert_eq(c.r, 1.0)
+  assert_eq(c.g, 0.85)
+  assert_eq(c.b, 0.2)
+  assert_eq(c.a, 1.0)
+}
+
+///|
+/// Phase 5.7 — degenerate polygon (only 2 points) still
+/// produces a valid path (1 MoveTo + 1 LineTo + 1 Close = 3
+/// verbs). The path walker will close the polygon back to
+/// vertex 0 with a degenerate edge (the seam = a 0-length
+/// line) which the renderer skips. This matches the legacy
+/// 5.3 behaviour of drawing only one thick-line segment.
+test "polygon — 2-point polygon emits MoveTo + LineTo + Close (3 verbs)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "poly-1",
+        shape: Polygon,
+        points: [{ x: 10.0, y: 10.0, }, { x: 50.0, y: 50.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut verb_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(spec) => verb_count = spec.verbs.length()
+      _ => ()
+    }
+  }
+  assert_eq(verb_count, 3)
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Phase 5.5.x — cached static layer tests
 // ─────────────────────────────────────────────────────────────────
 
