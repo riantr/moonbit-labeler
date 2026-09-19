@@ -65,6 +65,60 @@ pub fn probe_image_dimensions(data : Bytes) -> (Int, Int)? {
 }
 
 ///|
+/// Phase 5.10 — actually decode an image's pixel data (not just
+/// the header). Returns the full `Image` struct on success
+/// (width / height / format / row-major pixel Bytes) so the
+/// caller can either:
+///   (a) push the raw pixels through the renderer (when MoUI's
+///       `DrawImage(ImageRun)` grows a `bytes` source field,
+///       or a parallel `DrawImageBytes(Bytes, ...)` primitive
+///       lands — see 5.10.x follow-ups below),
+///   (b) stash the decoded `Image` in the model so a custom
+///       view layer can paint it via a custom command stream
+///       that we assemble ourselves (e.g. `FillRect` per
+///       pixel — slow but correct for the phase 10 visual
+///       smoke test).
+///
+/// Returns `None` on any failure (file not found, malformed
+/// header, unrecognised format, unsupported codec).
+///
+/// This is significantly more expensive than
+/// `probe_image_dimensions` because it allocates the full
+/// decoded pixel buffer (e.g. 1920×1080×4 bytes = ~8 MB for
+/// a 4K RGBA image). Callers should gate it behind an
+/// explicit "user wants to see the image" trigger, not on
+/// every cursor move.
+pub fn decode_image_bytes(data : Bytes) -> @moonbit_image.Image? {
+  match (try? @moonbit_image.decode(data)) {
+    Ok(img) => Some(img)
+    Err(_) => None
+  }
+}
+
+///|
+/// Phase 5.10 — convenience wrapper that decodes and
+/// returns just the (width, height, byte length, pixel format
+/// name) for the model layer. Useful when the caller doesn't
+/// need the raw pixel data (e.g. a future progress-bar UI that
+/// shows "1920×1080, 8.3 MB decoded, RGBA8").
+pub fn decode_image_metadata(
+  data : Bytes,
+) -> (Int, Int, Int, String)? {
+  match decode_image_bytes(data) {
+    Some(img) => {
+      let meta : (Int, Int, Int, String) = (
+        img.width,
+        img.height,
+        img.data.length(),
+        @moonbit_image.pixel_format_name(img.format),
+      )
+      Some(meta)
+    }
+    None => None
+  }
+}
+
+///|
 /// Probe an image file on disk for its dimensions. Wrapper
 /// around `probe_image_dimensions` that reads the file first via
 /// `@fs.read_file`. Returns `None` for any failure (file not

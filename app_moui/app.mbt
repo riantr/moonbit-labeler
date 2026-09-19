@@ -82,6 +82,20 @@ pub(all) struct Binding {
 } derive(Debug)
 
 ///|
+/// Phase 5.10 — image decode metadata. We deliberately don't
+/// store the raw decoded pixel buffer here — that's a multi-MB
+/// allocation per loaded image, and the Model struct gets
+/// diff'd + cloned on every update by the runtime. Instead
+/// the metadata is exposed via this struct, and the pixel
+/// bytes live in a side table (5.10.x+ work).
+pub(all) struct ImageDecodedMeta {
+  width : Int
+  height : Int
+  byte_length : Int
+  pixel_format : String
+} derive(Debug)
+
+///|
 /// Active drag state — when Some, the next CursorMoved should
 /// move the (id, handle_idx) handle instead of selecting a new
 /// annotation. Begun by BeginDragHandle, ended by EndDragHandle.
@@ -140,6 +154,17 @@ pub(all) struct Model {
   // fetches/decodes the file lazily at first paint.
   imageSource : String
   imageNaturalSize : Point
+  // Phase 5.10 — image decode metadata. Populated by the
+  // `ImageDecoded` Msg after `LoadImage` reads + decodes the
+  // file. None while no image is loaded; Some(_) once the
+  // decode succeeds. Storing only the metadata fields
+  // (width, height, byte length, pixel format name) avoids
+  // bloating the Model struct with multi-MB raw pixel data.
+  // Future 5.10.x+ work moves the decoded pixel bytes into
+  // a side table keyed by imageSource so the renderer can
+  // blit them in phase 10 (the MoUI DrawImage primitive
+  // currently only takes a file-path source, not raw bytes).
+  imageDecoded : ImageDecodedMeta?
   fitMode : @core.ImageFit
   // Phase 5.3 — annotations + bindings + active handle drag.
   annotations : Array[Annotation]
@@ -180,6 +205,7 @@ pub fn Model::new() -> Model {
     // canvas_view.mbt size.
     imageSource: "",
     imageNaturalSize: { x: 800.0, y: 600.0, },
+    imageDecoded: None,
     fitMode: @core.ImageFit::Contain,
     // Phase 5.3 — annotations + bindings live in model so hit-test
     // can run without re-parsing the raw label JSON on every mouse
@@ -273,6 +299,13 @@ pub(all) enum Msg {
   SetAnnotations(Array[Annotation], Array[Binding])
   BeginDragHandle(String, Int)
   EndDragHandle
+  // Phase 5.10 — full image decode result. Carries the decoded
+  // pixel width, height, byte length, and pixel format name
+  // (Gray8 / GrayA8 / RGB8 / RGBA8) so the model can expose
+  // them via a status bar / progress UI without holding the
+  // raw pixel buffer in the Model struct (we'd otherwise bloat
+  // every Model update with multi-MB pixel data).
+  ImageDecoded(String, Int, Int, Int, String)
   OpResult(OpResult)
   ExportVoc(String)
   ExportYolo(String)
@@ -669,8 +702,38 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
           ..model,
           imageSource: "",
           imageNaturalSize: { x: 800.0, y: 600.0, },
+          imageDecoded: None,
           statusMessage: "Image cleared",
           staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    ImageDecoded(path, w, h, byte_len, fmt) =>
+      // Phase 5.10 — async result of the full pixel decode (not
+      // just the header probe in 5.6). Carries the image
+      // metadata so the model can expose them without holding
+      // the multi-MB raw pixel buffer in the Model struct.
+      // The full pixel data lives in a side table (5.10.x+
+      // follow-up).
+      (
+        {
+          ..model,
+          imageDecoded: Some({
+            width: w,
+            height: h,
+            byte_length: byte_len,
+            pixel_format: fmt,
+          }),
+          statusMessage: "Decoded " +
+            w.to_string() +
+            "x" +
+            h.to_string() +
+            " (" +
+            (byte_len / 1024).to_string() +
+            " KB, " +
+            fmt +
+            "): " +
+            path,
         },
         @moui.Effect::none(),
       )
