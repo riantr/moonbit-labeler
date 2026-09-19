@@ -1933,3 +1933,127 @@ test "binding-from ring — dangling id silently skipped (5.12.C)" {
   }
   assert_eq(ring_count, 0)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.12.D — FitView / ZoomAroundScreenPoint Msg tests
+// ─────────────────────────────────────────────────────────────────
+//
+// 5.12.D wires the 5.12.A view-math helpers into the Msg
+// pipeline. The Msg dispatch path is the dataflow the sidebar
+// Fit button and the canvas keyboard shortcut (F / 0) feed
+// into; the tests below verify that the Msg handlers correctly
+// compose fit_view_zoom + fit_view_pan and zoom_around_screen_pt.
+//
+// These tests don't drive the modifier chain directly — same as
+// 5.11's Pan / ResetZoomTransformView tests, the public surface
+// to assert on is the resulting Model.
+
+///|
+/// Phase 5.12.D — FitView(800, 600) on a 1600×1200 image
+/// picks zoom = 0.5 (width-limiting scale) and pan that centres
+/// the fitted image. The fitted image occupies (800, 600) — same
+/// as the viewport — so pan must be (0, 0) (no slack to absorb).
+test "FitView — landscape image in same-size viewport → zoom=0.5, pan=(0,0)" {
+  let model : Model = {
+    ..Model::new(),
+    imageNaturalSize: { x: 1600.0, y: 1200.0, },
+  }
+  let (next, _) = update(model, FitView(800.0, 600.0))
+  assert_eq(next.zoom, 0.5)
+  assert_eq(next.pan.x, 0.0)
+  assert_eq(next.pan.y, 0.0)
+}
+
+///|
+/// Phase 5.12.D — FitView(1000, 1000) on a 2000×1000 image
+/// (landscape in a square viewport) picks zoom = 0.5 and pan
+/// with a vertical slack of (1000 - 500) / 2 = 250 px. Matches
+/// the 5.12.A fit_view_pan test on the same inputs.
+test "FitView — landscape image in square viewport → zoom=0.5, pan.y=250" {
+  let model : Model = {
+    ..Model::new(),
+    imageNaturalSize: { x: 2000.0, y: 1000.0, },
+  }
+  let (next, _) = update(model, FitView(1000.0, 1000.0))
+  assert_eq(next.zoom, 0.5)
+  assert_eq(next.pan.x, 0.0)
+  assert_eq(next.pan.y, 250.0)
+}
+
+///|
+/// Phase 5.12.D — FitView marks both layers dirty (the
+/// resulting zoom + pan invalidate the 5.5.x cache key) and
+/// sets statusMessage to "Fit view" so the user has a
+/// confirmation cue in the sidebar.
+test "FitView — sets statusMessage + marks layers dirty" {
+  let model : Model = {
+    ..Model::new(),
+    imageNaturalSize: { x: 800.0, y: 600.0, },
+    staticLayerDirty: false,
+    dynamicLayerDirty: false,
+  }
+  let (next, _) = update(model, FitView(800.0, 600.0))
+  assert_eq(next.statusMessage, "Fit view")
+  assert_true(next.staticLayerDirty)
+  assert_true(next.dynamicLayerDirty)
+}
+
+///|
+/// Phase 5.12.D — ZoomAroundScreenPoint(2.0, 100, 100) at
+/// pan=(0,0), zoom=1.0: focal at natural (100, 100), zoom to
+/// 2.0 must keep that focal point at the same screen position
+/// (100, 100). Asserts the new pan is the algebraic
+/// pan_new = pan_old + focal_natural * (zoom_old - zoom_new) =
+/// 0 + 100 * (1.0 - 2.0) = -100.
+test "ZoomAroundScreenPoint — focal point stays fixed under zoom-in (5.12.D)" {
+  let model : Model = Model::new()
+  let (next, _) = update(model, ZoomAroundScreenPoint(2.0, 100.0, 100.0))
+  // Re-project the focal under the new view to verify the
+  // invariant: natural_to_screen(100, 100, new_pan, new_zoom)
+  // must equal the pre-zoom screen position (100, 100).
+  let screen_after : Point = natural_to_screen(
+    100.0,
+    100.0,
+    next.pan,
+    next.zoom,
+  )
+  assert_eq(screen_after.x, 100.0)
+  assert_eq(screen_after.y, 100.0)
+}
+
+///|
+/// Phase 5.12.D — ZoomAroundScreenPoint clamps the requested
+/// zoom through view_math.clamp_zoom. Asking for 100× pins at
+/// zoom_max = 32.
+test "ZoomAroundScreenPoint — clamps requested zoom (5.12.D)" {
+  let model : Model = Model::new()
+  let (next, _) = update(model, ZoomAroundScreenPoint(100.0, 50.0, 50.0))
+  assert_eq(next.zoom, zoom_max)
+}
+
+///|
+/// Phase 5.12.D — ZoomAroundScreenPoint at a focal at the
+/// image-natural origin (screen = (0, 0) when pan = 0)
+/// reduces to "pan stays the same, just change the zoom" —
+/// the origin doesn't move when zoomed around.
+test "ZoomAroundScreenPoint — focal at canvas origin leaves pan unchanged (5.12.D)" {
+  let model : Model = { ..Model::new(), pan: { x: 17.0, y: -3.0, }, }
+  let (next, _) = update(model, ZoomAroundScreenPoint(2.0, 0.0, 0.0))
+  assert_eq(next.pan.x, 17.0)
+  assert_eq(next.pan.y, -3.0)
+  assert_eq(next.zoom, 2.0)
+}
+
+///|
+/// Phase 5.12.D — ZoomAroundScreenPoint marks both layers
+/// dirty (zoom + pan changed → 5.5.x cache key invalidated).
+test "ZoomAroundScreenPoint — marks layers dirty (5.12.D)" {
+  let model : Model = {
+    ..Model::new(),
+    staticLayerDirty: false,
+    dynamicLayerDirty: false,
+  }
+  let (next, _) = update(model, ZoomAroundScreenPoint(1.5, 50.0, 50.0))
+  assert_true(next.staticLayerDirty)
+  assert_true(next.dynamicLayerDirty)
+}

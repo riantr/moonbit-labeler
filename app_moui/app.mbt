@@ -266,6 +266,23 @@ pub(all) enum Msg {
   // on_double_tap (touch / keyboard) on the canvas view. The
   // canvas re-centres on the natural-size image.
   ResetZoomTransformView
+  // Phase 5.12.D — auto-fit the natural-size image into the
+  // supplied viewport. The Msg carries the viewport dimensions
+  // because Moui doesn't expose a post-layout callback from
+  // which the canvas view could push its current frame size
+  // into Model. The sidebar Fit button dispatches this with a
+  // hardcoded (800, 600) — matches the detail_width in the
+  // top-level split_view. A future viewport-aware dispatcher
+  // (after Moui adds a layout callback or @views.container with
+  // a layout event) will supply the live frame instead.
+  FitView(Double, Double)
+  // Phase 5.12.D — zoom around a focal screen-space point.
+  // Hooks up 5.12.A's zoom_around_screen_pt helper to the Msg
+  // system. No trigger is wired yet (Moui 0.1.12 has no
+  // on_wheel modifier; the wheel-zoom gesture lands in a
+  // future batch once Moui exposes one). Tests verify the
+  // dataflow.
+  ZoomAroundScreenPoint(Double, Double, Double)
   AddClass(String)
   UpdateClass(String, String)
   DeleteClass(String)
@@ -531,6 +548,63 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         },
         @moui.Effect::none(),
       )
+    FitView(viewport_w, viewport_h) => {
+      // Phase 5.12.D — auto-fit the natural-size image into
+      // the supplied viewport. Delegates to view_math.fit_view_zoom
+      // (scale to fit) and view_math.fit_view_pan (centre the
+      // fitted image). Both helpers are pure functions added in
+      // 5.12.A; this handler just glues them into the Msg
+      // pipeline.
+      //
+      // The statusMessage gives the user a confirmation cue
+      // (the actual visual fit happens via the standard
+      // zoom/pan → cache invalidation → repaint cycle).
+      let nat_w : Double = model.imageNaturalSize.x
+      let nat_h : Double = model.imageNaturalSize.y
+      let new_zoom : Double = fit_view_zoom(
+        nat_w, nat_h, viewport_w, viewport_h,
+      )
+      let new_pan : Point = fit_view_pan(
+        new_zoom, nat_w, nat_h, viewport_w, viewport_h,
+      )
+      (
+        {
+          ..model,
+          pan: new_pan,
+          zoom: new_zoom,
+          statusMessage: "Fit view",
+          staticLayerDirty: true,
+          dynamicLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    }
+    ZoomAroundScreenPoint(new_zoom, focal_sx, focal_sy) => {
+      // Phase 5.12.D — zoom around a focal screen-space point.
+      // Delegates to view_math.zoom_around_screen_pt which
+      // (a) clamps the new zoom, (b) converts focal screen
+      // coords to natural, (c) computes the new pan that
+      // keeps the focal natural point under the same screen
+      // position after the zoom. Mirrors canvas.js
+      // zoomAtScreenPoint (lines 256-264) one-for-one.
+      let new_pan : Point = zoom_around_screen_pt(
+        new_zoom,
+        focal_sx,
+        focal_sy,
+        model.pan,
+        model.zoom,
+      )
+      (
+        {
+          ..model,
+          pan: new_pan,
+          zoom: clamp_zoom(new_zoom),
+          staticLayerDirty: true,
+          dynamicLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    }
     AddClass(name) =>
       (
         {
@@ -804,14 +878,41 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
 ///|
 pub fn view(model : Model) -> @moui.View[Msg] {
   // Phase 5.1: real split_view with sidebar + canvas. Earlier
-  // sessions shipped only a card-of-text shell; this is the first
-  // real chrome layout. canvas_view lives in canvas_view.mbt.
+  // sessions shipped only a card-of-text shell; this is the
+  // first real chrome layout. canvas_view lives in canvas_view.mbt.
+  //
+  // Phase 5.12.D — sidebar gains two @views.button triggers:
+  //   - "Fit" dispatches FitView(800, 600) — the sidebar's
+  //     detail_width matches the canvas viewport size, so the
+  //     hardcoded viewport is correct for the current layout.
+  //   - "Reset" dispatches ResetZoomTransformView (5.11).
+  // Plus two keyboard shortcuts on the canvas itself:
+  //   - "f" → FitView (same hardcoded viewport as the button)
+  //   - "0" → ResetZoomTransformView
+  // These cover the same surface as the wheel-zoom modifier
+  // Moui 0.1.12 doesn't yet expose.
+  let fit_shortcut : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
+    key="f",
+  )
+  let reset_shortcut : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
+    key="0",
+  )
+  let shortcut_canvas : @moui.View[Msg] = canvas_view(model)
+    .keyboard_shortcut(fit_shortcut)
+    .keyboard_shortcut(reset_shortcut)
   @views.split_view(
     primary=@views.column(
       [
         @views.text("Folder: " + model.folder),
         @views.text("Images: " + model.images.length().to_string()),
         @views.text("Classes: " + model.classes.length().to_string()),
+        // Phase 5.12.D — view-control buttons. The Fit button
+        // is the user-facing surface for FitView; the Reset
+        // button is the user-facing surface for
+        // ResetZoomTransformView (5.11). Keyboard shortcuts
+        // duplicate the same triggers for power users.
+        @views.button("Fit", on_click=FitView(800.0, 600.0)),
+        @views.button("Reset", on_click=ResetZoomTransformView),
         match model.toastMessage {
           Some(msg) => @views.text("toast: " + msg)
           None => @views.text("Status: " + model.statusMessage)
@@ -819,7 +920,7 @@ pub fn view(model : Model) -> @moui.View[Msg] {
       ],
       spacing=4.0,
     ),
-    detail=canvas_view(model),
+    detail=shortcut_canvas,
     primary_width=240.0,
     detail_width=800.0,
     height=600.0,
