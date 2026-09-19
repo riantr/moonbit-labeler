@@ -530,7 +530,10 @@ pub fn fit_contain_rect(
 
 ///|
 /// Image-natural point → screen point via pan/zoom around origin (0,0).
-fn img_to_screen(p : Point, pan : Point, zoom : Double) -> Point {
+/// `pub` because 5.12.A's view_math round-trip test wants to call it
+/// directly from a separate test file; `fn`-level visibility doesn't
+/// carry across `_test.mbt` blackbox boundaries.
+pub fn img_to_screen(p : Point, pan : Point, zoom : Double) -> Point {
   { x: pan.x + p.x * zoom, y: pan.y + p.y * zoom, }
 }
 
