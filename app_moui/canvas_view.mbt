@@ -546,14 +546,26 @@ fn draw_annotation(
       }
     Keypoint =>
       if ann.points.length() >= 1 {
-        let p = img_to_screen(ann.points[0], pan, zoom)
+        // Phase 5.8: replace the 5.3 8×8 fill_rect square with
+        // a proper circle via FillRoundedRect + radius = 4 (half
+        // the diameter — Skia interprets the corner radius as
+        // applied to all four corners equally, so a square with
+        // radius = half-side rounds to a true circle). 4 px
+        // radius matches the legacy canvas.js visual target
+        // (canvas.js uses ctx.arc and draws a 4-px-radius
+        // filled circle for each keypoint).
+        let p : Point = img_to_screen(ann.points[0], pan, zoom)
         let r : @core.Rect = @core.Rect::new(
           x=p.x - 4.0,
           y=p.y - 4.0,
           width=8.0,
           height=8.0,
         )
-        @common.fill_rect(pctx, r, color)
+        let rr : @core.RoundedRect = @core.RoundedRect::new(
+          rect=r,
+          radius=4.0,
+        )
+        @common.fill_rounded_rect(pctx, rr, @core.Brush::solid(color))
       }
   }
 }

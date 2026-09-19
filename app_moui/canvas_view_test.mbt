@@ -611,6 +611,164 @@ test "polygon — 2-point polygon emits MoveTo + LineTo + Close (3 verbs)" {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Phase 5.8 — keypoint FillRoundedRect circle upgrade tests
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.8 — keypoint annotation now emits ONE
+/// `FillRoundedRectBrush` command (instead of a plain
+/// `FillRect` square). Verify by counting command kinds in
+/// the static layer's command stream: there should be 0
+/// `FillRect` from the keypoint body itself, and exactly 1
+/// `FillRoundedRectBrush` whose rect is the 8×8 square and
+/// whose radius is 4 (= half the diameter, which makes the
+/// rounded rect render as a circle on a HiDPI display).
+test "keypoint — emits exactly 1 FillRoundedRectBrush command (no plain fill_rect square)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "kp-1",
+        shape: Keypoint,
+        points: [{ x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut rounded_count = 0
+  let mut plain_fill_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::FillRoundedRectBrush(_) => rounded_count = rounded_count + 1
+      @core.DrawCommand::FillRect(_) => plain_fill_count = plain_fill_count + 1
+      _ => ()
+    }
+  }
+  // 1 FillRoundedRectBrush (the keypoint circle), 2 FillRect
+  // (background + placeholder). The legacy 5.3 keypoint would
+  // have added a 3rd FillRect for the 8×8 square.
+  assert_eq(rounded_count, 1)
+  assert_eq(plain_fill_count, 2)
+}
+
+///|
+/// Phase 5.8 — the keypoint's `FillRoundedRectBrush` carries
+/// the right rect (centred on the keypoint, 8×8) and the right
+/// radius (4, i.e. half-side → renders as a circle). The
+/// stroke is the same `selected vs unselected` palette the
+/// rect/polygon branches use.
+test "keypoint — FillRoundedRectBrush rect + radius + brush match expected" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "kp-1",
+        shape: Keypoint,
+        points: [{ x: 100.0, y: 200.0, }],
+      },
+    ],
+    selectedId: None,
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut found_rect : @core.Rect? = None
+  let mut found_radius : Double = -1.0
+  let mut found_color : @core.Color? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::FillRoundedRectBrush(spec, brush) => {
+        found_rect = Some(spec.rect)
+        found_radius = spec.radius
+        match brush {
+          @core.Brush::Solid(c) => found_color = Some(c)
+          _ => ()
+        }
+      }
+      _ => ()
+    }
+  }
+  // Rect: centred on (100, 200) → x=96, y=196, w=8, h=8.
+  let rect : @core.Rect = match found_rect {
+    Some(r) => r
+    None => fail("expected FillRoundedRectBrush")
+  }
+  assert_eq(rect.origin.x, 96.0)
+  assert_eq(rect.origin.y, 196.0)
+  assert_eq(rect.size.width, 8.0)
+  assert_eq(rect.size.height, 8.0)
+  // Radius: 4 (half the 8 px diameter — renders as a circle).
+  assert_eq(found_radius, 4.0)
+  // Brush: red palette (unselected).
+  let c : @core.Color = match found_color {
+    Some(color) => color
+    None => fail("expected Solid brush")
+  }
+  assert_eq(c.r, 0.95)
+  assert_eq(c.g, 0.25)
+  assert_eq(c.b, 0.25)
+  assert_eq(c.a, 1.0)
+}
+
+///|
+/// Phase 5.8 — the keypoint's circle radius stays 4 px even
+/// when the canvas is zoomed (because we apply the zoom to
+/// the rect via img_to_screen, but the radius is a constant
+/// inside `draw_annotation` — this matches the legacy canvas.js
+/// behaviour where the keypoint marker is a fixed 4-px-radius
+/// dot regardless of zoom). This is a separate test from the
+/// above because the rect math depends on pan/zoom.
+test "keypoint — radius stays constant under pan + zoom" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    pan: { x: 50.0, y: 100.0, },
+    zoom: 2.0,
+    annotations: [
+      {
+        id: "kp-1",
+        shape: Keypoint,
+        points: [{ x: 100.0, y: 100.0, }],
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut radius = -1.0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::FillRoundedRectBrush(spec, _) =>
+        radius = spec.radius
+      _ => ()
+    }
+  }
+  assert_eq(radius, 4.0)
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Phase 5.5.x — cached static layer tests
 // ─────────────────────────────────────────────────────────────────
 
