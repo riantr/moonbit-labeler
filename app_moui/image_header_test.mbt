@@ -22,6 +22,7 @@
 //
 // We synthesise a 33-byte header (the minimum `png_dimensions`
 // will accept) with width=1920, height=1080.
+///|
 fn png_header(w : Int, h : Int) -> Bytes {
   let bytes : Array[Byte] = []
   // 8-byte PNG signature.
@@ -72,6 +73,8 @@ fn png_header(w : Int, h : Int) -> Bytes {
 // BMP: 2-byte "BM" signature + 24-byte BITMAPINFOHEADER.
 // `bmp_dimensions` reads width at offset 18 (LE u32), height at 22
 // (LE u32). 26 bytes total.
+
+///|
 fn bmp_header(w : Int, h : Int) -> Bytes {
   let bytes : Array[Byte] = []
   bytes.push(b'B')
@@ -101,6 +104,8 @@ fn bmp_header(w : Int, h : Int) -> Bytes {
 //
 // QOI: 4-byte "qoif" magic + 4-byte width (BE u32) + 4-byte
 // height (BE u32) + 3 channels + 1 colourspace. 14 bytes total.
+
+///|
 fn qoi_header(w : Int, h : Int) -> Bytes {
   let bytes : Array[Byte] = []
   bytes.push(b'q')
@@ -127,6 +132,8 @@ fn qoi_header(w : Int, h : Int) -> Bytes {
 // GIF: 6-byte "GIF87a" / "GIF89a" signature + 2-byte width
 // (LE u16) + 2-byte height (LE u16) + 1-byte packed.
 // 10 bytes total.
+
+///|
 fn gif_header(w : Int, h : Int) -> Bytes {
   let bytes : Array[Byte] = []
   bytes.push(b'G')
@@ -151,6 +158,8 @@ fn gif_header(w : Int, h : Int) -> Bytes {
 // (LE u16).  We just need the magic + width + height, plus 18
 // bytes total.  `tga_dimensions` doesn't check the magic; it just
 // reads offsets 12/14 from a >= 18-byte buffer.
+
+///|
 fn tga_header(w : Int, h : Int) -> Bytes {
   let bytes : Array[Byte] = []
   bytes.push(b'\x00') // id_length

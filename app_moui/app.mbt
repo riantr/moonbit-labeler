@@ -261,6 +261,11 @@ pub(all) enum Msg {
   CursorLeft
   Zoom(Double)
   Pan(Point)
+  // Phase 5.11 — reset pan + zoom to defaults (pan=(0,0),
+  // zoom=1.0). Triggered by on_secondary_tap (right-click) and
+  // on_double_tap (touch / keyboard) on the canvas view. The
+  // canvas re-centres on the natural-size image.
+  ResetZoomTransformView
   AddClass(String)
   UpdateClass(String, String)
   DeleteClass(String)
@@ -509,6 +514,23 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         },
         @moui.Effect::none(),
       )
+    ResetZoomTransformView =>
+      // Phase 5.11 — reset pan + zoom to defaults. Forces a
+      // full static-layer repaint (the 5.5.x cache key
+      // includes pan + zoom, so changing them invalidates
+      // the cached static bitmap and the next paint rebuilds
+      // it from scratch).
+      (
+        {
+          ..model,
+          pan: { x: 0.0, y: 0.0, },
+          zoom: 1.0,
+          statusMessage: "View reset",
+          staticLayerDirty: true,
+          dynamicLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     AddClass(name) =>
       (
         {
@@ -622,40 +644,28 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
       // than a crash, and the loadable image path goes through
       // LoadTestImage (still supported as a deprecated shim).
       (
-        {
-          ..model,
-          statusMessage: "Loading " + path + "...",
-        },
-        @moui.Effect::task(
-          key="image-header-probe:" + path,
-          start=fn(send) {
-            match probe_image_dimensions_path(path) {
-              Some((w, h)) =>
-                if w > 0 && h > 0 {
-                  send(ImageLoaded(path, w, h))
-                } else {
-                  send(
-                    LoadImageFailed(
-                      path,
-                      "image has zero width or height",
-                    ),
-                  )
-                }
-              None =>
-                // 5.6.x: this branch is hit when the sync wrapper
-                // can't call @fs.read_file. The async helper
-                // probe_image_dimensions_path_async exists for the
-                // future async-update-fn path.
-                send(
-                  LoadImageFailed(
-                    path,
-                    "5.6.x: sync wrapper can't bridge to async fs; use LoadTestImage or wait for async update fn",
-                  ),
-                )
-            }
-            None
-          },
-        ),
+        { ..model, statusMessage: "Loading " + path + "...", },
+        @moui.Effect::task(key="image-header-probe:" + path, start=fn(send) {
+          match probe_image_dimensions_path(path) {
+            Some((w, h)) =>
+              if w > 0 && h > 0 {
+                send(ImageLoaded(path, w, h))
+              } else {
+                send(LoadImageFailed(path, "image has zero width or height"))
+              }
+            None =>
+              // 5.6.x: this branch is hit when the sync wrapper
+              // can't call @fs.read_file. The async helper
+              // probe_image_dimensions_path_async exists for the
+              // future async-update-fn path.
+              send(
+                LoadImageFailed(
+                  path, "5.6.x: sync wrapper can't bridge to async fs; use LoadTestImage or wait for async update fn",
+                ),
+              )
+          }
+          None
+        }),
       )
     ImageLoaded(path, w, h) =>
       // Phase 5.6 — async result. The probe completed and we now
@@ -670,11 +680,11 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
           imageSource: path,
           imageNaturalSize: { x: w.to_double(), y: h.to_double(), },
           statusMessage: "Loaded " +
-            w.to_string() +
-            "x" +
-            h.to_string() +
-            " image: " +
-            path,
+          w.to_string() +
+          "x" +
+          h.to_string() +
+          " image: " +
+          path,
           staticLayerDirty: true,
         },
         @moui.Effect::none(),
@@ -725,15 +735,15 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
             pixel_format: fmt,
           }),
           statusMessage: "Decoded " +
-            w.to_string() +
-            "x" +
-            h.to_string() +
-            " (" +
-            (byte_len / 1024).to_string() +
-            " KB, " +
-            fmt +
-            "): " +
-            path,
+          w.to_string() +
+          "x" +
+          h.to_string() +
+          " (" +
+          (byte_len / 1024).to_string() +
+          " KB, " +
+          fmt +
+          "): " +
+          path,
         },
         @moui.Effect::none(),
       )

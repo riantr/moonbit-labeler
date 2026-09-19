@@ -105,7 +105,26 @@ pub fn canvas_view(model : Model) -> @moui.View[Msg] {
   let static_layer = cached_static_layer_view(model)
   let dynamic_layer = dynamic_layer_view(model)
   let stacked = @layout.stack([static_layer, dynamic_layer])
-  stacked.on_drag(fn(ev) {
+  // Phase 5.11 — pan via drag. DragGestureEvent.delta carries
+  // the per-step screen-space movement; we accumulate it into
+  // model.pan (independent of the cursor hit-test dispatch
+  // below). This makes every drag also pan the image — the
+  // standard canvas-view convention for desktop image
+  // viewers. CursorMoved keeps being dispatched for hit-test
+  // + handle-drag, with the (updated) pan/zoom applied to
+  // invert the cursor position back to image-natural coords.
+  //
+  // We don't dispatch a separate `Pan(ev.delta)` Msg here —
+  // the pan mutation is a side effect of the drag (the user
+  // doesn't expect a "pan tool" mode; pan is always-on). The
+  // CursorMoved handler in app.mbt reads `model.pan` and
+  // recomputes `cursorImgPt` accordingly.
+  let after_pan_drag : @moui.View[Msg] = stacked.on_drag(fn(ev) {
+    // Marshal @core.Point → app's local Point (same fields, but
+    // distinct types in MoonBit's structural type system).
+    Pan({ x: ev.delta.x, y: ev.delta.y, })
+  })
+  let after_cursor_drag : @moui.View[Msg] = after_pan_drag.on_drag(fn(ev) {
     CursorMoved(
       {
         x: (ev.position.x - model.pan.x) / model.zoom,
@@ -114,6 +133,24 @@ pub fn canvas_view(model : Model) -> @moui.View[Msg] {
       { x: ev.position.x, y: ev.position.y, },
     )
   })
+  // Phase 5.11 — secondary-tap (right-click) resets zoom +
+  // pan to defaults (zoom=1.0, pan=(0,0)). The canvas viewer
+  // re-centres on the natural-size image. Matches the
+  // expected "right-click to reset view" desktop convention.
+  // Double-tap (primary button) does the same — gives touch
+  // users a way to reset without a right-click.
+  let after_secondary : @moui.View[Msg] = after_cursor_drag.on_secondary_tap(
+    ResetZoomTransformView,
+  )
+  // Phase 5.11 — bind the final view (returned by on_double_tap)
+  // so it actually flows out of the function. Renaming away from
+  // `_view` (which MoonBit's type checker treats as a discard
+  // even with an explicit type annotation, yielding "has type
+  // Unit" on the RHS) makes the result reachable.
+  let final_view : @moui.View[Msg] = after_secondary.on_double_tap(
+    ResetZoomTransformView,
+  )
+  final_view
 }
 
 ///|
@@ -567,10 +604,7 @@ fn draw_annotation(
           width=8.0,
           height=8.0,
         )
-        let rr : @core.RoundedRect = @core.RoundedRect::new(
-          rect=r,
-          radius=4.0,
-        )
+        let rr : @core.RoundedRect = @core.RoundedRect::new(rect=r, radius=4.0)
         @common.fill_rounded_rect(pctx, rr, @core.Brush::solid(color))
       }
   }
@@ -623,8 +657,7 @@ fn draw_bindings(
     let from_opt : Annotation? = by_id.get(b.from)
     let to_opt : Annotation? = by_id.get(b.to)
     match (from_opt, to_opt) {
-      (Some(from), Some(to)) =>
-        draw_binding_arrow(pctx, from, to, pan, zoom)
+      (Some(from), Some(to)) => draw_binding_arrow(pctx, from, to, pan, zoom)
       _ => ()
     }
   }
@@ -647,12 +680,7 @@ fn draw_binding_arrow(
   let from_pt : Point = img_to_screen(binding_centroid(from), pan, zoom)
   let to_pt : Point = img_to_screen(binding_centroid(to), pan, zoom)
   // Same yellow as canvas.js's "#fbbf24" (a 3-bit web color).
-  let color : @core.Color = @core.Color::rgba(
-    r=0.984,
-    g=0.749,
-    b=0.141,
-    a=1.0,
-  )
+  let color : @core.Color = @core.Color::rgba(r=0.984, g=0.749, b=0.141, a=1.0)
   // 1. Line from `from_pt` to `to_pt` (NOT including the arrow
   // head segment — we shorten the line slightly so the arrow
   // head sits on top of the line endpoint rather than

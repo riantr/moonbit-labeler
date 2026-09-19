@@ -101,9 +101,7 @@ pub fn decode_image_bytes(data : Bytes) -> @moonbit_image.Image? {
 /// name) for the model layer. Useful when the caller doesn't
 /// need the raw pixel data (e.g. a future progress-bar UI that
 /// shows "1920×1080, 8.3 MB decoded, RGBA8").
-pub fn decode_image_metadata(
-  data : Bytes,
-) -> (Int, Int, Int, String)? {
+pub fn decode_image_metadata(data : Bytes) -> (Int, Int, Int, String)? {
   match decode_image_bytes(data) {
     Some(img) => {
       let meta : (Int, Int, Int, String) = (
@@ -172,9 +170,7 @@ pub fn probe_image_dimensions_path(path : String) -> (Int, Int)? {
 /// `LoadImage(path)` handler in `app.mbt` once MoUI's update fn
 /// becomes `async fn` (or a public sync→async bridge lands in
 /// MoonBit 0.21.x+).
-pub async fn probe_image_dimensions_path_async(
-  path : String,
-) -> (Int, Int)? {
+pub async fn probe_image_dimensions_path_async(path : String) -> (Int, Int)? {
   let data_ref : &@io.Data = @fs.read_file(path)
   let bytes : Bytes = data_ref.binary()
   probe_image_dimensions(bytes)

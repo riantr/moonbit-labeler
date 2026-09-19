@@ -539,10 +539,7 @@ test "polygon — DrawPath stroke brush + width match annotation selection" {
   assert_eq(c.a, 1.0)
 
   // Selected polygon: yellow brush, 2.0 stroke width.
-  let model_sel : Model = {
-    ..model_unsel,
-    selectedId: Some("poly-1"),
-  }
+  let model_sel : Model = { ..model_unsel, selectedId: Some("poly-1"), }
   let pctx2 = @common.PaintContext::new()
   draw_static_layer(pctx2, model_sel, frame)
   let cmds2 : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx2)
@@ -628,11 +625,7 @@ test "keypoint — emits exactly 1 FillRoundedRectBrush command (no plain fill_r
     ..Model::new(),
     imageSource: "",
     annotations: [
-      {
-        id: "kp-1",
-        shape: Keypoint,
-        points: [{ x: 100.0, y: 100.0, }],
-      },
+      { id: "kp-1", shape: Keypoint, points: [{ x: 100.0, y: 100.0, }], },
     ],
   }
   let frame : @core.Rect = @core.Rect::new(
@@ -648,7 +641,8 @@ test "keypoint — emits exactly 1 FillRoundedRectBrush command (no plain fill_r
   let mut plain_fill_count = 0
   for c in cmds {
     match c {
-      @core.DrawCommand::FillRoundedRectBrush(_) => rounded_count = rounded_count + 1
+      @core.DrawCommand::FillRoundedRectBrush(_) =>
+        rounded_count = rounded_count + 1
       @core.DrawCommand::FillRect(_) => plain_fill_count = plain_fill_count + 1
       _ => ()
     }
@@ -671,11 +665,7 @@ test "keypoint — FillRoundedRectBrush rect + radius + brush match expected" {
     ..Model::new(),
     imageSource: "",
     annotations: [
-      {
-        id: "kp-1",
-        shape: Keypoint,
-        points: [{ x: 100.0, y: 200.0, }],
-      },
+      { id: "kp-1", shape: Keypoint, points: [{ x: 100.0, y: 200.0, }], },
     ],
     selectedId: None,
   }
@@ -741,11 +731,7 @@ test "keypoint — radius stays constant under pan + zoom" {
     pan: { x: 50.0, y: 100.0, },
     zoom: 2.0,
     annotations: [
-      {
-        id: "kp-1",
-        shape: Keypoint,
-        points: [{ x: 100.0, y: 100.0, }],
-      },
+      { id: "kp-1", shape: Keypoint, points: [{ x: 100.0, y: 100.0, }], },
     ],
   }
   let frame : @core.Rect = @core.Rect::new(
@@ -760,8 +746,7 @@ test "keypoint — radius stays constant under pan + zoom" {
   let mut radius = -1.0
   for c in cmds {
     match c {
-      @core.DrawCommand::FillRoundedRectBrush(spec, _) =>
-        radius = spec.radius
+      @core.DrawCommand::FillRoundedRectBrush(spec, _) => radius = spec.radius
       _ => ()
     }
   }
@@ -832,7 +817,7 @@ test "bindings — single binding emits 2 DrawPath commands (line + arrow head)"
         points: [{ x: 200.0, y: 200.0, }, { x: 300.0, y: 300.0, }],
       },
     ],
-    bindings: [{ id: "b-1", from: "from-rect", to: "to-rect" }],
+    bindings: [{ id: "b-1", from: "from-rect", to: "to-rect", }],
   }
   let frame : @core.Rect = @core.Rect::new(
     x=0.0,
@@ -872,9 +857,7 @@ test "bindings — missing from/to id silently skipped" {
         points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
       },
     ],
-    bindings: [
-      { id: "b-1", from: "from-rect", to: "nonexistent" },
-    ],
+    bindings: [{ id: "b-1", from: "from-rect", to: "nonexistent", }],
   }
   let frame : @core.Rect = @core.Rect::new(
     x=0.0,
@@ -918,7 +901,7 @@ test "bindings — line path has stroke+no-fill; arrow head has fill+no-stroke" 
         points: [{ x: 200.0, y: 200.0, }, { x: 300.0, y: 300.0, }],
       },
     ],
-    bindings: [{ id: "b-1", from: "from-rect", to: "to-rect" }],
+    bindings: [{ id: "b-1", from: "from-rect", to: "to-rect", }],
   }
   let frame : @core.Rect = @core.Rect::new(
     x=0.0,
@@ -935,14 +918,14 @@ test "bindings — line path has stroke+no-fill; arrow head has fill+no-stroke" 
     match c {
       @core.DrawCommand::DrawPath(spec) =>
         if spec.fill is None {
-            // First path with no fill = the line.
-            if line_path is None {
-              line_path = Some(spec)
-            }
-          } else if arrow_path is None {
-            // First path with a fill = the arrow head.
-            arrow_path = Some(spec)
+          // First path with no fill = the line.
+          if line_path is None {
+            line_path = Some(spec)
           }
+        } else if arrow_path is None {
+          // First path with a fill = the arrow head.
+          arrow_path = Some(spec)
+        }
       _ => ()
     }
   }
@@ -1009,11 +992,7 @@ test "binding_centroid — averages all points regardless of shape" {
   let poly : Annotation = {
     id: "p",
     shape: Polygon,
-    points: [
-      { x: 0.0, y: 0.0, },
-      { x: 60.0, y: 90.0, },
-      { x: 60.0, y: 90.0, },
-    ],
+    points: [{ x: 0.0, y: 0.0, }, { x: 60.0, y: 90.0, }, { x: 60.0, y: 90.0, }],
   }
   let p_pt : Point = binding_centroid(poly)
   // (0 + 60 + 60) / 3 = 40, (0 + 90 + 90) / 3 = 60.
@@ -1240,4 +1219,130 @@ test "static_cache_key — handle drag keeps static cache stable" {
   // points and invalidate the cache).
   let mid_drag : Model = { ..base, cursorImgPt: Some({ x: 30.0, y: 30.0, }), }
   assert_eq(static_cache_key(base), static_cache_key(mid_drag))
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.11 — drag-pan + secondary-tap reset plumbing tests
+// ─────────────────────────────────────────────────────────────────
+//
+// The 5.11 input plumbing in canvas_view.mbt wires:
+//   - `on_drag(Pan(ev.delta))` — accumulates per-step screen-space
+//     delta onto model.pan.
+//   - `on_secondary_tap(ResetZoomTransformView)` + `on_double_tap(...)` —
+//     reset pan + zoom to defaults.
+//
+// These tests don't drive the modifier chain directly (MoUI's
+// modifier API is opaque — you can't enumerate a View's modifiers
+// without driving a renderer). Instead we test the *Msg dispatch
+// consequences*: feed Pan / Zoom / ResetZoomTransformView into
+// update() and assert the resulting model. That covers the
+// dataflow the modifiers rely on.
+
+///|
+/// Phase 5.11 — a single Pan(delta) Msg accumulates the delta onto
+/// model.pan (x and y independently). Starting from (0, 0), a drag
+/// delta of (+5, -3) gives pan = (5, -3) — i.e. the image moves 5
+/// px right and 3 px up on screen, which is the standard desktop
+/// image-viewer convention.
+test "Pan(delta) — single step accumulates delta onto model.pan" {
+  let model : Model = Model::new()
+  let (next, _effect) = update(model, Pan({ x: 5.0, y: -3.0, }))
+  assert_eq(next.pan.x, 5.0)
+  assert_eq(next.pan.y, -3.0)
+}
+
+///|
+/// Phase 5.11 — multiple Pan msgs accumulate (the typical
+/// multi-step drag). After three Pan calls the pan is the sum of
+/// all three deltas. This is the runtime contract for the
+/// DragGestureEvent.delta stream emitted on each on_drag tick.
+test "Pan(delta) — multi-step drag accumulates across calls" {
+  let model : Model = Model::new()
+  let (m1, _) = update(model, Pan({ x: 5.0, y: 5.0, }))
+  let (m2, _) = update(m1, Pan({ x: -2.0, y: 1.0, }))
+  let (m3, _) = update(m2, Pan({ x: 10.0, y: -7.0, }))
+  // (5 + -2 + 10) = 13, (5 + 1 + -7) = -1
+  assert_eq(m3.pan.x, 13.0)
+  assert_eq(m3.pan.y, -1.0)
+}
+
+///|
+/// Phase 5.11 — Pan marks the static + dynamic layers dirty so
+/// the next paint rebuilds the static cache (pan is part of the
+/// 5.5.x cache_key) and re-renders handles at the new offset.
+test "Pan(delta) — sets staticLayerDirty + dynamicLayerDirty flags" {
+  let model : Model = {
+    ..Model::new(),
+    staticLayerDirty: false,
+    dynamicLayerDirty: false,
+  }
+  let (next, _) = update(model, Pan({ x: 1.0, y: 1.0, }))
+  assert_true(next.staticLayerDirty)
+  assert_true(next.dynamicLayerDirty)
+}
+
+///|
+/// Phase 5.11 — ResetZoomTransformView wipes a non-default pan
+/// + zoom back to (pan=(0,0), zoom=1.0). After panning far off
+/// and zooming in, the right-click / double-tap reset brings the
+/// canvas back to its natural centred position.
+test "ResetZoomTransformView — restores pan to (0, 0) and zoom to 1.0" {
+  let model : Model = {
+    ..Model::new(),
+    pan: { x: 137.5, y: -42.0, },
+    zoom: 2.5,
+  }
+  let (next, _) = update(model, ResetZoomTransformView)
+  assert_eq(next.pan.x, 0.0)
+  assert_eq(next.pan.y, 0.0)
+  assert_eq(next.zoom, 1.0)
+}
+
+///|
+/// Phase 5.11 — ResetZoomTransformView marks the layers dirty
+/// (pan + zoom changed, so the 5.5.x cache key invalidated).
+test "ResetZoomTransformView — marks both layers dirty" {
+  let model : Model = {
+    ..Model::new(),
+    staticLayerDirty: false,
+    dynamicLayerDirty: false,
+  }
+  let (next, _) = update(model, ResetZoomTransformView)
+  assert_true(next.staticLayerDirty)
+  assert_true(next.dynamicLayerDirty)
+}
+
+///|
+/// Phase 5.11 — ResetZoomTransformView sets a "View reset" status
+/// message so the user sees confirmation in the sidebar status
+/// line that the right-click / double-tap worked.
+test "ResetZoomTransformView — sets statusMessage to 'View reset'" {
+  let model : Model = { ..Model::new(), statusMessage: "Working…", }
+  let (next, _) = update(model, ResetZoomTransformView)
+  assert_eq(next.statusMessage, "View reset")
+}
+
+///|
+/// Phase 5.11 — Pan(delta) does NOT touch model.zoom (pan and zoom
+/// are orthogonal; pan only moves the image, zoom only scales).
+/// This guards against future regressions where someone tries to
+/// combine Pan + Zoom into one Msg handler.
+test "Pan(delta) — does not modify model.zoom" {
+  let model : Model = { ..Model::new(), zoom: 2.0, }
+  let (next, _) = update(model, Pan({ x: 50.0, y: 50.0, }))
+  assert_eq(next.zoom, 2.0)
+}
+
+///|
+/// Phase 5.11 — Zoom(z) is the inverse-axis Msg: sets zoom to z
+/// without touching pan. (Zoom was wired in 5.5.x; this is the
+/// 5.11-era sanity check that the parallel Msg still works after
+/// the on_drag×2 / on_secondary_tap / on_double_tap plumbing
+/// landed.)
+test "Zoom(z) — sets zoom without touching pan" {
+  let model : Model = { ..Model::new(), pan: { x: 30.0, y: 40.0, }, zoom: 1.0, }
+  let (next, _) = update(model, Zoom(3.5))
+  assert_eq(next.zoom, 3.5)
+  assert_eq(next.pan.x, 30.0)
+  assert_eq(next.pan.y, 40.0)
 }
