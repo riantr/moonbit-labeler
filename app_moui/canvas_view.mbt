@@ -404,6 +404,12 @@ fn issue_static_commands(
     }
     draw_annotation(pctx, ann, is_sel, model.pan, model.zoom)
   }
+  // 4. Bindings (from → to arrows). Phase 5.9. Drawn after the
+  // annotations so the arrow heads sit on top of the connected
+  // shapes; canvas.js does the same. Each binding is a
+  // dashed-centroid-to-centroid line + a small filled triangle
+  // arrow head pointing at the `to` annotation.
+  draw_bindings(pctx, model, model.pan, model.zoom)
 }
 
 ///|
@@ -588,6 +594,165 @@ fn draw_handles(
   // visual feedback that the polygon can be closed by clicking
   // back near vertex 0. 5.7 will wire the actual close logic.
   ignore(0)
+}
+
+///|
+/// Phase 5.9 — draw all binding arrows. For each binding in
+/// `model.bindings`, look up the `from` and `to` annotations by
+/// id, compute their centroids in screen space, and emit a
+/// `DrawPath` line from `from` → `to` plus a filled-triangle
+/// arrow head at the `to` end.
+///
+/// Bindings whose `from` or `to` annotation is missing (e.g.
+/// the user deleted an annotation but the binding still
+/// references it) are silently skipped — same behaviour as
+/// `frontend/src/canvas.js:548-552`.
+fn draw_bindings(
+  pctx : @common.PaintContext,
+  model : Model,
+  pan : Point,
+  zoom : Double,
+) -> Unit {
+  // Build an id → annotation lookup once (O(N) build, then
+  // O(1) per binding lookup).
+  let by_id : Map[String, Annotation] = Map::new()
+  for ann in model.annotations {
+    by_id.set(ann.id, ann)
+  }
+  for b in model.bindings {
+    let from_opt : Annotation? = by_id.get(b.from)
+    let to_opt : Annotation? = by_id.get(b.to)
+    match (from_opt, to_opt) {
+      (Some(from), Some(to)) =>
+        draw_binding_arrow(pctx, from, to, pan, zoom)
+      _ => ()
+    }
+  }
+}
+
+///|
+/// Phase 5.9 — emit the line + arrow head for a single binding.
+/// Line is drawn as a single `DrawPath(PathSpec)` (MoveTo +
+/// LineTo), matching 5.7's polygon upgrade so the renderer
+/// gets a clean single-pass stroke with proper line joins.
+/// Arrow head is a filled triangle (3-vertex PathSpec with
+/// MoveTo + 2 LineTo + Close) pointing at the `to` centroid.
+fn draw_binding_arrow(
+  pctx : @common.PaintContext,
+  from : Annotation,
+  to : Annotation,
+  pan : Point,
+  zoom : Double,
+) -> Unit {
+  let from_pt : Point = img_to_screen(binding_centroid(from), pan, zoom)
+  let to_pt : Point = img_to_screen(binding_centroid(to), pan, zoom)
+  // Same yellow as canvas.js's "#fbbf24" (a 3-bit web color).
+  let color : @core.Color = @core.Color::rgba(
+    r=0.984,
+    g=0.749,
+    b=0.141,
+    a=1.0,
+  )
+  // 1. Line from `from_pt` to `to_pt` (NOT including the arrow
+  // head segment — we shorten the line slightly so the arrow
+  // head sits on top of the line endpoint rather than
+  // overlapping it). Arrow head is 8 px long.
+  let head_len : Double = 8.0
+  let dx : Double = to_pt.x - from_pt.x
+  let dy : Double = to_pt.y - from_pt.y
+  let len_sq : Double = dx * dx + dy * dy
+  if len_sq <= 0.001 {
+    return
+  }
+  let len : Double = sqrt_inline(len_sq)
+  // Shorten the line by head_len along the direction so the
+  // arrow head's tip coincides with the original `to_pt`.
+  let end_pt : Point = {
+    x: to_pt.x - dx / len * head_len,
+    y: to_pt.y - dy / len * head_len,
+  }
+  let line_verbs : Array[@core.PathVerb] = [
+    @core.PathVerb::MoveTo({ x: from_pt.x, y: from_pt.y, }),
+    @core.PathVerb::LineTo({ x: end_pt.x, y: end_pt.y, }),
+  ]
+  let line_path : @core.PathSpec = @core.PathSpec::new(
+    verbs=line_verbs,
+    fill=None,
+    stroke=Some(@core.Brush::solid(color)),
+    stroke_width=1.5,
+  )
+  @common.draw_path(pctx, line_path)
+  // 2. Arrow head: 3-vertex filled triangle pointing at `to_pt`.
+  // Perpendicular unit vector for the base:
+  let ux : Double = dx / len
+  let uy : Double = dy / len
+  let px : Double = -uy
+  let py : Double = ux
+  let base_centre : Point = {
+    x: to_pt.x - ux * head_len,
+    y: to_pt.y - uy * head_len,
+  }
+  let half_w : Double = 3.0 // half-width of the arrow head base
+  let b1 : Point = {
+    x: base_centre.x + px * half_w,
+    y: base_centre.y + py * half_w,
+  }
+  let b2 : Point = {
+    x: base_centre.x - px * half_w,
+    y: base_centre.y - py * half_w,
+  }
+  let arrow_verbs : Array[@core.PathVerb] = [
+    @core.PathVerb::MoveTo({ x: to_pt.x, y: to_pt.y, }),
+    @core.PathVerb::LineTo({ x: b1.x, y: b1.y, }),
+    @core.PathVerb::LineTo({ x: b2.x, y: b2.y, }),
+    @core.PathVerb::Close,
+  ]
+  let arrow_path : @core.PathSpec = @core.PathSpec::new(
+    verbs=arrow_verbs,
+    fill=Some(@core.Brush::solid(color)),
+    stroke=None,
+    stroke_width=0.0,
+  )
+  @common.draw_path(pctx, arrow_path)
+}
+
+///|
+/// Phase 5.9 — centroid of an annotation in image-natural
+/// pixels. Matches `frontend/src/canvas.js:55` (centroid of
+/// the points array). For Rect we average the two corner
+/// points; for Polygon we average all vertices; for
+/// Keypoint the single point is its own centroid.
+pub fn binding_centroid(ann : Annotation) -> Point {
+  let n : Int = ann.points.length()
+  if n == 0 {
+    return { x: 0.0, y: 0.0, }
+  }
+  let mut sx : Double = 0.0
+  let mut sy : Double = 0.0
+  for p in ann.points {
+    sx = sx + p.x
+    sy = sy + p.y
+  }
+  { x: sx / n.to_double(), y: sy / n.to_double(), }
+}
+
+///|
+/// Local sqrt for vector length math. Same Newton iteration
+/// pattern as the 5.3 hit_test.mbt helper, but inlined here
+/// to keep canvas_view self-contained (draw_binding_arrow
+/// was the last caller that needed this).
+fn sqrt_inline(x : Double) -> Double {
+  if x <= 0.0 {
+    return 0.0
+  }
+  let mut guess : Double = x / 2.0
+  if guess < 1.0 {
+    guess = 1.0
+  }
+  for _i = 0; _i < 8; _i = _i + 1 {
+    guess = (guess + x / guess) / 2.0
+  }
+  guess
 }
 
 ///|

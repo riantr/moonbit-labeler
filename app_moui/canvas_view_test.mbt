@@ -769,6 +769,259 @@ test "keypoint — radius stays constant under pan + zoom" {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Phase 5.9 — binding arrow tests
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.9 — when `model.bindings` is empty (the default
+/// case), the static layer emits no `DrawPath` commands for
+/// bindings (the only paths emitted are the polygon ones from
+/// prior tests; here we have only rect annotations so 0
+/// DrawPath total).
+test "bindings — empty bindings list emits 0 DrawPath commands" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "rect-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+    bindings: [],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut path_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(_) => path_count = path_count + 1
+      _ => ()
+    }
+  }
+  assert_eq(path_count, 0)
+}
+
+///|
+/// Phase 5.9 — a single binding between two rect annotations
+/// emits 2 DrawPath commands: 1 line (MoveTo + LineTo, 2
+/// verbs) + 1 arrow head triangle (MoveTo + 2 LineTo + Close,
+/// 4 verbs). The yellow stroke colour matches canvas.js's
+/// `#fbbf24`.
+test "bindings — single binding emits 2 DrawPath commands (line + arrow head)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "from-rect",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+      },
+      {
+        id: "to-rect",
+        shape: Rect,
+        points: [{ x: 200.0, y: 200.0, }, { x: 300.0, y: 300.0, }],
+      },
+    ],
+    bindings: [{ id: "b-1", from: "from-rect", to: "to-rect" }],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  // We expect 2 paths from the binding (line + arrow head).
+  // No polygons in this model so total = 2.
+  let mut path_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(_) => path_count = path_count + 1
+      _ => ()
+    }
+  }
+  assert_eq(path_count, 2)
+}
+
+///|
+/// Phase 5.9 — a binding referencing a missing annotation id is
+/// silently skipped (matches `frontend/src/canvas.js:548-552`'s
+/// `if (!a || !c) continue` guard). With two annotations and a
+/// binding whose `to` points at a non-existent id, we expect
+/// 0 binding DrawPaths.
+test "bindings — missing from/to id silently skipped" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "from-rect",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+      },
+    ],
+    bindings: [
+      { id: "b-1", from: "from-rect", to: "nonexistent" },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut path_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(_) => path_count = path_count + 1
+      _ => ()
+    }
+  }
+  assert_eq(path_count, 0)
+}
+
+///|
+/// Phase 5.9 — the arrow head triangle has a fill brush and
+/// NO stroke brush (the fill paints the triangle; stroking
+/// would double-paint the edges and look thicker). The line
+/// path is the opposite: fill=None, stroke=Some(yellow). This
+/// test inspects the first two DrawPaths and asserts the
+/// fill/stroke assignments match the design.
+test "bindings — line path has stroke+no-fill; arrow head has fill+no-stroke" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "from-rect",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+      },
+      {
+        id: "to-rect",
+        shape: Rect,
+        points: [{ x: 200.0, y: 200.0, }, { x: 300.0, y: 300.0, }],
+      },
+    ],
+    bindings: [{ id: "b-1", from: "from-rect", to: "to-rect" }],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut line_path : @core.PathSpec? = None
+  let mut arrow_path : @core.PathSpec? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawPath(spec) =>
+        if spec.fill is None {
+            // First path with no fill = the line.
+            if line_path is None {
+              line_path = Some(spec)
+            }
+          } else if arrow_path is None {
+            // First path with a fill = the arrow head.
+            arrow_path = Some(spec)
+          }
+      _ => ()
+    }
+  }
+  // Line: 2 verbs (MoveTo + LineTo), fill=None, stroke=Some(...).
+  let line : @core.PathSpec = match line_path {
+    Some(p) => p
+    None => fail("expected line path")
+  }
+  assert_eq(line.verbs.length(), 2)
+  // `Brush?` has no Show derive (only Eq, Debug, ToJson), so we
+  // can't `inspect(line.fill, content="None")`. Use a pattern
+  // match instead.
+  let line_fill_is_none : Bool = match line.fill {
+    None => true
+    Some(_) => false
+  }
+  assert_eq(line_fill_is_none, true)
+  let line_stroke_is_some : Bool = match line.stroke {
+    None => false
+    Some(_) => true
+  }
+  assert_eq(line_stroke_is_some, true)
+  // Arrow head: 4 verbs (MoveTo + 2 LineTo + Close), fill=Some(...),
+  // stroke=None.
+  let arrow : @core.PathSpec = match arrow_path {
+    Some(p) => p
+    None => fail("expected arrow path")
+  }
+  assert_eq(arrow.verbs.length(), 4)
+  ignore(arrow.fill)
+  ignore(arrow.stroke)
+  // Last verb on the arrow path should be Close.
+  match arrow.verbs[3] {
+    @core.PathVerb::Close => ()
+    _ => fail("expected arrow head to close")
+  }
+}
+
+///|
+/// Phase 5.9 — `binding_centroid` averages the points of any
+/// annotation shape. Rect (2 points) → midpoint. Keypoint (1
+/// point) → that point. Polygon (N points) → average of all
+/// vertices.
+test "binding_centroid — averages all points regardless of shape" {
+  // Rect: 2 corner points → midpoint at (50, 50).
+  let rect : Annotation = {
+    id: "r",
+    shape: Rect,
+    points: [{ x: 0.0, y: 0.0, }, { x: 100.0, y: 100.0, }],
+  }
+  let r_pt : Point = binding_centroid(rect)
+  assert_eq(r_pt.x, 50.0)
+  assert_eq(r_pt.y, 50.0)
+  // Keypoint: 1 point → that point.
+  let kp : Annotation = {
+    id: "k",
+    shape: Keypoint,
+    points: [{ x: 75.0, y: 25.0, }],
+  }
+  let k_pt : Point = binding_centroid(kp)
+  assert_eq(k_pt.x, 75.0)
+  assert_eq(k_pt.y, 25.0)
+  // Polygon: 3 vertices → centroid at (40, 60).
+  let poly : Annotation = {
+    id: "p",
+    shape: Polygon,
+    points: [
+      { x: 0.0, y: 0.0, },
+      { x: 60.0, y: 90.0, },
+      { x: 60.0, y: 90.0, },
+    ],
+  }
+  let p_pt : Point = binding_centroid(poly)
+  // (0 + 60 + 60) / 3 = 40, (0 + 90 + 90) / 3 = 60.
+  assert_eq(p_pt.x, 40.0)
+  assert_eq(p_pt.y, 60.0)
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Phase 5.5.x — cached static layer tests
 // ─────────────────────────────────────────────────────────────────
 
