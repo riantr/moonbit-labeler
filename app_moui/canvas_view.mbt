@@ -1005,6 +1005,15 @@ pub fn class_lookup_name(
 /// `centroid_screen` is the screen-space point the label
 /// centres on — typically `img_to_screen(binding_centroid(ann),
 /// pan, zoom)`.
+///
+/// Phase 5.18 — adds a 4-direction black halo (drawn as 4 extra
+/// DrawText commands offset by ±1 px on each axis with alpha
+/// 0.55) so the label reads on dark images. This is a workaround
+/// for the missing TextRun stroke pass; canvas.js uses
+/// `strokeText` with `lineWidth=3` for the same visual. The
+/// 4-direction approach is the cheapest approximation: 4
+/// extra draw calls per label × N labels = cheap relative to
+/// the existing DrawCommand budget.
 fn draw_label_text(
   pctx : @common.PaintContext,
   text : String,
@@ -1027,6 +1036,35 @@ fn draw_label_text(
     width=200.0,
     height=20.0,
   )
+  // 5.18 — black halo pass. 4 DrawText calls at ±1 px on each
+  // axis with alpha 0.55 (matches canvas.js's
+  // `strokeStyle = "rgba(0,0,0,0.55)"`). Drawn FIRST so the
+  // colour pass on top composites correctly.
+  let halo_color : @core.Color = @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.55)
+  let offsets : Array[Point] = [
+    { x: 1.0, y: 0.0, },
+    { x: -1.0, y: 0.0, },
+    { x: 0.0, y: 1.0, },
+    { x: 0.0, y: -1.0, },
+  ]
+  for off in offsets {
+    let halo_frame : @core.Rect = @core.Rect::new(
+      x=frame.origin.x + off.x,
+      y=frame.origin.y + off.y,
+      width=frame.size.width,
+      height=frame.size.height,
+    )
+    let halo_run : @core.TextRun = @core.TextRun::new(
+      text~,
+      frame=halo_frame,
+      font~,
+      color=halo_color,
+      align=@core.TextAlign::TextCenter,
+    )
+    @common.draw_text(pctx, halo_run)
+  }
+  // Color pass on top of the halo (matches canvas.js's
+  // fillStyle-over-strokeText order).
   let text_run : @core.TextRun = @core.TextRun::new(
     text~,
     frame~,

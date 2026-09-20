@@ -2427,7 +2427,14 @@ test "label text — font is 12 px system_ui (5.13)" {
 /// With 3 Rect annotations, the static layer emits 3 DrawText
 /// commands (one per annotation body). The labels are
 /// independent (no aliasing between commands).
-test "label text — multiple annotations each emit one label (5.13)" {
+///
+/// Phase 5.18 update — each label now emits 5 DrawText
+/// commands (4 halo passes + 1 colour pass). Total is
+/// therefore 3 × 5 = 15. We assert both the count and that
+/// the text content repeats in order (a1 halo, a1 colour,
+/// a2 halo, a2 colour, a3 halo, a3 colour) — the halo is
+/// always emitted first so the colour overlays on top.
+test "label text — multiple annotations each emit one label (5.13 + 5.18)" {
   let model : Model = {
     ..Model::new(),
     imageSource: "",
@@ -2468,10 +2475,18 @@ test "label text — multiple annotations each emit one label (5.13)" {
       _ => ()
     }
   }
-  assert_eq(labels.length(), 3)
+  // 3 annotations × 5 DrawText passes (4 halo + 1 colour) = 15
+  assert_eq(labels.length(), 15)
+  // Order: halo1, halo2, halo3, halo4, colour (5 passes per label)
+  // For label "a1" (indices 0..4): all are "a1".
+  // For label "a2" (indices 5..9): all are "a2".
+  // For label "a3" (indices 10..14): all are "a3".
   assert_eq(labels[0], "a1")
-  assert_eq(labels[1], "a2")
-  assert_eq(labels[2], "a3")
+  assert_eq(labels[4], "a1")
+  assert_eq(labels[5], "a2")
+  assert_eq(labels[9], "a2")
+  assert_eq(labels[10], "a3")
+  assert_eq(labels[14], "a3")
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -3143,4 +3158,188 @@ test "bindings — short binding emits at least 1 dash (5.17)" {
     }
   }
   assert_true(has_arrow)
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.18 — label text halo tests
+// ─────────────────────────────────────────────────────────────────
+//
+// 5.18 approximates the canvas.js black halo (strokeText
+// with lineWidth=3, rgba(0,0,0,0.55)) by emitting 4 extra
+// DrawText commands at ±1 px offsets on each axis before the
+// colour pass. MoUI's TextRun doesn't expose a stroke pass,
+// so this is the cheapest visual approximation.
+
+///|
+/// Phase 5.18 — a single annotation emits exactly 5
+/// DrawText commands: 4 halo passes + 1 colour pass. The
+/// halo colour is rgba(0, 0, 0, 0.55) (matches canvas.js).
+test "label text halo — 4 halo passes + 1 colour (5.18)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "halo-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut draw_text_count = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(_) => draw_text_count = draw_text_count + 1
+      _ => ()
+    }
+  }
+  // Background FillRect + placeholder FillRect + Rect fill +
+  // Rect stroke = 4 non-text commands. The annotation's
+  // label text emits 5 DrawText (4 halo + 1 colour). Verify
+  // total DrawText count is exactly 5.
+  assert_eq(draw_text_count, 5)
+}
+
+///|
+/// Phase 5.18 — the 4 halo passes use rgba(0, 0, 0, 0.55)
+/// (matches canvas.js's `strokeStyle = "rgba(0,0,0,0.55)"`).
+/// The colour pass uses the annotation body colour (red for
+/// unselected). Verify the colour distribution in the
+/// 5-pass sequence: 4 black + 1 red.
+test "label text halo — halo colour is rgba(0,0,0,0.55), colour is body (5.18)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "halo-2",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+    ],
+    selectedId: None,
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  let mut halo_count : Int = 0
+  let mut color_count : Int = 0
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) =>
+        // Halo: rgb all ~0, alpha 0.55. Colour: rgb from
+        // annotation body (red: 0.95/0.25/0.25).
+        if text_run.color.r < 0.1 &&
+          text_run.color.g < 0.1 &&
+          text_run.color.b < 0.1 {
+          halo_count = halo_count + 1
+          assert_eq(text_run.color.a, 0.55)
+        } else {
+          color_count = color_count + 1
+          assert_eq(text_run.color.r, 0.95)
+          assert_eq(text_run.color.g, 0.25)
+          assert_eq(text_run.color.b, 0.25)
+        }
+      _ => ()
+    }
+  }
+  assert_eq(halo_count, 4)
+  assert_eq(color_count, 1)
+}
+
+///|
+/// Phase 5.18 — the 4 halo frames are offset from the colour
+/// frame by exactly ±1 px on each axis (right, left, down, up).
+/// Verify the 4 halo frames' top-left corners fall at
+/// (colour.x + 1, colour.y), (colour.x - 1, colour.y),
+/// (colour.x, colour.y + 1), (colour.x, colour.y - 1).
+test "label text halo — frames offset by ±1 px on each axis (5.18)" {
+  let model : Model = {
+    ..Model::new(),
+    imageSource: "",
+    annotations: [
+      {
+        id: "halo-3",
+        shape: Rect,
+        points: [{ x: 100.0, y: 100.0, }, { x: 200.0, y: 200.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let frame : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=800.0,
+    height=600.0,
+  )
+  let pctx = @common.PaintContext::new()
+  draw_static_layer(pctx, model, frame)
+  let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
+  // Collect frame origins for all halo DrawTexts.
+  let halo_origin_x : Array[Double] = []
+  let halo_origin_y : Array[Double] = []
+  let mut color_frame_origin : (Double, Double)? = None
+  for c in cmds {
+    match c {
+      @core.DrawCommand::DrawText(text_run) =>
+        if text_run.color.r < 0.1 &&
+          text_run.color.g < 0.1 &&
+          text_run.color.b < 0.1 {
+          halo_origin_x.push(text_run.frame.origin.x)
+          halo_origin_y.push(text_run.frame.origin.y)
+        } else {
+          color_frame_origin = Some(
+            (text_run.frame.origin.x, text_run.frame.origin.y),
+          )
+        }
+      _ => ()
+    }
+  }
+  let (cx, cy) : (Double, Double) = match color_frame_origin {
+    Some(o) => o
+    None => fail("expected colour pass")
+  }
+  // 4 halo frames; each should be offset by ±1 on exactly one axis.
+  assert_eq(halo_origin_x.length(), 4)
+  let mut found_right : Bool = false
+  let mut found_left : Bool = false
+  let mut found_down : Bool = false
+  let mut found_up : Bool = false
+  for i = 0; i < 4; i = i + 1 {
+    let dx : Double = halo_origin_x[i] - cx
+    let dy : Double = halo_origin_y[i] - cy
+    if dx == 1.0 && dy == 0.0 {
+      found_right = true
+    }
+    if dx == -1.0 && dy == 0.0 {
+      found_left = true
+    }
+    if dx == 0.0 && dy == 1.0 {
+      found_down = true
+    }
+    if dx == 0.0 && dy == -1.0 {
+      found_up = true
+    }
+  }
+  assert_true(found_right)
+  assert_true(found_left)
+  assert_true(found_down)
+  assert_true(found_up)
 }
