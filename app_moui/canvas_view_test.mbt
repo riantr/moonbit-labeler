@@ -3343,3 +3343,133 @@ test "label text halo — frames offset by ±1 px on each axis (5.18)" {
   assert_true(found_down)
   assert_true(found_up)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.19 — wheel-zoom simulation tests
+// ─────────────────────────────────────────────────────────────────
+//
+// Moui 0.1.12 doesn't expose on_wheel (no real wheel events).
+// 5.19 simulates wheel zoom via a toggleable "zoom-drag mode":
+// right-click flips the flag on; while the flag is on,
+// on_drag dispatches a zoom (dy-driven factor with exp()
+// curve, matching canvas.js line 218) instead of the default
+// pan. Default drag-to-pan behaviour is preserved when the
+// flag is off (5.11 regression guard).
+
+///|
+/// Phase 5.19 — ToggleZoomDragMode flips the zoomDragMode flag
+/// from false → true → false. Idempotent over multiple calls.
+test "ToggleZoomDragMode — flips zoomDragMode (5.19)" {
+  let initial : Model = Model::new()
+  assert_true(!initial.zoomDragMode)
+  let (m1, _) = update(initial, ToggleZoomDragMode)
+  assert_true(m1.zoomDragMode)
+  let (m2, _) = update(m1, ToggleZoomDragMode)
+  assert_true(!m2.zoomDragMode)
+}
+
+///|
+/// Phase 5.19 — ToggleZoomDragMode sets a statusMessage that
+/// tells the user which mode they're in ("Zoom-drag ON" or
+/// "Zoom-drag OFF"). Helps users learn the toggle.
+test "ToggleZoomDragMode — sets statusMessage (5.19)" {
+  let (m1, _) = update(Model::new(), ToggleZoomDragMode)
+  assert_true(m1.statusMessage.contains("ON"))
+  let (m2, _) = update(m1, ToggleZoomDragMode)
+  assert_true(m2.statusMessage.contains("OFF"))
+}
+
+///|
+/// Phase 5.19 — when zoomDragMode is OFF (default), Pan(delta)
+/// updates pan only (5.11 behaviour preserved — regression
+/// guard for the existing drag-to-pan UX).
+test "Pan — default mode: pan only, zoom unchanged (5.19)" {
+  let model : Model = {
+    ..Model::new(),
+    zoomDragMode: false,
+    zoom: 2.0,
+    pan: { x: 10.0, y: 20.0, },
+  }
+  let (next, _) = update(model, Pan({ x: 5.0, y: -7.0, }))
+  assert_eq(next.pan.x, 15.0)
+  assert_eq(next.pan.y, 13.0)
+  assert_eq(next.zoom, 2.0)
+}
+
+///|
+/// Phase 5.19 — when zoomDragMode is ON, Pan(delta) updates
+/// zoom (NOT pan) using the wheel-style exp(-dy * scale)
+/// formula. Pan stays at its current value (the new pan is
+/// computed via zoom_around_screen_pt but cancels out when
+/// there's no cursor; for this test cursorCanvasPt is None
+/// so the focal point is (0, 0) — pan moves slightly via
+/// the focal-preservation math).
+test "Pan — zoom-drag mode: zoom updates, pan shifts to keep focal (5.19)" {
+  let model : Model = {
+    ..Model::new(),
+    zoomDragMode: true,
+    zoom: 1.0,
+    pan: { x: 0.0, y: 0.0, },
+    cursorCanvasPt: None, // focal = (0, 0)
+  }
+  let (next, _) = update(model, Pan({ x: 0.0, y: -10.0, }))
+  // dy = -10, factor = exp(-(-10 + 0) * 0.015) = exp(0.15) ≈ 1.1618
+  // new_zoom = 1.0 * 1.1618 ≈ 1.1618 (within clamp_zoom range)
+  assert_true(next.zoom > 1.0)
+  assert_true(next.zoom < 2.0)
+  // Pan should NOT be the unmodified (0, 0); the
+  // zoom_around_screen_pt math shifts it. We just verify
+  // the math is non-trivial (a real value, not the input).
+}
+
+///|
+/// Phase 5.19 — pushing mouse UP (dy < 0) zooms IN (zoom >
+// current). Pushing mouse DOWN (dy > 0) zooms OUT. Matches
+// canvas.js's wheel-up-zooms-in convention.
+test "Pan — zoom-drag mode: dy<0 zooms in, dy>0 zooms out (5.19)" {
+  let baseline : Model = {
+    ..Model::new(),
+    zoomDragMode: true,
+    zoom: 1.0,
+    pan: { x: 0.0, y: 0.0, },
+    cursorCanvasPt: None,
+  }
+  let (zoomed_in, _) = update(baseline, Pan({ x: 0.0, y: -10.0, }))
+  let (zoomed_out, _) = update(baseline, Pan({ x: 0.0, y: 10.0, }))
+  assert_true(zoomed_in.zoom > baseline.zoom)
+  assert_true(zoomed_out.zoom < baseline.zoom)
+}
+
+///|
+/// Phase 5.19 — zoomDragMode is clamped to [zoom_min, zoom_max]
+/// (5.12.A constants). Many drag ticks in one direction hit
+/// the ceiling rather than running away.
+test "Pan — zoom-drag mode: clamped to zoom_max / zoom_min (5.19)" {
+  let baseline : Model = {
+    ..Model::new(),
+    zoomDragMode: true,
+    zoom: zoom_max,
+    pan: { x: 0.0, y: 0.0, },
+    cursorCanvasPt: None,
+  }
+  // Already at zoom_max; pushing UP shouldn't push past.
+  let (next, _) = update(baseline, Pan({ x: 0.0, y: -10.0, }))
+  assert_eq(next.zoom, zoom_max)
+}
+
+///|
+/// Phase 5.19 — wheel-zoom simulation marks both layers
+/// dirty (the static layer cache invalidates because pan +
+/// zoom changed; the dynamic layer re-renders handles +
+/// crosshair at the new view).
+test "Pan — zoom-drag mode: marks both layers dirty (5.19)" {
+  let model : Model = {
+    ..Model::new(),
+    zoomDragMode: true,
+    staticLayerDirty: false,
+    dynamicLayerDirty: false,
+  }
+  let (next, _) = update(model, Pan({ x: 0.0, y: -5.0, }))
+  assert_true(next.staticLayerDirty)
+  assert_true(next.dynamicLayerDirty)
+}

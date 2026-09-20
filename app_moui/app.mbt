@@ -179,6 +179,12 @@ pub(all) struct Model {
   annotations : Array[Annotation]
   bindings : Array[Binding]
   dragState : DragState?
+  // Phase 5.19 — when true, on_drag dispatches ZoomBy (vertical
+  // drag = zoom) instead of Pan (default drag-to-pan). Toggled
+  // by the on_secondary_tap modifier; the boolean is the only
+  // state we carry since Moui 0.1.12 has no on_wheel modifier
+  // and no separate right-button-drag modifier.
+  zoomDragMode : Bool
   cursorImgPt : Point?
   cursorCanvasPt : Point?
   zoom : Double
@@ -222,6 +228,7 @@ pub fn Model::new() -> Model {
     annotations: [],
     bindings: [],
     dragState: None,
+    zoomDragMode: false,
     cursorImgPt: None,
     cursorCanvasPt: None,
     zoom: 1.0,
@@ -298,6 +305,11 @@ pub(all) enum Msg {
   // future batch once Moui exposes one). Tests verify the
   // dataflow.
   ZoomAroundScreenPoint(Double, Double, Double)
+  // Phase 5.19 — toggle the zoom-drag mode flag (when on,
+  // on_drag dispatches ZoomBy instead of Pan). Bound to
+  // on_secondary_tap in view(). See the on_drag / on_secondary_tap
+  // wiring for the dispatch chain.
+  ToggleZoomDragMode
   AddClass(String)
   UpdateClass(String, String)
   DeleteClass(String)
@@ -624,12 +636,82 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         @moui.Effect::none(),
       )
     Pan(delta) =>
+      // Phase 5.19 — when zoomDragMode is on, the Pan Msg
+      // becomes a wheel-zoom simulation: dy drives a zoom
+      // factor (exp(-dy * scale), matching canvas.js line
+      // 218 `factor = Math.exp(-ev.deltaY * 0.0015)`),
+      // applied around the cursor position. dx still
+      // contributes to the zoom factor too (canvas.js only
+      // uses deltaY; we use both axes to make horizontal
+      // mouse-wheel feel intuitive if it ever lands). The
+      // delta is screen-space, so the cursor screen position
+      // is `cursorCanvasPt` (canvas-local, NOT pan-offset).
+      if model.zoomDragMode {
+        // Phase 5.19 — wheel-zoom simulation. Combine dx + dy
+        // into a single zoom factor (canvas.js uses -dy only;
+        // we use -dy as the dominant axis and -dx as a
+        // minor tiebreaker for trackpad-style two-finger
+        // gestures).
+        let focal_x : Double = match model.cursorCanvasPt {
+          Some(p) => p.x
+          None => 0.0
+        }
+        let focal_y : Double = match model.cursorCanvasPt {
+          Some(p) => p.y
+          None => 0.0
+        }
+        // The -dy convention: pushing mouse UP zooms IN
+        // (canvas.js's wheel-up-zooms-in matches typical
+        // desktop image viewers). dy * 0.015 is the
+        // sensitivity; canvas.js uses 0.0015 but dy is in
+        // pixels per pixel, so 10× for our drag convention.
+        let factor : Double = @math.exp(-((delta.y + delta.x * 0.3) * 0.015))
+        let new_zoom : Double = factor * model.zoom
+        let new_pan : Point = zoom_around_screen_pt(
+          new_zoom,
+          focal_x,
+          focal_y,
+          model.pan,
+          model.zoom,
+        )
+        (
+          {
+            ..model,
+            pan: new_pan,
+            zoom: clamp_zoom(new_zoom),
+            staticLayerDirty: true,
+            dynamicLayerDirty: true,
+          },
+          @moui.Effect::none(),
+        )
+      } else {
+        // Default 5.11 Pan behavior — drag-to-pan.
+        (
+          {
+            ..model,
+            pan: { x: model.pan.x + delta.x, y: model.pan.y + delta.y, },
+            staticLayerDirty: true,
+            dynamicLayerDirty: true,
+          },
+          @moui.Effect::none(),
+        )
+      }
+    ToggleZoomDragMode =>
+      // Phase 5.19 — flip the zoom-drag-mode flag. Bound
+      // to on_secondary_tap in view() so a right-click
+      // toggles between "drag = pan" (default) and "drag =
+      // wheel-zoom" modes. Idempotent within a frame; the
+      // statusMessage gives the user a visible cue about
+      // which mode they're in.
       (
         {
           ..model,
-          pan: { x: model.pan.x + delta.x, y: model.pan.y + delta.y, },
-          staticLayerDirty: true,
-          dynamicLayerDirty: true,
+          zoomDragMode: !model.zoomDragMode,
+          statusMessage: if model.zoomDragMode {
+            "Zoom-drag OFF"
+          } else {
+            "Zoom-drag ON (drag = zoom)"
+          },
         },
         @moui.Effect::none(),
       )

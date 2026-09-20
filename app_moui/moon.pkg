@@ -16,6 +16,7 @@ import {
   "moonbitlang/async/fs",
   "moonbitlang/async/io",
   "riantr/moonbit_image",
+  "moonbitlang/core/math",
 }
 
 supported_targets = "native"

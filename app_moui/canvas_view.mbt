@@ -137,18 +137,22 @@ pub fn canvas_view(model : Model) -> @moui.View[Msg] {
   // pan to defaults (zoom=1.0, pan=(0,0)). The canvas viewer
   // re-centres on the natural-size image. Matches the
   // expected "right-click to reset view" desktop convention.
-  // Double-tap (primary button) does the same — gives touch
-  // users a way to reset without a right-click.
+  // Phase 5.19 — on_secondary_tap (right-click) toggles the
+  // wheel-zoom drag mode (was ResetZoomTransformView in 5.11).
+  // The view-reset UX is still available via the sidebar
+  // "Reset" button + the "0" keyboard shortcut.
   let after_secondary : @moui.View[Msg] = after_cursor_drag.on_secondary_tap(
-    ResetZoomTransformView,
+    ToggleZoomDragMode,
   )
   // Phase 5.11 — bind the final view (returned by on_double_tap)
   // so it actually flows out of the function. Renaming away from
   // `_view` (which MoonBit's type checker treats as a discard
   // even with an explicit type annotation, yielding "has type
-  // Unit" on the RHS) makes the result reachable.
+  // Unit" on the RHS) makes the result reachable. Phase 5.19
+  // also repurposed double-tap: now it toggles wheel-zoom
+  // mode too (for touch users who lack a right button).
   let final_view : @moui.View[Msg] = after_secondary.on_double_tap(
-    ResetZoomTransformView,
+    ToggleZoomDragMode,
   )
   final_view
 }
