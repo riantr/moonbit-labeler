@@ -342,6 +342,21 @@ pub(all) enum Msg {
   // model.classes is passed at dispatch time so the parser
   // can resolve class names → class_ids.
   LoadLabelJson(String)
+  // Phase 5.16 — store a freshly-serialised label JSON in
+  // model.label and clear the dirty flag. The caller is
+  // expected to have produced `text` via
+  // label_io.serialize_label_text(model) or its equivalent.
+  // Splitting "produce JSON" from "store in model" keeps the
+  // dispatch handler free of side-effect-only concerns and
+  // matches the existing pattern (LoadLabelJson similarly
+  // takes a pre-parsed JSON string).
+  SaveLabelText(String)
+  // Phase 5.16 — convenience Msg: serialize the current
+  // model state to JSON and store it in model.label.raw_json
+  // in one step. Use this for the sidebar "Save" button;
+  // the caller (write_file) decides whether to also flush to
+  // disk via an Effect.
+  SaveCurrentLabel
   BeginDragHandle(String, Int)
   EndDragHandle
   // Phase 5.10 — full image decode result. Carries the decoded
@@ -940,6 +955,40 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
           selectedId: None,
           dragState: None,
           staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    }
+    SaveLabelText(text) =>
+      // Phase 5.16 — store the pre-serialised JSON in
+      // model.label.raw_json and clear the dirty flag. The
+      // caller is responsible for producing `text` (typically
+      // via label_io.serialize_label_text(model)). Splitting
+      // "produce JSON" from "store in model" matches the
+      // LoadLabelJson shape and keeps the handler side-
+      // effect-free (no disk I/O).
+      (
+        {
+          ..model,
+          label: { raw_json: text, dirty: false, },
+          statusMessage: "Saved (in memory; flush to disk via IPC)",
+        },
+        @moui.Effect::none(),
+      )
+    SaveCurrentLabel => {
+      // Phase 5.16 — convenience wrapper: serialize the
+      // current model state and store it in model.label. The
+      // effect is `none()` because the actual disk write
+      // happens via the IPC bridge (op_write_label) once
+      // it's wired. Until then, "Save" only persists to
+      // memory + the dirty flag is cleared (so the next
+      // delete or edit re-dirties it).
+      let text : String = serialize_label_text(model)
+      (
+        {
+          ..model,
+          label: { raw_json: text, dirty: false, },
+          statusMessage: "Saved (in memory)",
         },
         @moui.Effect::none(),
       )

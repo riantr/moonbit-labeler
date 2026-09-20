@@ -62,6 +62,56 @@ pub fn class_id_for_name(name : String, classes : Array[ClassEntry]) -> String? 
   None
 }
 
+///|
+/// Phase 5.16 — inverse of `class_id_for_name`: look up the
+/// class_name for a given class_id. Returns the name on the
+/// first match (first-wins). Returns "" when no matching
+/// class exists — `serialize_label_text` translates this into
+/// the JSON `type` field as "" (the normalised schema's
+/// "unassigned" sentinel).
+///
+/// Used by `serialize_label_text` to write the JSON's `type`
+/// field from the model's `class_id`. Without the inverse
+/// helper, the serialiser would have to carry its own
+/// reverse-lookup loop, and we already have two other
+/// class_id ↔ name helpers (`class_id_for_name`,
+/// `class_lookup_name`) — symmetry feels right.
+pub fn class_name_for_id(id : String, classes : Array[ClassEntry]) -> String {
+  for c in classes {
+    if c.id == id {
+      return c.name
+    }
+  }
+  ""
+}
+
+///|
+/// Phase 5.16 — extract the filename portion of a file path.
+/// Used by `serialize_label_text` to populate the JSON's
+/// `img_name` field from `model.imageSource` (which stores the
+/// full file path). Handles both forward and backward slashes
+/// (Windows path support).
+pub fn path_basename(path : String) -> String {
+  // Find the last occurrence of either '/' or '\\' and return
+  // everything after it. Falls through to the full path when
+  // no separator is found (the input is already a basename).
+  let chars : Array[Char] = path.to_array()
+  let mut last_sep : Int = -1
+  for i = 0; i < chars.length(); i = i + 1 {
+    if chars[i] == '/' || chars[i] == '\\' {
+      last_sep = i
+    }
+  }
+  if last_sep < 0 {
+    return path
+  }
+  let out : Array[Char] = []
+  for i = last_sep + 1; i < chars.length(); i = i + 1 {
+    out.push(chars[i])
+  }
+  String::from_array(out)
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Shape / point helpers (private)
 // ─────────────────────────────────────────────────────────────────
@@ -213,4 +263,76 @@ pub fn parse_label_text(
     bindings.push({ id, from, to, })
   }
   (annotations, bindings)
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.16 — serialize_label_text (mirror of parse_label_text)
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.16 — convert a Shape enum to its JSON string form.
+/// Matches the strings `parse_label_text` accepts (so a
+/// serialize → parse round-trip is identity-preserving).
+fn shape_to_string(shape : Shape) -> String {
+  match shape {
+    Rect => "rect"
+    Polygon => "polygon"
+    Keypoint => "keypoint"
+  }
+}
+
+///|
+/// Phase 5.16 — convert a Point to its JSON array form.
+fn point_to_json(p : Point) -> Json {
+  Json::array([Json::number(p.x), Json::number(p.y)])
+}
+
+///|
+/// Phase 5.16 — serialize the model's annotations + bindings
+/// back into the normalized label JSON text. Round-trips
+/// against `parse_label_text`: serialize → parse returns the
+/// same annotations + bindings + class_ids (modulo class-name
+/// resolution: serialize writes the class *name* in the JSON
+/// `type` field, parse resolves it back to class_id via the
+/// same `model.classes` table).
+///
+/// `img_name` is derived from `model.imageSource` via
+/// `path_basename`. When `imageSource` is "" (placeholder
+/// mode), `img_name` is also "".
+pub fn serialize_label_text(model : Model) -> String {
+  let classes : Array[ClassEntry] = model.classes
+  let img_name : String = path_basename(model.imageSource)
+  let infos_json : Array[Json] = []
+  for ann in model.annotations {
+    // Each info: { id, shape, type (class name from class_id),
+    // points (array of [x, y] pairs) }
+    let type_name : String = class_name_for_id(ann.class_id, classes)
+    let points_json : Array[Json] = []
+    for p in ann.points {
+      points_json.push(point_to_json(p))
+    }
+    let info_members : Map[String, Json] = Map::from_array([
+      ("id", Json::string(ann.id)),
+      ("shape", Json::string(shape_to_string(ann.shape))),
+      ("type", Json::string(type_name)),
+      ("points", Json::array(points_json)),
+    ])
+    infos_json.push(Json::object(info_members))
+  }
+  let bindings_json : Array[Json] = []
+  for b in model.bindings {
+    let binding_members : Map[String, Json] = Map::from_array([
+      ("id", Json::string(b.id)),
+      ("from", Json::string(b.from)),
+      ("to", Json::string(b.to)),
+      ("type", Json::string("same_group")),
+    ])
+    bindings_json.push(Json::object(binding_members))
+  }
+  let members : Map[String, Json] = Map::from_array([
+    ("img_name", Json::string(img_name)),
+    ("infos", Json::array(infos_json)),
+    ("bindings", Json::array(bindings_json)),
+  ])
+  Json::object(members).stringify()
 }
