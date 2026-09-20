@@ -328,6 +328,14 @@ pub(all) enum Msg {
   //   CursorMoved emits ModifyHandle instead of hit-testing.
   // EndDragHandle — release the active drag (no-op when None).
   SetAnnotations(Array[Annotation], Array[Binding])
+  // Phase 5.14.B — parse a JSON label text and bulk-load the
+  // result into the model. Currently only wired to a
+  // test-driven dataflow; the production path will route
+  // through op_set_annotations once the IPC bridge lands.
+  // Returns (annotations, bindings) ready for SetAnnotations.
+  // model.classes is passed at dispatch time so the parser
+  // can resolve class names → class_ids.
+  LoadLabelJson(String)
   BeginDragHandle(String, Int)
   EndDragHandle
   // Phase 5.10 — full image decode result. Carries the decoded
@@ -844,6 +852,28 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         },
         @moui.Effect::none(),
       )
+    LoadLabelJson(text) => {
+      // Phase 5.14.B — parse the JSON text via label_io.parse_label_text
+      // and route the result through the same dataflow as
+      // SetAnnotations. model.classes is forwarded so the parser can
+      // resolve class names → class_ids (the 5.14.A plumbing that
+      // the canvas view reads in draw_label_text).
+      let (annotations, bindings) : (Array[Annotation], Array[Binding]) = parse_label_text(
+        text,
+        model.classes,
+      )
+      (
+        {
+          ..model,
+          annotations,
+          bindings,
+          selectedId: None,
+          dragState: None,
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    }
     BeginDragHandle(ann_id, handle_idx) =>
       // Phase 5.3 — start dragging handle. If the cursor is in the
       // canvas, snapshot its current image position as the drag
