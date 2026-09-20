@@ -2658,3 +2658,257 @@ test "static_cache_key — class name change invalidates cache (5.14)" {
   // after lookup — see canvas_view::annotations_fingerprint).
   assert_true(static_cache_key(before) != static_cache_key(after))
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.15 — DeleteAnnotation Msg tests
+// ─────────────────────────────────────────────────────────────────
+//
+// 5.15 replaces the DeleteAnnotation stub handler (which only
+// marked the label dirty) with actual removal logic: drops the
+// annotation, drops any bindings referencing it, clears the
+// selection if it pointed at the deleted annotation, and marks
+// both layers dirty so the canvas repaints.
+
+///|
+/// Phase 5.15 — DeleteAnnotation(ann_id) removes the matching
+/// annotation from model.annotations. Other annotations stay.
+test "DeleteAnnotation — removes the target annotation (5.15)" {
+  let model : Model = {
+    ..Model::new(),
+    annotations: [
+      {
+        id: "keep-me",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+      {
+        id: "delete-me",
+        shape: Rect,
+        points: [{ x: 60.0, y: 60.0, }, { x: 110.0, y: 110.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let (next, _) = update(model, DeleteAnnotation("delete-me"))
+  assert_eq(next.annotations.length(), 1)
+  assert_eq(next.annotations[0].id, "keep-me")
+}
+
+///|
+/// Phase 5.15 — DeleteAnnotation also drops bindings that
+/// reference the deleted annotation (dangling-binding cleanup).
+/// Without this, 5.9's draw_bindings would silently skip the
+/// binding forever but the model would still carry an orphan
+/// record. Matches the silent-skip policy elsewhere.
+test "DeleteAnnotation — drops bindings referencing the deleted id (5.15)" {
+  let model : Model = {
+    ..Model::new(),
+    annotations: [
+      {
+        id: "a1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+      {
+        id: "a2",
+        shape: Rect,
+        points: [{ x: 60.0, y: 60.0, }, { x: 110.0, y: 110.0, }],
+        class_id: "",
+      },
+      {
+        id: "a3",
+        shape: Rect,
+        points: [{ x: 120.0, y: 120.0, }, { x: 170.0, y: 170.0, }],
+        class_id: "",
+      },
+    ],
+    bindings: [
+      { id: "b1", from: "a1", to: "a2", },
+      { id: "b2", from: "a2", to: "a3", },
+      { id: "b3", from: "a1", to: "a3", },
+    ],
+  }
+  // Delete a2 → both b1 (a1→a2) and b2 (a2→a3) reference a2;
+  // b3 (a1→a3) survives because neither endpoint is a2.
+  let (next, _) = update(model, DeleteAnnotation("a2"))
+  assert_eq(next.bindings.length(), 1)
+  assert_eq(next.bindings[0].id, "b3")
+}
+
+///|
+/// Phase 5.15 — deleting the selected annotation clears the
+/// selection. Without this, the dynamic layer would keep
+/// drawing handles for an annotation that no longer exists.
+test "DeleteAnnotation — clears selection when deleting selected (5.15)" {
+  let model : Model = {
+    ..Model::new(),
+    selectedId: Some("ann-1"),
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let (next, _) = update(model, DeleteAnnotation("ann-1"))
+  assert_true(next.selectedId == None)
+}
+
+///|
+/// Phase 5.15 — deleting a non-selected annotation keeps the
+/// selection intact (no false clear).
+test "DeleteAnnotation — keeps selection when deleting other (5.15)" {
+  let model : Model = {
+    ..Model::new(),
+    selectedId: Some("ann-1"),
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+      {
+        id: "ann-2",
+        shape: Rect,
+        points: [{ x: 60.0, y: 60.0, }, { x: 110.0, y: 110.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let (next, _) = update(model, DeleteAnnotation("ann-2"))
+  match next.selectedId {
+    Some(id) => assert_eq(id, "ann-1")
+    None => fail("expected selectedId to remain Some(\"ann-1\")")
+  }
+}
+
+///|
+/// Phase 5.15 — DeleteAnnotation marks both layers dirty (so
+/// the static cache invalidates and the dynamic layer
+/// repaints — no stale handles / no stale cache bitmap).
+test "DeleteAnnotation — marks both layers dirty (5.15)" {
+  let model : Model = {
+    ..Model::new(),
+    staticLayerDirty: false,
+    dynamicLayerDirty: false,
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let (next, _) = update(model, DeleteAnnotation("ann-1"))
+  assert_true(next.staticLayerDirty)
+  assert_true(next.dynamicLayerDirty)
+}
+
+///|
+/// Phase 5.15 — DeleteAnnotation sets label.dirty = true so the
+/// next save() flushes the change to disk. Without this, a
+/// deleted annotation could survive across saves.
+test "DeleteAnnotation — sets label.dirty = true (5.15)" {
+  let model : Model = {
+    ..Model::new(),
+    label: { raw_json: "{}", dirty: false, },
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let (next, _) = update(model, DeleteAnnotation("ann-1"))
+  assert_true(next.label.dirty)
+}
+
+///|
+/// Phase 5.15 — DeleteAnnotation with an id that doesn't match
+/// any annotation is a no-op (the same id is left over from a
+/// previous session, or the sidebar Delete button was clicked
+/// when nothing was selected — the noop "__noop__" id lands
+/// here). Verifies no spurious state changes.
+test "DeleteAnnotation — unknown id is no-op (5.15)" {
+  let model : Model = {
+    ..Model::new(),
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let (next, _) = update(model, DeleteAnnotation("nonexistent"))
+  assert_eq(next.annotations.length(), 1)
+  assert_true(next.label.dirty)
+  // label.dirty is still set (the handler always sets it; an
+  // external caller can rely on it for a "save me" signal).
+}
+
+///|
+/// Phase 5.15 — DeleteSelectedAnnotation dispatches via the
+/// current selectedId. Verifies the keyboard-shortcut path
+/// reads model.selectedId correctly.
+test "DeleteSelectedAnnotation — deletes current selectedId (5.15)" {
+  let model : Model = {
+    ..Model::new(),
+    selectedId: Some("ann-2"),
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+      {
+        id: "ann-2",
+        shape: Rect,
+        points: [{ x: 60.0, y: 60.0, }, { x: 110.0, y: 110.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let (next, _) = update(model, DeleteSelectedAnnotation)
+  assert_eq(next.annotations.length(), 1)
+  assert_eq(next.annotations[0].id, "ann-1")
+  assert_true(next.selectedId == None)
+}
+
+///|
+/// Phase 5.15 — DeleteSelectedAnnotation with no selection is
+/// a true no-op (no label.dirty bump, no layer-dirty flags).
+/// This is what makes the keyboard shortcut safe to bind to
+/// Delete/Backspace without fearing accidental fires.
+test "DeleteSelectedAnnotation — no-op when nothing selected (5.15)" {
+  let model : Model = {
+    ..Model::new(),
+    selectedId: None,
+    staticLayerDirty: false,
+    dynamicLayerDirty: false,
+    label: { raw_json: "{}", dirty: false, },
+    annotations: [
+      {
+        id: "ann-1",
+        shape: Rect,
+        points: [{ x: 0.0, y: 0.0, }, { x: 50.0, y: 50.0, }],
+        class_id: "",
+      },
+    ],
+  }
+  let (next, _) = update(model, DeleteSelectedAnnotation)
+  assert_eq(next.annotations.length(), 1)
+  assert_true(!next.label.dirty)
+  assert_true(!next.staticLayerDirty)
+  assert_true(!next.dynamicLayerDirty)
+}

@@ -265,6 +265,12 @@ pub(all) enum Msg {
   FinishDraft
   CancelDraft
   DeleteAnnotation(String)
+  // Phase 5.15 — convenience Msg for the Delete / Backspace
+  // keyboard shortcut. Resolves the current selectedId and
+  // delegates to DeleteAnnotation. No-op when nothing is
+  // selected (so the shortcut doesn't delete an arbitrary
+  // annotation or accidentally fire mid-typing).
+  DeleteSelectedAnnotation
   ModifyHandle(String, Int, Point)
   CursorMoved(Point, Point)
   CursorLeft
@@ -485,15 +491,79 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         { ..model, draftPoints: [], mode: Select, staticLayerDirty: true, },
         @moui.Effect::none(),
       )
-    DeleteAnnotation(_id) =>
+    DeleteAnnotation(id) => {
+      // Phase 5.15 — actually remove the annotation, plus any
+      // bindings that referenced it (dangling binding cleanup
+      // matches the 5.9 draw_bindings "silently skipped" policy
+      // — we don't leave orphan bindings behind). If the
+      // deleted annotation was selected, clear the selection
+      // (otherwise the dynamic layer would keep rendering handles
+      // for an annotation that no longer exists).
+      let new_annotations : Array[Annotation] = []
+      for ann in model.annotations {
+        if ann.id != id {
+          new_annotations.push(ann)
+        }
+      }
+      let new_bindings : Array[Binding] = []
+      for b in model.bindings {
+        if b.from != id && b.to != id {
+          new_bindings.push(b)
+        }
+      }
+      let new_selected : String? = match model.selectedId {
+        Some(sel_id) => if sel_id == id { None } else { Some(sel_id) }
+        None => None
+      }
       (
         {
           ..model,
+          annotations: new_annotations,
+          bindings: new_bindings,
+          selectedId: new_selected,
           label: { raw_json: model.label.raw_json, dirty: true, },
           staticLayerDirty: true,
+          dynamicLayerDirty: true,
         },
         @moui.Effect::none(),
       )
+    }
+    DeleteSelectedAnnotation =>
+      // Phase 5.15 — Delete / Backspace keyboard shortcut
+      // handler. Reads the current selectedId and inlines the
+      // DeleteAnnotation logic (no way to compose Msg arms in
+      // MoonBit's match; inlining is the simplest path).
+      // No-op when nothing is selected so the shortcut can't
+      // fire on mid-typing keystrokes.
+      match model.selectedId {
+        Some(sel_id) => {
+          let new_annotations : Array[Annotation] = []
+          for ann in model.annotations {
+            if ann.id != sel_id {
+              new_annotations.push(ann)
+            }
+          }
+          let new_bindings : Array[Binding] = []
+          for b in model.bindings {
+            if b.from != sel_id && b.to != sel_id {
+              new_bindings.push(b)
+            }
+          }
+          (
+            {
+              ..model,
+              annotations: new_annotations,
+              bindings: new_bindings,
+              selectedId: None,
+              label: { raw_json: model.label.raw_json, dirty: true, },
+              staticLayerDirty: true,
+              dynamicLayerDirty: true,
+            },
+            @moui.Effect::none(),
+          )
+        }
+        None => (model, @moui.Effect::none())
+      }
     ModifyHandle(_id, _handle_idx, _new_pt) =>
       (
         {
@@ -925,9 +995,10 @@ pub fn view(model : Model) -> @moui.View[Msg] {
   //     detail_width matches the canvas viewport size, so the
   //     hardcoded viewport is correct for the current layout.
   //   - "Reset" dispatches ResetZoomTransformView (5.11).
-  // Plus two keyboard shortcuts on the canvas itself:
+  // Plus keyboard shortcuts on the canvas itself:
   //   - "f" → FitView (same hardcoded viewport as the button)
   //   - "0" → ResetZoomTransformView
+  //   - "Delete" / "Backspace" → DeleteSelectedAnnotation (5.15)
   // These cover the same surface as the wheel-zoom modifier
   // Moui 0.1.12 doesn't yet expose.
   let fit_shortcut : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
@@ -936,9 +1007,28 @@ pub fn view(model : Model) -> @moui.View[Msg] {
   let reset_shortcut : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
     key="0",
   )
+  let delete_shortcut : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
+    key="Delete",
+  )
+  let backspace_shortcut : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
+    key="Backspace",
+  )
   let shortcut_canvas : @moui.View[Msg] = canvas_view(model)
     .keyboard_shortcut(fit_shortcut)
     .keyboard_shortcut(reset_shortcut)
+    .keyboard_shortcut(delete_shortcut)
+    .keyboard_shortcut(backspace_shortcut)
+  // Phase 5.15 — derive the Delete button's `on_click` from
+  // the current selectedId. If nothing is selected, fall back
+  // to a no-op DeleteAnnotation("") (the handler ignores ids
+  // that don't match any annotation). This keeps the button
+  // always clickable without an enabled/disabled code path
+  // — Moui 0.1.12's @views.button doesn't expose an
+  // `enabled` parameter.
+  let delete_click : Msg = match model.selectedId {
+    Some(sel_id) => DeleteAnnotation(sel_id)
+    None => DeleteAnnotation("__noop__")
+  }
   @views.split_view(
     primary=@views.column(
       [
@@ -952,6 +1042,10 @@ pub fn view(model : Model) -> @moui.View[Msg] {
         // duplicate the same triggers for power users.
         @views.button("Fit", on_click=FitView(800.0, 600.0)),
         @views.button("Reset", on_click=ResetZoomTransformView),
+        // Phase 5.15 — Delete button for the currently
+        // selected annotation. Reads model.selectedId at view
+        // time; the handler is no-op when nothing is selected.
+        @views.button("Delete", on_click=delete_click),
         match model.toastMessage {
           Some(msg) => @views.text("toast: " + msg)
           None => @views.text("Status: " + model.statusMessage)
