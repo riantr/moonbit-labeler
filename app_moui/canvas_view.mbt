@@ -759,12 +759,19 @@ fn draw_bindings(
 }
 
 ///|
-/// Phase 5.9 — emit the line + arrow head for a single binding.
-/// Line is drawn as a single `DrawPath(PathSpec)` (MoveTo +
-/// LineTo), matching 5.7's polygon upgrade so the renderer
-/// gets a clean single-pass stroke with proper line joins.
-/// Arrow head is a filled triangle (3-vertex PathSpec with
-/// MoveTo + 2 LineTo + Close) pointing at the `to` centroid.
+/// Phase 5.9 + 5.17 — emit the dashed line + arrow head for a
+/// single binding.
+///
+/// Phase 5.17 adds the dashed pattern (canvas.js line 357 uses
+/// `c.setLineDash([6, 4])`). Moui 0.1.12's PathSpec doesn't
+/// expose a dash spec, so we approximate via segment emission:
+/// walk the from → to line in 10 px periods (6 px dash + 4 px
+/// gap), emitting one MoveTo + LineTo DrawPath per dash. The
+/// arrow head stays solid (canvas.js does the same).
+///
+/// Arrow head is 8 px long; the line is shortened by 8 px so
+/// the arrow head's tip coincides with the original `to_pt`
+/// rather than overlapping the line endpoint.
 fn draw_binding_arrow(
   pctx : @common.PaintContext,
   from : Annotation,
@@ -776,10 +783,6 @@ fn draw_binding_arrow(
   let to_pt : Point = img_to_screen(binding_centroid(to), pan, zoom)
   // Same yellow as canvas.js's "#fbbf24" (a 3-bit web color).
   let color : @core.Color = @core.Color::rgba(r=0.984, g=0.749, b=0.141, a=1.0)
-  // 1. Line from `from_pt` to `to_pt` (NOT including the arrow
-  // head segment — we shorten the line slightly so the arrow
-  // head sits on top of the line endpoint rather than
-  // overlapping it). Arrow head is 8 px long.
   let head_len : Double = 8.0
   let dx : Double = to_pt.x - from_pt.x
   let dy : Double = to_pt.y - from_pt.y
@@ -788,27 +791,62 @@ fn draw_binding_arrow(
     return
   }
   let len : Double = sqrt_inline(len_sq)
-  // Shorten the line by head_len along the direction so the
-  // arrow head's tip coincides with the original `to_pt`.
+  // 1. Dashed line from `from_pt` to `end_pt` (end_pt is the
+  // arrow-head base; the line stops there so the head doesn't
+  // overlap the last dash). Each period = 6 px dash + 4 px gap
+  // = 10 px. We walk from from_pt forward in 10 px steps
+  // until we'd exceed end_pt.
   let end_pt : Point = {
     x: to_pt.x - dx / len * head_len,
     y: to_pt.y - dy / len * head_len,
   }
-  let line_verbs : Array[@core.PathVerb] = [
-    @core.PathVerb::MoveTo({ x: from_pt.x, y: from_pt.y, }),
-    @core.PathVerb::LineTo({ x: end_pt.x, y: end_pt.y, }),
-  ]
-  let line_path : @core.PathSpec = @core.PathSpec::new(
-    verbs=line_verbs,
-    fill=None,
-    stroke=Some(@core.Brush::solid(color)),
-    stroke_width=1.5,
-  )
-  @common.draw_path(pctx, line_path)
-  // 2. Arrow head: 3-vertex filled triangle pointing at `to_pt`.
-  // Perpendicular unit vector for the base:
   let ux : Double = dx / len
   let uy : Double = dy / len
+  let dash_len : Double = 6.0
+  let gap_len : Double = 4.0
+  let period : Double = dash_len + gap_len
+  // Effective line length (from_pt → end_pt) in screen pixels.
+  let line_len : Double = len - head_len
+  if line_len <= 0.0 {
+    // Too short for dashes; fall through to the arrow head.
+    // (No dashes drawn — visually almost identical to
+    // canvas.js's behaviour when the endpoints coincide.)
+  } else {
+    // Compute how many full periods fit in line_len and emit
+    // one MoveTo+LineTo per dash. The last dash is trimmed so
+    // it doesn't extend past end_pt.
+    let mut s : Double = 0.0
+    while s < line_len {
+      let dash_end : Double = if s + dash_len < line_len {
+        s + dash_len
+      } else {
+        line_len
+      }
+      let dash_start_pt : Point = {
+        x: from_pt.x + ux * s,
+        y: from_pt.y + uy * s,
+      }
+      let dash_end_pt : Point = {
+        x: from_pt.x + ux * dash_end,
+        y: from_pt.y + uy * dash_end,
+      }
+      let verbs : Array[@core.PathVerb] = [
+        @core.PathVerb::MoveTo({ x: dash_start_pt.x, y: dash_start_pt.y, }),
+        @core.PathVerb::LineTo({ x: dash_end_pt.x, y: dash_end_pt.y, }),
+      ]
+      let path : @core.PathSpec = @core.PathSpec::new(
+        verbs~,
+        fill=None,
+        stroke=Some(@core.Brush::solid(color)),
+        stroke_width=1.5,
+      )
+      @common.draw_path(pctx, path)
+      s = s + period
+    }
+  }
+  ignore(from_pt)
+  // 2. Arrow head: 3-vertex filled triangle pointing at `to_pt`.
+  // Perpendicular unit vector for the base:
   let px : Double = -uy
   let py : Double = ux
   let base_centre : Point = {
