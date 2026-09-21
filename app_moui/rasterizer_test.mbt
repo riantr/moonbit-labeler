@@ -225,9 +225,83 @@ test "fill_rounded_rect_radius_cuts_corners" {
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Center pixel (3,3) is deep inside the rect 鈥?should be red.
   assert_eq(pixel_at(buf, 3, 3), 0xFFFF0000)
-  // Top-left corner (1,1) is inside the corner cut-out 鈥?should
-  // be transparent.
-  assert_eq(pixel_at(buf, 1, 1), 0x00000000)
+  // Top-left corner pixel (1,1): top-left corner-circle center
+  // is at (3,3), radius=2. Pixel cell corners are
+  // (1,1)/(2,1)/(1,2)/(2,2) 鈥?distances^2 from (3,3) are
+  // 8/5/5/2. r^2=4 鈥?only (2,2) is inside the circle.
+  // 4-corner supersample coverage = 1/4 = 25% -> 0x3F3F0000.
+  assert_eq(pixel_at(buf, 1, 1), 0x3F3F0000)
+}
+///|
+/// FillRoundedRect radius=1.0 produces a 75% corner pixel.
+/// Rect (1,1,4,4) on a 6x6 buffer, top-left corner-circle
+/// center at (2,2), radius=1. Pixel cell (1,1)..(2,2) has
+/// corners at (1,1)/(2,1)/(1,2)/(2,2) -> distance^2 from
+/// (2,2) is 2/1/1/0 -> 3 inside (d^2<=1), 1 outside.
+/// 4-corner supersample coverage = 3/4 = 75% -> 0xBFBF0000.
+test "fill_rounded_rect_corner_aa_75_pct" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    6,
+    6,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let red : @core.Color = @core.Color::rgba(r=1.0, g=0.0, b=0.0, a=1.0)
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[
+      @core.DrawCommand::FillRoundedRect(
+        @core.RoundedRect::new(
+          rect=@core.Rect::new(x=1.0, y=1.0, width=4.0, height=4.0),
+          radius=1.0,
+        ),
+        red,
+      ),
+    ],
+    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  assert_eq(pixel_at(buf, 1, 1), 0xBFBF0000)
+  // Pixel (3,1) cell (3..4)x(1..2). Top-right corner-circle
+  // center is at (4,2), r=1. Corners (3,1)/(4,1)/(3,2)/(4,2)
+  // -> distance^2 from (4,2) is 2/1/1/0 -> also 75% AA.
+  // Pixel (4,1) cell (4..5)x(1..2) is the top-RIGHT corner
+  // pixel (cell straddles x=cx_right=4 boundary).
+  // Corners (4,1)/(5,1)/(4,2)/(5,2) -> distance^2 from
+  // (4,2) is 1/2/0/1 -> 3 inside (d^2<=1), 1 outside.
+  assert_eq(pixel_at(buf, 4, 1), 0xBFBF0000)
+  // Pixel (2,2) is in the middle band (no corner overlap) ->
+  // full coverage, opaque red.
+  assert_eq(pixel_at(buf, 2, 2), 0xFFFF0000)
+}
+
+///|
+/// FillRoundedRect pixel fully outside the corner-circle
+/// and outside the bounding rect is left transparent.
+/// Verified with rect (1,1,4,4) radius=1 on a 6x6 buffer;
+/// pixel (0,0) cell (0..1)x(0..1) is outside the rect.
+test "fill_rounded_rect_pixel_outside_bbox_stays_clear" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    6,
+    6,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let red : @core.Color = @core.Color::rgba(r=1.0, g=0.0, b=0.0, a=1.0)
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[
+      @core.DrawCommand::FillRoundedRect(
+        @core.RoundedRect::new(
+          rect=@core.Rect::new(x=1.0, y=1.0, width=4.0, height=4.0),
+          radius=1.0,
+        ),
+        red,
+      ),
+    ],
+    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // Pixel (0,0) is outside the rect entirely -> clear.
+  assert_eq(pixel_at(buf, 0, 0), 0x00000000)
+  // Pixel (5,5) is also outside -> clear.
+  assert_eq(pixel_at(buf, 5, 5), 0x00000000)
 }
 
 ///|

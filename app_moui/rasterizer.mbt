@@ -607,10 +607,88 @@ fn inside_corner_circle(
 }
 
 ///|
-/// Rounded-rect fill: paint every pixel inside `rect` ∩ clip
-/// EXCEPT those that fall inside the corner cut-outs (one per
-/// corner if radius > 0). Delegates corner-cut detection to
-/// `in_corner_cut`.
+/// Coverage of pixel cell (px, py)..(px+1, py+1) with the
+/// inside of the rounded rect (rx, ry, rw, rh, r). Returns
+/// 0.0 for pixels entirely outside the bounding rect, 1.0
+/// for pixels in the middle band (no corner overlap), and a
+/// 4-corner supersampled fraction (0/4, 1/4, 2/4, 3/4, or 4/4)
+/// for pixels that straddle one of the four corner cut-outs.
+///
+/// Phase 15.B: extends the Phase 11 hard-skip with sub-pixel
+/// AA so a 50% corner pixel blends at half opacity. Same cost
+/// budget as the previous `in_corner_cut` call (4 quad-checks
+/// per pixel), so no per-frame regression outside the corner
+/// region.
+fn rounded_rect_pixel_coverage(
+  px : Double,
+  py : Double,
+  rx : Double,
+  ry : Double,
+  rw : Double,
+  rh : Double,
+  r : Double,
+) -> Double {
+  let rx_hi : Double = rx + rw
+  let ry_hi : Double = ry + rh
+  // Pixel cell entirely outside the bounding rect → 0.
+  if px + 1.0 <= rx || py + 1.0 <= ry || px >= rx_hi || py >= ry_hi {
+    return 0.0
+  }
+  // No rounding → full pixel.
+  if r <= 0.0 {
+    return 1.0
+  }
+  let cx_left : Double = rx + r
+  let cx_right : Double = rx_hi - r
+  let cy_top : Double = ry + r
+  let cy_bot : Double = ry_hi - r
+  // Sample the 4 corners of the pixel cell. Middle-band
+  // pixels short-circuit to "inside" without the circle test.
+  let corners : Array[(Double, Double)] = [
+    (px, py),
+    (px + 1.0, py),
+    (px, py + 1.0),
+    (px + 1.0, py + 1.0),
+  ]
+  let mut n_inside : Int = 0
+  let mut i : Int = 0
+  while i < corners.length() {
+    let (sx, sy) = corners[i]
+    let in_tl : Bool = sx < cx_left && sy < cy_top
+    let in_tr : Bool = sx >= cx_right && sy < cy_top
+    let in_bl : Bool = sx < cx_left && sy >= cy_bot
+    let in_br : Bool = sx >= cx_right && sy >= cy_bot
+    if !(in_tl || in_tr || in_bl || in_br) {
+      n_inside = n_inside + 1
+    } else {
+      let ccx : Double = if in_tl || in_bl {
+        cx_left
+      } else {
+        cx_right
+      }
+      let ccy : Double = if in_tl || in_tr {
+        cy_top
+      } else {
+        cy_bot
+      }
+      let dx : Double = sx - ccx
+      let dy : Double = sy - ccy
+      if dx * dx + dy * dy <= r * r {
+        n_inside = n_inside + 1
+      }
+    }
+    i = i + 1
+  }
+  n_inside.to_double() / 4.0
+}
+
+///|
+/// Rounded-rect fill: paint every pixel whose cell overlaps
+/// `rect` ∩ clip, with opacity scaled by the rounded-rect
+/// AA coverage (Phase 15.B). Pixels in the corner-cut region
+/// get 4-corner supersampled partial coverage; pixels in the
+/// middle band get full coverage; pixels outside the bounding
+/// rect get nothing.
 fn paint_rounded_rect(
   buf : PixelBuffer,
   rr : @core.RoundedRect,
@@ -632,18 +710,25 @@ fn paint_rounded_rect(
   }
   let clipped : @core.Rect? = rect.intersection(clip)
   guard clipped is Some(c) else { return }
-  let x0 : Int = c.origin.x.ceil().to_int()
-  let y0 : Int = c.origin.y.ceil().to_int()
-  let x1 : Int = (c.origin.x + c.size.width).floor().to_int()
-  let y1 : Int = (c.origin.y + c.size.height).floor().to_int()
+  // Phase 15.B: extend by 1 pixel on each side so edge pixels
+  // with partial coverage still get visited. Old code used
+  // ceil/floor which skipped the half-pixel boundary.
+  let x0 : Int = c.origin.x.floor().to_int()
+  let y0 : Int = c.origin.y.floor().to_int()
+  let x1 : Int = (c.origin.x + c.size.width).ceil().to_int() - 1
+  let y1 : Int = (c.origin.y + c.size.height).ceil().to_int() - 1
   for y = y0; y <= y1; y = y + 1 {
     for x = x0; x <= x1; x = x + 1 {
-      let px : Double = x.to_double() + 0.5
-      let py : Double = y.to_double() + 0.5
-      if in_corner_cut(px, py, rx, ry, rw, rh, r) {
+      let px : Double = x.to_double()
+      let py : Double = y.to_double()
+      let coverage : Double = rounded_rect_pixel_coverage(
+        px, py, rx, ry, rw, rh, r,
+      )
+      if coverage <= 0.0 {
         continue
       }
-      blend_pixel(buf, x, y, color, opacity)
+      let eff_opacity : Double = opacity * coverage
+      blend_pixel(buf, x, y, color, eff_opacity)
     }
   }
 }
