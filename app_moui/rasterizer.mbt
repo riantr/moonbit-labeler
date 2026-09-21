@@ -194,6 +194,50 @@ fn paint_rect(
 }
 
 ///|
+/// Draw a 1px-thick clipped line from (x0,y0) to (x1,y1) by
+/// inscribing it inside its axis-aligned bbox. Used by the
+/// DrawImage placeholder's diagonal hatch. Pixel coverage is
+/// integer (no AA) — adequate for short visual hints.
+fn paint_line(
+  buf : PixelBuffer,
+  x0 : Double,
+  y0 : Double,
+  x1 : Double,
+  y1 : Double,
+  clip : @core.Rect,
+  color : @core.Color,
+  opacity : Double,
+) -> Unit {
+  let min_x : Double = if x0 < x1 {
+    x0
+  } else {
+    x1
+  }
+  let max_x : Double = if x0 > x1 {
+    x0
+  } else {
+    x1
+  }
+  let min_y : Double = if y0 < y1 {
+    y0
+  } else {
+    y1
+  }
+  let max_y : Double = if y0 > y1 {
+    y0
+  } else {
+    y1
+  }
+  paint_rect(
+    buf,
+    @core.Rect::new(x=min_x, y=min_y, width=max_x - min_x, height=max_y - min_y),
+    clip,
+    color,
+    opacity,
+  )
+}
+
+///|
 /// Internal clipped stroke: paint `width` pixels on each of the
 /// 4 edges of `rect`. Corners are drawn twice (each edge
 /// covers its corner), which is fine for opaque strokes.
@@ -724,16 +768,58 @@ fn dispatch_command(
       paint_stroke_rounded_rect(buf, rr, w, clip, c, opacity)
     @core.DrawCommand::DrawPath(spec) => paint_path(buf, spec, clip, opacity)
     @core.DrawCommand::DrawText(run) => {
-      // Phase 11 placeholder: fill the text's frame rect in
-      // the text's color so the bounding box is visible. Real
-      // glyph rasterization is Phase 12.
-      paint_rect(buf, run.frame, clip, run.color, opacity)
+      // Phase 12 — placeholder: draw a 1px gray outline around
+      // the text's frame so the layout slot is visible WITHOUT
+      // hiding the surrounding chrome. The previous Phase 11
+      // approach (`paint_rect(... run.color ...)`) flooded the
+      // text frame in the text's color, which for white-on-dark
+      // layouts produced solid white rectangles that ate the
+      // sidebar. Real glyph rasterization (bitmap font) lands
+      // later this batch.
+      let outline : @core.Color = @core.Color::rgba(
+        r=0.4,
+        g=0.4,
+        b=0.4,
+        a=1.0,
+      )
+      paint_stroke_rect(buf, run.frame, 1.0, clip, outline, opacity)
     }
     @core.DrawCommand::DrawImage(run) => {
-      // Phase 11 placeholder: fill the image's frame rect in
-      // a neutral gray. Real image decoding is Phase 12+.
-      let placeholder : @core.Color = @core.Color::gray()
-      paint_rect(buf, run.frame, clip, placeholder, opacity)
+      // Phase 12 — placeholder: gray outline + diagonal hatch.
+      // Real image decoding is Phase 13+.
+      let outline : @core.Color = @core.Color::rgba(
+        r=0.35,
+        g=0.35,
+        b=0.35,
+        a=1.0,
+      )
+      paint_stroke_rect(buf, run.frame, 1.0, clip, outline, opacity)
+      // Two diagonal lines from (x0,y0)→(x1,y1) and
+      // (x0,y1)→(x1,y0) — visual "image loading" hint.
+      let rx : Double = run.frame.origin.x
+      let ry : Double = run.frame.origin.y
+      let rw : Double = run.frame.size.width
+      let rh : Double = run.frame.size.height
+      paint_line(
+        buf,
+        rx,
+        ry,
+        rx + rw,
+        ry + rh,
+        clip,
+        outline,
+        opacity,
+      )
+      paint_line(
+        buf,
+        rx,
+        ry + rh,
+        rx + rw,
+        ry,
+        clip,
+        outline,
+        opacity,
+      )
     }
     @core.DrawCommand::PushClip(r) => {
       // Intersect the pushed clip with the parent (caller's

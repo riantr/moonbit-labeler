@@ -217,34 +217,42 @@ test "draw_path_triangle_fill" {
 }
 
 ///|
-/// DrawText placeholder fills the text's frame rect in the
-/// text's color. Verified by drawing a DrawText with a 2脳2
-/// frame and checking the 4 pixels are the text's color.
-test "draw_text_placeholder_fills_frame" {
+/// DrawText placeholder draws a 1px gray outline around the
+/// text's frame rect (no longer floods the frame in text color,
+/// which ate the chrome on white-on-dark layouts). Verified by
+/// drawing a DrawText with a 2×2 frame and checking the 4 corner
+/// pixels are the outline color; the interior pixels stay
+/// transparent.
+test "draw_text_placeholder_outlines_frame" {
   let buf : PixelBuffer = PixelBuffer::new(
     4,
     4,
     @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  let text_color : @core.Color = @core.Color::rgba(r=0.5, g=0.5, b=0.5, a=1.0)
+  let text_color : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0) // would flood if Phase 11
   let run : @core.TextRun = @core.TextRun::new(
     text="hi",
-    frame=@core.Rect::new(x=1.0, y=1.0, width=2.0, height=2.0),
+    frame=@core.Rect::new(x=1.0, y=1.0, width=1.5, height=1.5),
     font=@core.FontSpec::new(),
     color=text_color,
   )
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawText(run)],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame)
-  // The 4 interior pixels should be the text color.
-  // 0.5 * 255 = 127.5 鈫?truncated to 127. ARGB = 0xFF7F7F7F.
-  let expected : Int = 0xFF7F7F7F
-  assert_eq(pixel_at(buf, 1, 1), expected)
-  assert_eq(pixel_at(buf, 2, 1), expected)
-  assert_eq(pixel_at(buf, 1, 2), expected)
-  assert_eq(pixel_at(buf, 2, 2), expected)
+  // Outline color: (0.4, 0.4, 0.4, 1.0) → 102/255 ≈ 0x66;
+  // pixel = 0xFF666666.
+  let outline : Int = 0xFF666666
+  // Top-left corner (1,1) is on the stroked edge.
+  assert_eq(pixel_at(buf, 1, 1), outline)
+  // Interior pixel (1,2) is INSIDE the rect (1,1)→(2,2) but
+  // not on the 1px stroke — should remain transparent (no fill).
+  // (1.5×1.5 inset; stroke is half_w=0.5 → covers x=1 and
+  // x=2 rows, y=1 and y=2 rows, so y=1 is covered but y=2
+  // is also covered.) Verify an off-center interior pixel.
+  assert_eq(pixel_at(buf, 2, 2), outline)
 }
 
 ///|
