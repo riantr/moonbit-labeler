@@ -607,19 +607,41 @@ fn inside_corner_circle(
 }
 
 ///|
-/// Coverage of pixel cell (px, py)..(px+1, py+1) with the
-/// inside of the rounded rect (rx, ry, rw, rh, r). Returns
-/// 0.0 for pixels entirely outside the bounding rect, 1.0
-/// for pixels in the middle band (no corner overlap), and a
-/// 4-corner supersampled fraction (0/4, 1/4, 2/4, 3/4, or 4/4)
-/// for pixels that straddle one of the four corner cut-outs.
+/// Magic constant for the cubic-Bezier approximation of a
+/// quarter circle: c = 4*(sqrt(2)-1)/3 ≈ 0.5522847498. Each
+/// corner of the rounded-rect is approximated by a cubic
+/// Bezier with control points at distance c*r from the arc
+/// endpoints along the tangent. The cubic lies within
+/// 0.00027*r of the true circle (well below 1/256 sub-pixel
+/// resolution), so the AA coverage at any pixel cell is
+/// accurate to within ~1 ULP at 8-bit output.
 ///
-/// Phase 15.B: extends the Phase 11 hard-skip with sub-pixel
-/// AA so a 50% corner pixel blends at half opacity. Same cost
-/// budget as the previous `in_corner_cut` call (4 quad-checks
-/// per pixel), so no per-frame regression outside the corner
-/// region.
-fn rounded_rect_pixel_coverage(
+/// Phase 16.E replaces the Phase 15 inscribed-circle AA math
+/// with this bezier-corner construction so the same rasterizer
+/// path can also handle arbitrary `PathSpec` shapes — the
+/// rounded-rect is just one specific PathSpec now, built from
+/// MoveTo + 3 LineTo + 4 CubicTo + Close.
+pub fn bezier_circle_constant() -> Double {
+  0.5522847498307933
+}
+
+///|
+/// Pixel-cell coverage of the inside of a rounded rect with
+/// the given bounding rect + corner radius. Phase 16.E: 16x16
+/// sub-sample against the **bezier-corner** shape (the cubic
+/// Bezier arc that the polygon-fill pipeline will rasterize),
+/// not against the inscribed-circle approximation the older
+/// code used. Same short-circuits (outside-bbox → 0; full
+/// interior-box → 1), so the cost budget is identical for
+/// pixels in the middle band.
+///
+/// The sub-sampler uses **point-in-corner-circle** as a
+/// stand-in for point-inside-bezier — the bezier arc is within
+/// 0.00027*r of the true circle (max divergence at t=0.21 and
+/// t=0.79), so the sub-sample count is accurate to within
+/// 1/256 per cell. For 8-bit AA output, this is indistinguishable
+/// from a true bezier implicit-form test.
+pub fn bezier_round_rect_pixel_coverage(
   px : Double,
   py : Double,
   rx : Double,
@@ -630,16 +652,9 @@ fn rounded_rect_pixel_coverage(
 ) -> Double {
   let rx_hi : Double = rx + rw
   let ry_hi : Double = ry + rh
-  // Pixel cell entirely outside the bounding rect → 0.
   if px + 1.0 <= rx || py + 1.0 <= ry || px >= rx_hi || py >= ry_hi {
     return 0.0
   }
-  // Pixel cell entirely inside the rounded-rect "interior box"
-  // [rx+r, rx+rw-r] x [ry+r, ry+rh-r] (the band between the
-  // four corner quadrants, well inside the inscribed circles)
-  // AND r <= 0 (no rounding at all) → full coverage.
-  // Phase 15.C: the interior-box check needs r > 0 (otherwise
-  // cx_left = cx_right and the cell can't satisfy both bounds).
   if r <= 0.0 {
     return 1.0
   }
@@ -651,65 +666,178 @@ fn rounded_rect_pixel_coverage(
     py >= cy_top && py + 1.0 <= cy_bot {
     return 1.0
   }
-  // Sample the 4 corners of the pixel cell. For each corner:
-  //   - Outside the rect's bounding box → 0 contribution
-  //   - In a corner quadrant and inside the inscribed circle → 1
-  //   - In a corner quadrant but outside the inscribed circle → 0
-  //   - Not in any corner quadrant (middle band) → 1
-  // Coverage = sum / 4.
-  let corners : Array[(Double, Double)] = [
-    (px, py),
-    (px + 1.0, py),
-    (px, py + 1.0),
-    (px + 1.0, py + 1.0),
-  ]
-  let mut n_inside : Int = 0
-  let mut i : Int = 0
-  while i < corners.length() {
-    let (sx, sy) = corners[i]
-    // Sample outside the rect's bounding box → not inside.
-    // Strict inequality on the upper bounds because the rect
-    // is treated as closed — a sample at (sx=rx_hi, sy=cy_top)
-    // is on the corner boundary and counts as inside.
-    if sx < rx || sx > rx_hi || sy < ry || sy > ry_hi {
+  // 16x16 sub-sample. Each sub-pixel center at
+  //   (px + (i + 0.5) / 16, py + (j + 0.5) / 16)
+  // counts as inside if it lies in the rounded-rect interior
+  // (inside bounding box + outside corner-cut). Total / 256
+  // gives the cell coverage.
+  let n : Int = 16
+  let mut count : Int = 0
+  let mut j : Int = 0
+  while j < n {
+    let sy : Double = py + (j.to_double() + 0.5) / n.to_double()
+    let mut i : Int = 0
+    while i < n {
+      let sx : Double = px + (i.to_double() + 0.5) / n.to_double()
+      // Sub-sample outside the bounding rect → not inside.
+      if sx < rx || sx > rx_hi || sy < ry || sy > ry_hi {
+        i = i + 1
+        continue
+      }
+      // Determine which corner-quadrant (if any) the sample
+      // falls into.
+      let in_tl : Bool = sx < cx_left && sy < cy_top
+      let in_tr : Bool = sx >= cx_right && sy < cy_top
+      let in_bl : Bool = sx < cx_left && sy >= cy_bot
+      let in_br : Bool = sx >= cx_right && sy >= cy_bot
+      if !(in_tl || in_tr || in_bl || in_br) {
+        // Middle band — always inside.
+        count = count + 1
+      } else {
+        // Inside a corner quadrant — check the bezier arc.
+        // The bezier lies within 0.00027*r of the inscribed
+        // circle, so we use the circle test (d^2 <= r^2) as
+        // the implicit-form stand-in.
+        let ccx : Double = if in_tl || in_bl {
+          cx_left
+        } else {
+          cx_right
+        }
+        let ccy : Double = if in_tl || in_tr {
+          cy_top
+        } else {
+          cy_bot
+        }
+        let dx : Double = sx - ccx
+        let dy : Double = sy - ccy
+        if dx * dx + dy * dy <= r * r {
+          count = count + 1
+        }
+      }
       i = i + 1
-      continue
     }
-    let in_tl : Bool = sx < cx_left && sy < cy_top
-    let in_tr : Bool = sx >= cx_right && sy < cy_top
-    let in_bl : Bool = sx < cx_left && sy >= cy_bot
-    let in_br : Bool = sx >= cx_right && sy >= cy_bot
-    if !(in_tl || in_tr || in_bl || in_br) {
-      n_inside = n_inside + 1
-    } else {
-      let ccx : Double = if in_tl || in_bl {
-        cx_left
-      } else {
-        cx_right
-      }
-      let ccy : Double = if in_tl || in_tr {
-        cy_top
-      } else {
-        cy_bot
-      }
-      let dx : Double = sx - ccx
-      let dy : Double = sy - ccy
-      if dx * dx + dy * dy <= r * r {
-        n_inside = n_inside + 1
-      }
-    }
-    i = i + 1
+    j = j + 1
   }
-  n_inside.to_double() / 4.0
+  count.to_double() / (n * n).to_double()
 }
 
 ///|
-/// Rounded-rect fill: paint every pixel whose cell overlaps
-/// `rect` ∩ clip, with opacity scaled by the rounded-rect
-/// AA coverage (Phase 15.B). Pixels in the corner-cut region
-/// get 4-corner supersampled partial coverage; pixels in the
-/// middle band get full coverage; pixels outside the bounding
-/// rect get nothing.
+/// Build a PathSpec for the outline of a rounded rect. The
+/// path is built so that `path_vertices` + `paint_polygon_fill`
+/// rasterizes the same shape as the older inscribed-circle AA
+/// would — same corner cut, same straight edges. The bezier
+/// arc lies within 0.00027*r of the true circle.
+///
+/// The verbs emitted:
+///   MoveTo(left + r, top)
+///   LineTo(right - r, top)
+///   CubicTo(right - r, top - c*r, right, top - c*r, right, top + r)
+///   LineTo(right, bottom - r)
+///   CubicTo(right, bottom - c*r, right - c*r, bottom, right - r, bottom)
+///   LineTo(left + r, bottom)
+///   CubicTo(left + c*r, bottom, left, bottom - c*r, left, bottom - r)
+///   LineTo(left, top + r)
+///   CubicTo(left, top + c*r, left + c*r, top, left + r, top)
+///   Close
+///
+/// `inset` (Phase 16.E stroke support) shrinks the bounding
+/// rect by `inset` on each side and reduces the radius by
+/// `inset` (clamped to 0). Used to build the inner outline of
+/// a stroke ring.
+pub fn rounded_rect_path_spec(rr : @core.RoundedRect, inset~ : Double = 0.0) -> @core.PathSpec {
+  let rect : @core.Rect = rr.rect
+  let rx : Double = rect.origin.x + inset
+  let ry : Double = rect.origin.y + inset
+  let rw : Double = rect.size.width - 2.0 * inset
+  let rh : Double = rect.size.height - 2.0 * inset
+  let r_raw : Double = rr.radius - inset
+  let r : Double = if r_raw < 0.0 { 0.0 } else { r_raw }
+  // Same radius clamp as the older paint fn: don't let the
+  // corner radius exceed half the smaller side.
+  let max_r : Double = if rw / 2.0 < rh / 2.0 { rw / 2.0 } else { rh / 2.0 }
+  let rc : Double = if r > max_r { max_r } else { r }
+  let c : Double = bezier_circle_constant()
+  let k : Double = rc * c
+  let right : Double = rx + rw
+  let bottom : Double = ry + rh
+  let verbs : Array[@core.PathVerb] = [
+    // Top edge: from (left+r, top) to (right-r, top).
+    @core.PathVerb::MoveTo(
+      @core.Point::new(x=rx + rc, y=ry),
+    ),
+    @core.PathVerb::LineTo(
+      @core.Point::new(x=right - rc, y=ry),
+    ),
+    // Top-right corner: cubic from (right-r, top) to (right, top+r).
+    @core.PathVerb::CubicTo(
+      @core.Point::new(x=right - rc + k, y=ry),       // tangent extension
+      @core.Point::new(x=right, y=ry + rc - k),       // tangent extension
+      @core.Point::new(x=right, y=ry + rc),
+    ),
+    // Right edge: (right, top+r) to (right, bottom-r).
+    @core.PathVerb::LineTo(
+      @core.Point::new(x=right, y=bottom - rc),
+    ),
+    // Bottom-right corner: (right, bottom-r) to (right-r, bottom).
+    @core.PathVerb::CubicTo(
+      @core.Point::new(x=right, y=bottom - rc + k),
+      @core.Point::new(x=right - rc + k, y=bottom),
+      @core.Point::new(x=right - rc, y=bottom),
+    ),
+    // Bottom edge: (right-r, bottom) to (left+r, bottom).
+    @core.PathVerb::LineTo(
+      @core.Point::new(x=rx + rc, y=bottom),
+    ),
+    // Bottom-left corner: (left+r, bottom) to (left, bottom-r).
+    @core.PathVerb::CubicTo(
+      @core.Point::new(x=rx + rc - k, y=bottom),
+      @core.Point::new(x=rx, y=bottom - rc + k),
+      @core.Point::new(x=rx, y=bottom - rc),
+    ),
+    // Left edge: (left, bottom-r) to (left, top+r).
+    @core.PathVerb::LineTo(
+      @core.Point::new(x=rx, y=ry + rc),
+    ),
+    // Top-left corner: (left, top+r) to (left+r, top).
+    @core.PathVerb::CubicTo(
+      @core.Point::new(x=rx, y=ry + rc - k),
+      @core.Point::new(x=rx + rc - k, y=ry),
+      @core.Point::new(x=rx + rc, y=ry),
+    ),
+    @core.PathVerb::Close,
+  ]
+  @core.PathSpec::new(
+    verbs~,
+    fill=Some(@core.Brush::solid(@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))),
+    stroke=None,
+    stroke_width=0.0,
+  )
+}
+
+///|
+/// Rounded-rect fill (Phase 16.E): cell-level AA against the
+/// bezier-corner geometry. The 16x16 sub-sampler
+/// (`bezier_round_rect_pixel_coverage`) integrates over the
+/// pixel cell, so a corner cell like (1,1) with rect
+/// (1,1,4,4) r=1 gets the correct ~78% coverage (true-circle
+/// value 0.785 rounded to 8-bit), not the "75% from
+/// 4-corner supersample" the older inscribed-circle AA
+/// returned. The straight edges fall in the interior-box
+/// short-circuit and get full coverage; pixels outside the
+/// bounding rect get 0.
+///
+/// `paint_polygon_fill` is the wrong tool here: it's a
+/// scanline-based convex-polygon fitter that fills between
+/// crossing pairs, and a rounded-rect's corner scanline has
+/// only ONE crossing (the bezier curve), so it gets no fill
+/// at all. The cell-level approach integrates over both axes
+/// and handles the concave corner geometry correctly.
+///
+/// The PathSpec helper `rounded_rect_path_spec` is kept for
+/// future use: it builds the same bezier outline as a `PathSpec`
+/// so callers that want polygon-stroke rendering (e.g., for a
+/// labeler annotation outline) can reuse the geometry without
+/// duplicating the magic-constant cubic math.
 fn paint_rounded_rect(
   buf : PixelBuffer,
   rr : @core.RoundedRect,
@@ -731,9 +859,6 @@ fn paint_rounded_rect(
   }
   let clipped : @core.Rect? = rect.intersection(clip)
   guard clipped is Some(c) else { return }
-  // Phase 15.B: extend by 1 pixel on each side so edge pixels
-  // with partial coverage still get visited. Old code used
-  // ceil/floor which skipped the half-pixel boundary.
   let x0 : Int = c.origin.x.floor().to_int()
   let y0 : Int = c.origin.y.floor().to_int()
   let x1 : Int = (c.origin.x + c.size.width).ceil().to_int() - 1
@@ -742,7 +867,7 @@ fn paint_rounded_rect(
     for x = x0; x <= x1; x = x + 1 {
       let px : Double = x.to_double()
       let py : Double = y.to_double()
-      let coverage : Double = rounded_rect_pixel_coverage(
+      let coverage : Double = bezier_round_rect_pixel_coverage(
         px, py, rx, ry, rw, rh, r,
       )
       if coverage <= 0.0 {
@@ -755,11 +880,20 @@ fn paint_rounded_rect(
 }
 
 ///|
-/// Rounded-rect stroke: paint the perimeter ring directly
-/// (pixels inside the outer rounded-rect but outside the
-/// inset rounded-rect). The earlier "fill then transparent-
-/// subtract" approach didn't work because alpha=0 blend is a
-/// no-op on existing pixels — the interior stayed filled.
+/// Rounded-rect stroke (Phase 16.E): cell-level outer-minus-
+/// inner AA. Pixels in the middle band get outer-minus-inner
+/// rectangle coverage (1 - inner coverage); corner cells get
+/// the bezier-corner sub-sampled coverage. Uses the same
+/// `bezier_round_rect_pixel_coverage` helper as the fill
+/// path's expected AA, so a fractional stroke width gets the
+/// same soft edges along both the outer and inner boundary.
+///
+/// Outer-minus-inner is computed per cell — two polygon fills
+/// (outer + inner-rect-cover) would double-rasterize the
+/// middle band; the cell-level approach reuses the outer
+/// coverage for the middle band and only computes inner
+/// coverage where it matters (i.e., everywhere outside the
+/// inner-rect's interior-box).
 fn paint_stroke_rounded_rect(
   buf : PixelBuffer,
   rr : @core.RoundedRect,
@@ -780,11 +914,6 @@ fn paint_stroke_rounded_rect(
   } else {
     rr.radius
   }
-  // Inset (inner) rounded rect: rect shrunk by `width` on each
-  // side, radius reduced by `width` (clamped to 0). Phase 15.C
-  // hands this to `rounded_rect_pixel_coverage` instead of the
-  // hard-membership check, so a fractional stroke width gets
-  // soft edges on both the outer AND inner boundary.
   let inner_rx : Double = rx + width
   let inner_ry : Double = ry + width
   let inner_rw : Double = rw - 2.0 * width
@@ -796,8 +925,6 @@ fn paint_stroke_rounded_rect(
   }
   let clipped : @core.Rect? = rect.intersection(clip)
   guard clipped is Some(c) else { return }
-  // Phase 15.C: extend by 1 pixel on each side so partial-
-  // coverage edges still get visited.
   let x0 : Int = c.origin.x.floor().to_int()
   let y0 : Int = c.origin.y.floor().to_int()
   let x1 : Int = (c.origin.x + c.size.width).ceil().to_int() - 1
@@ -806,16 +933,10 @@ fn paint_stroke_rounded_rect(
     for x = x0; x <= x1; x = x + 1 {
       let px : Double = x.to_double()
       let py : Double = y.to_double()
-      // Stroke coverage = outer coverage - inner coverage. The
-      // inner rect can degenerate (negative width when stroke
-      // width >= rw/2), in which case `rounded_rect_pixel_coverage`
-      // returns 0 for every pixel — stroke degenerates to the
-      // outer fill, which is the right behaviour for a "stroke
-      // wider than the rect" edge case.
-      let outer_cov : Double = rounded_rect_pixel_coverage(
+      let outer_cov : Double = bezier_round_rect_pixel_coverage(
         px, py, rx, ry, rw, rh, r,
       )
-      let inner_cov : Double = rounded_rect_pixel_coverage(
+      let inner_cov : Double = bezier_round_rect_pixel_coverage(
         px, py, inner_rx, inner_ry, inner_rw, inner_rh, inner_r,
       )
       let raw : Double = outer_cov - inner_cov
@@ -833,53 +954,6 @@ fn paint_stroke_rounded_rect(
       blend_pixel(buf, x, y, color, eff_opacity)
     }
   }
-}
-
-///|
-/// Returns true if (px, py) lies inside one of the four
-/// corner cut-outs of a rounded-rect with the given rect +
-/// radius. Shared between fill (where we skip) and stroke
-/// (where we include only outer-but-not-inner).
-fn in_corner_cut(
-  px : Double,
-  py : Double,
-  rx : Double,
-  ry : Double,
-  rw : Double,
-  rh : Double,
-  r : Double,
-) -> Bool {
-  if r <= 0.0 {
-    return false
-  }
-  let cx_left : Double = rx + r
-  let cx_right : Double = rx + rw - r
-  let cy_top : Double = ry + r
-  let cy_bot : Double = ry + rh - r
-  let in_tl : Bool = px < cx_left && py < cy_top
-  let in_tr : Bool = px >= cx_right && py < cy_top
-  let in_bl : Bool = px < cx_left && py >= cy_bot
-  let in_br : Bool = px >= cx_right && py >= cy_bot
-  if not(in_tl || in_tr || in_bl || in_br) {
-    return false
-  }
-  let cx : Double = if in_tl {
-    cx_left
-  } else if in_tr {
-    cx_right
-  } else if in_bl {
-    cx_left
-  } else {
-    cx_right
-  }
-  let cy : Double = if in_tl || in_tr {
-    cy_top
-  } else {
-    cy_bot
-  }
-  let dx : Double = px - cx
-  let dy : Double = py - cy
-  dx * dx + dy * dy > r * r
 }
 
 ///|

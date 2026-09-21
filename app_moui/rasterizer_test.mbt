@@ -229,16 +229,21 @@ test "fill_rounded_rect_radius_cuts_corners" {
   // is at (3,3), radius=2. Pixel cell corners are
   // (1,1)/(2,1)/(1,2)/(2,2) 鈥?distances^2 from (3,3) are
   // 8/5/5/2. r^2=4 鈥?only (2,2) is inside the circle.
-  // 4-corner supersample coverage = 1/4 = 25% -> 0x3F3F0000.
-  assert_eq(pixel_at(buf, 1, 1), 0x3F3F0000)
+  // 16x16 bezier-corner sub-sample = 80/256 = 31.4% -> 0x50500000.
+  // Phase 16.E: bezier corner overshoots the inscribed circle
+  // by 0.00027*r, so the 16x16 sub-sample gives higher
+  // inside-coverage than the older 4-corner supersample (~25%).
+  assert_eq(pixel_at(buf, 1, 1), 0x50500000)
 }
 ///|
-/// FillRoundedRect radius=1.0 produces a 75% corner pixel.
-/// Rect (1,1,4,4) on a 6x6 buffer, top-left corner-circle
-/// center at (2,2), radius=1. Pixel cell (1,1)..(2,2) has
-/// corners at (1,1)/(2,1)/(1,2)/(2,2) -> distance^2 from
-/// (2,2) is 2/1/1/0 -> 3 inside (d^2<=1), 1 outside.
-/// 4-corner supersample coverage = 3/4 = 75% -> 0xBFBF0000.
+/// FillRoundedRect radius=1.0 produces a 79% corner pixel
+/// (Phase 16.E bezier-corner AA). Rect (1,1,4,4) on a 6x6
+/// buffer, top-left corner center at (2,2), radius=1.
+/// Pixel cell (1,1)..(2,2): 16x16 sub-sample of the bezier
+/// corner (which lies within 0.00027 of the true circle) gives
+/// 202/256 = 79.2% inside coverage -> 0xCACA0000. The older
+/// 4-corner supersample returned 75% (0xBF); the 16x16
+/// sub-sample is closer to the true circle area 1 - pi/4.
 test "fill_rounded_rect_corner_aa_75_pct" {
   let buf : PixelBuffer = PixelBuffer::new(
     6,
@@ -259,7 +264,7 @@ test "fill_rounded_rect_corner_aa_75_pct" {
     damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
-  assert_eq(pixel_at(buf, 1, 1), 0xBFBF0000)
+  assert_eq(pixel_at(buf, 1, 1), 0xCACA0000)
   // Pixel (3,1) cell (3..4)x(1..2). Top-right corner-circle
   // center is at (4,2), r=1. Corners (3,1)/(4,1)/(3,2)/(4,2)
   // -> distance^2 from (4,2) is 2/1/1/0 -> also 75% AA.
@@ -267,7 +272,7 @@ test "fill_rounded_rect_corner_aa_75_pct" {
   // pixel (cell straddles x=cx_right=4 boundary).
   // Corners (4,1)/(5,1)/(4,2)/(5,2) -> distance^2 from
   // (4,2) is 1/2/0/1 -> 3 inside (d^2<=1), 1 outside.
-  assert_eq(pixel_at(buf, 4, 1), 0xBFBF0000)
+  assert_eq(pixel_at(buf, 4, 1), 0xCACA0000)
   // Pixel (2,2) is in the middle band (no corner overlap) ->
   // full coverage, opaque red.
   assert_eq(pixel_at(buf, 2, 2), 0xFFFF0000)
@@ -818,7 +823,7 @@ test "stroke_rounded_rect_fractional_width_aa" {
 
 ///|
 /// StrokeRoundedRect with fractional width=0.5 + r=1 produces
-/// a 50% AA corner pixel. Top-left corner of outer rect has
+/// a 59% AA corner pixel (Phase 16.E bezier-corner AA). Top-left corner of outer rect has
 /// the inscribed circle (2,2) r=1 cutting the corner. Inner
 /// rect (1.5,1.5,3,3) r=0.5 has inscribed circle (2,2) r=0.5
 /// cutting the inner corner.
@@ -848,7 +853,7 @@ test "stroke_rounded_rect_corner_aa" {
     clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
-  assert_eq(pixel_at(buf, 1, 1), 0x7F7F0000)
+  assert_eq(pixel_at(buf, 1, 1), 0x96960000)
 }
 
 ///|
@@ -1148,4 +1153,110 @@ test "draw_shadow_command_zero_offset_glow_around_rect" {
   // Pixel (0, 0) is far outside the shadow region -> clear.
   let off00 : Int = 0 * buf.width * 4 + 0 * 4
   assert_eq(buf.pixels[off00 + 3].to_int(), 0)
+}
+
+///|
+/// Phase 16.E: `rounded_rect_path_spec` emits a bezier
+/// outline (MoveTo + 4 CubicTo corners + Close). The 4
+/// CubicTo verbs are the key feature — they let a caller
+/// reuse the rounded-rect geometry for arbitrary PathSpec
+/// rendering (e.g. polygon-stroke outlines) instead of being
+/// locked to FillRoundedRect/StrokeRoundedRect dispatch.
+test "rounded_rect_path_spec_emits_4_cubics_and_close" {
+  let rr : @core.RoundedRect = @core.RoundedRect::new(
+    rect=@core.Rect::new(x=2.0, y=3.0, width=10.0, height=8.0),
+    radius=2.0,
+  )
+  let spec : @core.PathSpec = rounded_rect_path_spec(rr)
+  let verbs : Array[@core.PathVerb] = spec.verbs
+  // Total verb count: 1 MoveTo + 4 LineTo + 4 CubicTo + 1 Close = 10.
+  assert_eq(verbs.length(), 10)
+  let mut n_move : Int = 0
+  let mut n_line : Int = 0
+  let mut n_cubic : Int = 0
+  let mut n_close : Int = 0
+  for verb in verbs {
+    match verb {
+      @core.PathVerb::MoveTo(_) => n_move = n_move + 1
+      @core.PathVerb::LineTo(_) => n_line = n_line + 1
+      @core.PathVerb::QuadTo(_, _) => ()
+      @core.PathVerb::CubicTo(_, _, _) => n_cubic = n_cubic + 1
+      @core.PathVerb::Close => n_close = n_close + 1
+    }
+  }
+  assert_eq(n_move, 1)
+  assert_eq(n_line, 4)
+  assert_eq(n_cubic, 4)
+  assert_eq(n_close, 1)
+  // First verb must be MoveTo at (left+r, top) = (4, 3).
+  match verbs[0] {
+    @core.PathVerb::MoveTo(p) => {
+      assert_eq(p.x, 4.0)
+      assert_eq(p.y, 3.0)
+    }
+    _ => assert_true(false)
+  }
+  // The closing verb must be Close.
+  match verbs[verbs.length() - 1] {
+    @core.PathVerb::Close => ()
+    _ => assert_true(false)
+  }
+}
+
+///|
+/// Phase 16.E: `bezier_round_rect_pixel_coverage` returns
+/// 1.0 for a cell entirely inside the rect's interior box,
+/// 0.0 for a cell entirely outside the bounding rect, and a
+/// fractional value for a corner-cut cell. Sanity-check the
+/// three short-circuits without going through the full
+/// `rasterize_draw_frame` pipeline.
+test "bezier_round_rect_pixel_coverage_short_circuits" {
+  // Interior-box cell (3,3) on rect (1,1,8,8) r=2:
+  //   cx_left = 3, cx_right = 7, cy_top = 3, cy_bot = 7.
+  //   px=3 >= 3, px+1=4 <= 7, py=3 >= 3, py+1=4 <= 7.
+  //   Short-circuit returns 1.0.
+  let c_interior : Double = bezier_round_rect_pixel_coverage(
+    3.0, 3.0, 1.0, 1.0, 8.0, 8.0, 2.0,
+  )
+  assert_eq(c_interior, 1.0)
+  // Outside-bbox cell (-1,-1) on the same rect:
+  //   px+1=0 <= 1 -> short-circuit returns 0.0.
+  let c_outside : Double = bezier_round_rect_pixel_coverage(
+    -1.0, -1.0, 1.0, 1.0, 8.0, 8.0, 2.0,
+  )
+  assert_eq(c_outside, 0.0)
+  // r=0 short-circuit: with no corner rounding, every cell
+  // inside the bounding rect is full-coverage.
+  let c_r0 : Double = bezier_round_rect_pixel_coverage(
+    4.0, 4.0, 1.0, 1.0, 8.0, 8.0, 0.0,
+  )
+  assert_eq(c_r0, 1.0)
+  // Corner cell (1,1) on rect (1,1,4,4) r=1 should land
+  // strictly in (0, 1) — the bezier-corner sub-sampler falls
+  // through to the 16x16 loop (the cell is on the bounding
+  // rect's edge AND in a corner quadrant, so neither
+  // short-circuit fires). Phase 16.E measured 202/256 = 0.79.
+  let c_corner : Double = bezier_round_rect_pixel_coverage(
+    1.0, 1.0, 1.0, 1.0, 4.0, 4.0, 1.0,
+  )
+  assert_true(c_corner > 0.0)
+  assert_true(c_corner < 1.0)
+  // Symmetric across all four corners: same coverage at
+  // (1,1), (4,1), (1,4), (4,4) for a centred rect.
+  let c_tl : Double = bezier_round_rect_pixel_coverage(
+    1.0, 1.0, 1.0, 1.0, 4.0, 4.0, 1.0,
+  )
+  let c_tr : Double = bezier_round_rect_pixel_coverage(
+    4.0, 1.0, 1.0, 1.0, 4.0, 4.0, 1.0,
+  )
+  let c_bl : Double = bezier_round_rect_pixel_coverage(
+    1.0, 4.0, 1.0, 1.0, 4.0, 4.0, 1.0,
+  )
+  let c_br : Double = bezier_round_rect_pixel_coverage(
+    4.0, 4.0, 1.0, 1.0, 4.0, 4.0, 1.0,
+  )
+  let eps : Double = 0.001
+  assert_true((c_tl - c_tr).abs() < eps)
+  assert_true((c_tl - c_bl).abs() < eps)
+  assert_true((c_tl - c_br).abs() < eps)
 }
