@@ -1000,3 +1000,83 @@ test "pixel_at_out_of_bounds_returns_minus_one" {
   assert_eq(pixel_at(buf, 0, 4), -1)
 }
 
+
+
+///|
+/// blur_h averages 5 horizontal neighbors. Verify on a 1D
+/// pattern: col 5 has value 255, others 0; after blur_h each
+/// row should have a horizontal smear of value 51 (255/5).
+test "blur_h_averages_5_horizontal_neighbors" {
+  let buf : PixelBuffer = PixelBuffer::new(10, 10, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let scratch : PixelBuffer = PixelBuffer::new(10, 10, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let off : Int = 5 * buf.width * 4 + 5 * 4
+  buf.pixels[off] = (0).to_byte()
+  buf.pixels[off + 1] = (0).to_byte()
+  buf.pixels[off + 2] = (255).to_byte()
+  buf.pixels[off + 3] = (255).to_byte()
+  blur_h(buf, scratch, 0, 0, 10, 10)
+  let soff55 : Int = 5 * scratch.width * 4 + 5 * 4
+  // Only pixel (5, 5) has R=255, A=255; B and G are 0.
+  // After blur_h averaging 5 horizontal neighbors, R = 255/5 = 51,
+  // A = 255/5 = 51; B and G stay 0 (averaging zero).
+  assert_eq(scratch.pixels[soff55].to_int(), 0)
+  assert_eq(scratch.pixels[soff55 + 1].to_int(), 0)
+  assert_eq(scratch.pixels[soff55 + 2].to_int(), 51)
+  assert_eq(scratch.pixels[soff55 + 3].to_int(), 51)
+}
+
+///|
+/// Full separable blur: a uniform field is unchanged.
+test "blur_separable_uniform_color_unchanged" {
+  let buf : PixelBuffer = PixelBuffer::new(8, 8, @core.Color::rgba(r=1.0, g=0.0, b=0.0, a=1.0))
+  let scratch : PixelBuffer = PixelBuffer::new(8, 8, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  blur_h(buf, scratch, 0, 0, 8, 8)
+  blur_v(scratch, buf, 0, 0, 8, 8)
+  let off : Int = 4 * buf.width * 4 + 4 * 4
+  assert_eq(buf.pixels[off + 2].to_int(), 255)
+  assert_eq(buf.pixels[off + 3].to_int(), 255)
+}
+
+///|
+/// paint_shadow_rect with offset paints shadow at offset, leaving
+/// the original rect interior clear.
+test "paint_shadow_rect_offset_appears_below" {
+  let buf : PixelBuffer = PixelBuffer::new(16, 16, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let scratch : PixelBuffer = PixelBuffer::new(16, 16, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let clip : @core.Rect = @core.Rect::new(x=0.0, y=0.0, width=16.0, height=16.0)
+  let rect : @core.Rect = @core.Rect::new(x=4.0, y=4.0, width=4.0, height=4.0)
+  let offset : @core.Point = @core.Point::new(x=2.0, y=2.0)
+  let color : @core.Color = @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=1.0)
+  paint_shadow_rect(buf, scratch, rect, offset, color, 1.0, clip)
+  // Pixel (8, 8) is inside the shadow rect (offset 2,2) at full
+  // coverage; blur softens it to ~163 alpha (16 of 25 neighbors
+  // inside shadow rect after 5x5 box blur).
+  let off88 : Int = 8 * buf.width * 4 + 8 * 4
+  let a88 : Int = buf.pixels[off88 + 3].to_int()
+  assert_true(a88 > 100)
+  // Pixel (0, 0) is far outside any shadow region -> clear.
+  let off00 : Int = 0 * buf.width * 4 + 0 * 4
+  assert_eq(buf.pixels[off00 + 3].to_int(), 0)
+}
+
+///|
+/// paint_shadow_rect with zero offset produces a glow around
+/// the rect. The rect interior stays clear.
+test "paint_shadow_rect_zero_offset_glow" {
+  let buf : PixelBuffer = PixelBuffer::new(12, 12, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let scratch : PixelBuffer = PixelBuffer::new(12, 12, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let clip : @core.Rect = @core.Rect::new(x=0.0, y=0.0, width=12.0, height=12.0)
+  let rect : @core.Rect = @core.Rect::new(x=4.0, y=4.0, width=4.0, height=4.0)
+  let offset : @core.Point = @core.Point::new(x=0.0, y=0.0)
+  let color : @core.Color = @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=1.0)
+  paint_shadow_rect(buf, scratch, rect, offset, color, 1.0, clip)
+  // Pixel (6, 6) is inside the rect (and inside the shadow region)
+  // -> high alpha.
+  let off66 : Int = 6 * buf.width * 4 + 6 * 4
+  assert_true(buf.pixels[off66 + 3].to_int() > 100)
+  // Pixel (1, 1) is far outside any shadow region -> clear.
+  let off11 : Int = 1 * buf.width * 4 + 1 * 4
+  assert_eq(buf.pixels[off11 + 3].to_int(), 0)
+}
+
+

@@ -1364,3 +1364,241 @@ fn dispatch_command(
     _ => ()
   }
 }
+
+
+///|
+/// Separable 5-tap box blur (radius 2): horizontal pass from
+/// `buf` to `scratch`, then vertical pass from `scratch` back
+/// to `buf`. Region is `x0..x0+w` x `y0..y0+h`. Out-of-region
+/// samples (within 2 px of the edge) clamp to the buffer edge.
+/// Phase 16.B: cheap Gaussian-ish blur, exact box, separable so
+/// O(w*h*5) horizontal + O(w*h*5) vertical = 10 reads per pixel.
+pub fn blur_h(
+  buf : PixelBuffer,
+  scratch : PixelBuffer,
+  x0 : Int,
+  y0 : Int,
+  w : Int,
+  h : Int,
+) -> Unit {
+  let b_stride : Int = buf.width * 4
+  let s_stride : Int = scratch.width * 4
+  let bp = buf.pixels
+  let sp = scratch.pixels
+  for y = y0; y < y0 + h; y = y + 1 {
+    for x = x0; x < x0 + w; x = x + 1 {
+      let mut sum_b : Int = 0
+      let mut sum_g : Int = 0
+      let mut sum_r : Int = 0
+      let mut sum_a : Int = 0
+      let mut k : Int = -2
+      while k <= 2 {
+        let mut sx : Int = x + k
+        if sx < 0 { sx = 0 }
+        if sx >= buf.width { sx = buf.width - 1 }
+        let off : Int = y * b_stride + sx * 4
+        sum_b = sum_b + bp[off].to_int()
+        sum_g = sum_g + bp[off + 1].to_int()
+        sum_r = sum_r + bp[off + 2].to_int()
+        sum_a = sum_a + bp[off + 3].to_int()
+        k = k + 1
+      }
+      let soff : Int = y * s_stride + x * 4
+      sp[soff] = (sum_b / 5).to_byte()
+      sp[soff + 1] = (sum_g / 5).to_byte()
+      sp[soff + 2] = (sum_r / 5).to_byte()
+      sp[soff + 3] = (sum_a / 5).to_byte()
+    }
+  }
+}
+
+///|
+/// Vertical pass of the separable 5-tap box blur: reads from
+/// `scratch`, writes to `buf`. Region is `x0..x0+w` x `y0..y0+h`.
+pub fn blur_v(
+  scratch : PixelBuffer,
+  buf : PixelBuffer,
+  x0 : Int,
+  y0 : Int,
+  w : Int,
+  h : Int,
+) -> Unit {
+  let s_stride : Int = scratch.width * 4
+  let b_stride : Int = buf.width * 4
+  let sp = scratch.pixels
+  let bp = buf.pixels
+  for y = y0; y < y0 + h; y = y + 1 {
+    for x = x0; x < x0 + w; x = x + 1 {
+      let mut sum_b : Int = 0
+      let mut sum_g : Int = 0
+      let mut sum_r : Int = 0
+      let mut sum_a : Int = 0
+      let mut k : Int = -2
+      while k <= 2 {
+        let mut sy : Int = y + k
+        if sy < 0 { sy = 0 }
+        if sy >= scratch.height { sy = scratch.height - 1 }
+        let off : Int = sy * s_stride + x * 4
+        sum_b = sum_b + sp[off].to_int()
+        sum_g = sum_g + sp[off + 1].to_int()
+        sum_r = sum_r + sp[off + 2].to_int()
+        sum_a = sum_a + sp[off + 3].to_int()
+        k = k + 1
+      }
+      let off : Int = y * b_stride + x * 4
+      bp[off] = (sum_b / 5).to_byte()
+      bp[off + 1] = (sum_g / 5).to_byte()
+      bp[off + 2] = (sum_r / 5).to_byte()
+      bp[off + 3] = (sum_a / 5).to_byte()
+    }
+  }
+}
+
+///|
+/// Paint a soft shadow under a rect. Pipeline:
+///   1. Compute the shadow rect: same size as `rect`, offset by
+///      `(offset.x, offset.y)`, then grow by 2 px on each side
+///      so the blur kernel does not clip the shadow edges.
+///   2. Clear the shadow region in `scratch` to transparent.
+///   3. Fill the inner (un-grown) shadow rect into `scratch`
+///      with `color` at full opacity.
+///   4. blur_h + blur_v on the grown region.
+///   5. Composite the blurred shadow onto `buf` at `opacity`
+///      (blend per-pixel, using the blurred alpha as the
+///      source opacity, the existing `buf` pixel as the bg).
+///
+/// After this returns the caller can paint the foreground rect
+/// on top to cover the shadow underneath the shape.
+pub fn paint_shadow_rect(
+  buf : PixelBuffer,
+  scratch : PixelBuffer,
+  rect : @core.Rect,
+  offset : @core.Point,
+  color : @core.Color,
+  opacity : Double,
+  clip : @core.Rect,
+) -> Unit {
+  // Shadow rect (not yet grown).
+  let sh_x : Double = rect.origin.x + offset.x
+  let sh_y : Double = rect.origin.y + offset.y
+  let sh_w : Double = rect.size.width
+  let sh_h : Double = rect.size.height
+  // Grow by 2 px (blur radius) on each side.
+  let grow : Double = 2.0
+  let grown : @core.Rect = @core.Rect::new(
+    x=sh_x - grow,
+    y=sh_y - grow,
+    width=sh_w + 2.0 * grow,
+    height=sh_h + 2.0 * grow,
+  )
+  // Clip against buffer bounds + user clip.
+  let buf_bounds : @core.Rect = @core.Rect::new(
+    x=0.0,
+    y=0.0,
+    width=buf.width.to_double(),
+    height=buf.height.to_double(),
+  )
+  let clipped1 : @core.Rect? = grown.intersection(clip)
+  guard clipped1 is Some(c1) else { return }
+  let clipped : @core.Rect? = c1.intersection(buf_bounds)
+  guard clipped is Some(c) else { return }
+  let x_lo : Int = c.origin.x.floor().to_int()
+  let y_lo : Int = c.origin.y.floor().to_int()
+  let x_hi : Int = (c.origin.x + c.size.width).ceil().to_int() - 1
+  let y_hi : Int = (c.origin.y + c.size.height).ceil().to_int() - 1
+  if x_lo > x_hi || y_lo > y_hi { return }
+  let rw : Int = x_hi - x_lo + 1
+  let rh : Int = y_hi - y_lo + 1
+  // 2. Clear scratch region to transparent.
+  let s_stride : Int = scratch.width * 4
+  let sp = scratch.pixels
+  for y = y_lo; y <= y_hi; y = y + 1 {
+    let off : Int = y * s_stride + x_lo * 4
+    for x = 0; x < rw * 4; x = x + 1 {
+      sp[off + x] = (0).to_byte()
+    }
+  }
+  // 3. Fill the inner shadow rect into scratch with shadow color.
+  let sh_rect : @core.Rect = @core.Rect::new(
+    x=sh_x,
+    y=sh_y,
+    width=sh_w,
+    height=sh_h,
+  )
+  let sh_clipped : @core.Rect? = sh_rect.intersection(c)
+  match sh_clipped {
+    Some(sc) => {
+      paint_rect_into(scratch, sc, color)
+    }
+    None => ()
+  }
+  // 4. Apply separable 5x5 box blur.
+  blur_h(scratch, scratch, x_lo, y_lo, rw, rh)
+  blur_v(scratch, scratch, x_lo, y_lo, rw, rh)
+  // 5. Composite blurred shadow onto buf at opacity. We blend
+  // using the blurred alpha (per pixel) as the source alpha,
+  // scaled by `opacity`. Standard premultiplied alpha over op.
+  let b_stride : Int = buf.width * 4
+  let bp = buf.pixels
+  for y = y_lo; y <= y_hi; y = y + 1 {
+    for x = x_lo; x <= x_hi; x = x + 1 {
+      let soff : Int = y * s_stride + x * 4
+      let sb : Int = sp[soff].to_int()
+      let sg : Int = sp[soff + 1].to_int()
+      let sr : Int = sp[soff + 2].to_int()
+      let sa_premul : Int = sp[soff + 3].to_int()
+      // Source alpha scaled by overall opacity.
+      let sa : Double = sa_premul.to_double() / 255.0 * opacity
+      if sa <= 0.0 { continue }
+      let inv : Double = 1.0 - sa
+      let boff : Int = y * b_stride + x * 4
+      let bb : Int = bp[boff].to_int()
+      let bg_g : Int = bp[boff + 1].to_int()
+      let br : Int = bp[boff + 2].to_int()
+      let ba_premul : Int = bp[boff + 3].to_int()
+      // Source RGB is the shadow color premultiplied by its (already
+      // blurred) alpha; we approximate by scaling color.r/g/b by sa.
+      let dr : Double = color.r * 255.0 * sa + br.to_double() * inv
+      let dg : Double = color.g * 255.0 * sa + bg_g.to_double() * inv
+      let db : Double = color.b * 255.0 * sa + bb.to_double() * inv
+      let da : Double = sa * 255.0 + ba_premul.to_double() * inv
+      bp[boff] = (if db <= 0.0 { 0 } else if db >= 255.0 { 255 } else { db.to_int() }).to_byte()
+      bp[boff + 1] = (if dg <= 0.0 { 0 } else if dg >= 255.0 { 255 } else { dg.to_int() }).to_byte()
+      bp[boff + 2] = (if dr <= 0.0 { 0 } else if dr >= 255.0 { 255 } else { dr.to_int() }).to_byte()
+      bp[boff + 3] = (if da <= 0.0 { 0 } else if da >= 255.0 { 255 } else { da.to_int() }).to_byte()
+    }
+  }
+}
+
+///|
+/// Fill `rect` into `buf` with `color` at full opacity, ignoring
+/// clip (caller is responsible for rect already being clipped).
+/// Used by paint_shadow_rect to paint the un-blurred shadow shape
+/// into the scratch buffer before the blur pass.
+pub fn paint_rect_into(
+  buf : PixelBuffer,
+  rect : @core.Rect,
+  color : @core.Color,
+) -> Unit {
+  let x_lo : Int = rect.origin.x.floor().to_int()
+  let y_lo : Int = rect.origin.y.floor().to_int()
+  let x_hi : Int = (rect.origin.x + rect.size.width).ceil().to_int() - 1
+  let y_hi : Int = (rect.origin.y + rect.size.height).ceil().to_int() - 1
+  let stride : Int = buf.width * 4
+  let b : Int = (color.b * 255.0).to_int()
+  let g : Int = (color.g * 255.0).to_int()
+  let r : Int = (color.r * 255.0).to_int()
+  let a : Int = (color.a * 255.0).to_int()
+  let p = buf.pixels
+  for y = y_lo; y <= y_hi; y = y + 1 {
+    if y < 0 || y >= buf.height { continue }
+    let off : Int = y * stride + x_lo * 4
+    for x = x_lo; x <= x_hi; x = x + 1 {
+      if x < 0 || x >= buf.width { continue }
+      p[off + (x - x_lo) * 4] = b.to_byte()
+      p[off + (x - x_lo) * 4 + 1] = g.to_byte()
+      p[off + (x - x_lo) * 4 + 2] = r.to_byte()
+      p[off + (x - x_lo) * 4 + 3] = a.to_byte()
+    }
+  }
+}
