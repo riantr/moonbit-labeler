@@ -22,6 +22,7 @@
 //
 // We synthesise a 33-byte header (the minimum `png_dimensions`
 // will accept) with width=1920, height=1080.
+
 ///|
 fn png_header(w : Int, h : Int) -> Bytes {
   let bytes : Array[Byte] = []

@@ -88,8 +88,15 @@ fn main {
   // `entry()` returns a @runtime.PlatformEntry that the
   // AppBuilder consumes via `.backend(...)`. `run_app` is a
   // free function (not a method on AppRuntime).
+  //
+  // Phase 10.2 — register the placeholder RendererProvider
+  // BEFORE .backend(). Without this, the runtime aborts with
+  // "at least one renderer provider is required" (Phase 10.1
+  // bug). The placeholder paints a flat-grey frame; a real
+  // Skia/Direct2D renderer lands in a follow-up batch.
   @runtime
   .run_app("MoonBit Labeler", runtime)
+  .render(make_renderer_provider())
   .backend(
     @windows.entry(options=@windows.WindowsHostAppOptions::new(), smoke_options~),
   )
