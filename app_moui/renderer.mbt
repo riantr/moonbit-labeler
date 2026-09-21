@@ -88,7 +88,16 @@ fn bind_renderer(
   // None — we reject those.
   let native : @render.NativeSurface? = surface.native_surface()
   match native {
-    Some(_) =>
+    Some(_) => {
+      // Capture the surface's metrics at bind time so the
+      // first `render_frame` (which fires before any
+      // SurfaceResized event) already has the correct
+      // dimensions. Without this, current_metrics stays
+      // at its 0×0 default and `render_placeholder_frame`
+      // builds a 0×0 PixelFrame that the Win32 GDI blit
+      // rejects (`width <= 0` early return), leaving the
+      // HWND permanently blank.
+      current_metrics.val = surface.metrics()
       // Build the minimal RendererSession. Each closure is
       // a closure capturing nothing — they're all no-ops or
       // trivial counters at Phase 10.2's fidelity.
@@ -102,6 +111,7 @@ fn bind_renderer(
           present_count=fn() { present_count.val },
         ),
       )
+    }
     None => Rejected("app_moui Phase 10.2 renderer needs a native surface (HWND); got None")
   }
 }

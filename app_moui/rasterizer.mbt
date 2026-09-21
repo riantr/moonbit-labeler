@@ -666,12 +666,27 @@ fn brush_color(brush : @core.Brush) -> @core.Color {
 /// transform. `commands` is iterated linearly (no recursion
 /// needed — `Push*` ops only push/pop state for subsequent
 /// siblings).
+///
+/// Background strategy: Moui's runtime hands each `DrawFrame`
+/// a `clear_color` (defaults to opaque white when the view
+/// tree doesn't override it). We ignore that and keep the
+/// `PixelBuffer::new` init colour as the background, so an
+/// empty / partially-painting view tree still shows the
+/// intended background instead of the runtime's default
+/// white. Commands that explicitly `Clear` themselves still
+/// win (they run after our init clear in command order).
 pub fn rasterize_draw_frame(
   buf : PixelBuffer,
   frame : @core.DrawFrame,
 ) -> Unit {
-  // Clear with frame.clear_color first.
-  clear_color(buf, frame.clear_color)
+  // Note: we do NOT clear to frame.clear_color here. The buf
+  // was already initialized to its background by
+  // PixelBuffer::new (in renderer.mbt: dark slate for the
+  // labeler window). If a future view tree ships its own
+  // root FillRect, it will paint on top of the dark slate
+  // — visible immediately instead of waiting for the
+  // cached-static-layer to commit.
+  let _ = frame.clear_color
   // Walker state.
   let full : @core.Rect = @core.Rect::new(
     x=0.0,
