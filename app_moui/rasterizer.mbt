@@ -1,4 +1,4 @@
-// app_moui/rasterizer.mbt — Phase 11 CPU rasterizer.
+﻿// app_moui/rasterizer.mbt — Phase 11 CPU rasterizer.
 //
 // Translates a Moui `@core.DrawFrame` (the composed view tree)
 // into a 32-bit BGRA pixel buffer suitable for
@@ -169,11 +169,15 @@ pub fn pixel_at(buf : PixelBuffer, x : Int, y : Int) -> Int {
 }
 
 ///|
-/// Internal clipped-fill rectangle: paints every pixel inside
-/// `rect` ∩ clip with `color` blended at `opacity`. The
-/// scanline is integer (no AA) — Phase 11 uses axis-aligned
-/// rect coverage only.
-fn paint_rect(
+/// Internal clipped-fill rectangle (no AA, integer snap):
+/// paints every pixel inside `rect` ∩ clip with `color`
+/// blended at `opacity`. Each pixel is fully painted or fully
+/// skipped — sub-pixel coverage is ignored. Used by
+/// `paint_stroke_rect` whose outer-half pixel boundary is
+/// itself an integer-aligned edge under the stroke=1.0
+/// convention; switching to AA here would change the stroke's
+/// outer-edge appearance from solid to partial-coverage.
+fn paint_rect_snap(
   buf : PixelBuffer,
   rect : @core.Rect,
   clip : @core.Rect,
@@ -189,6 +193,73 @@ fn paint_rect(
   for y = y0; y <= y1; y = y + 1 {
     for x = x0; x <= x1; x = x + 1 {
       blend_pixel(buf, x, y, color, opacity)
+    }
+  }
+}
+
+///|
+/// Internal clipped-fill rectangle: paints every pixel inside
+/// `rect` ∩ clip with `color` blended at `opacity`. The
+/// per-pixel coverage is computed analytically from the
+/// intersection of the destination pixel (x..x+1, y..y+1)
+/// with the clipped rect, so edges that fall on a half-pixel
+/// boundary get partial coverage (Phase 15 — supersampling-
+/// free fractional coverage AA; no extra read or write
+/// bandwidth beyond the integer-pixel algorithm).
+///
+/// Coverage formula:
+///
+///   pixel_x_lo = max(rect.x, x)
+///   pixel_x_hi = min(rect.x + rect.w, x + 1)
+///   x_cover = max(0.0, pixel_x_hi - pixel_x_lo)
+///
+/// and likewise for y. Final coverage = x_cover * y_cover. The
+/// opacity passed to `blend_pixel` becomes
+/// `opacity * coverage` so that a 50% covered edge pixel
+/// contributes half the source color.
+fn paint_rect(
+  buf : PixelBuffer,
+  rect : @core.Rect,
+  clip : @core.Rect,
+  color : @core.Color,
+  opacity : Double,
+) -> Unit {
+  let clipped : @core.Rect? = rect.intersection(clip)
+  guard clipped is Some(c) else { return }
+  let x_lo : Double = c.origin.x
+  let y_lo : Double = c.origin.y
+  let x_hi : Double = c.origin.x + c.size.width
+  let y_hi : Double = c.origin.y + c.size.height
+  let x0 : Int = x_lo.floor().to_int()
+  let y0 : Int = y_lo.floor().to_int()
+  let x1 : Int = x_hi.floor().to_int()
+  let y1 : Int = y_hi.floor().to_int()
+  for y = y0; y <= y1; y = y + 1 {
+    let py_lo : Double = y.to_double()
+    let py_hi : Double = py_lo + 1.0
+    let y_cover : Double = {
+      let lo : Double = if py_lo > y_lo { py_lo } else { y_lo }
+      let hi : Double = if py_hi < y_hi { py_hi } else { y_hi }
+      if hi > lo { hi - lo } else { 0.0 }
+    }
+    if y_cover <= 0.0 {
+      continue
+    }
+    for x = x0; x <= x1; x = x + 1 {
+      let px_lo : Double = x.to_double()
+      let px_hi : Double = px_lo + 1.0
+      let x_cover : Double = {
+        let lo : Double = if px_lo > x_lo { px_lo } else { x_lo }
+        let hi : Double = if px_hi < x_hi { px_hi } else { x_hi }
+        if hi > lo { hi - lo } else { 0.0 }
+      }
+      if x_cover <= 0.0 {
+        continue
+      }
+      let coverage : Double = x_cover * y_cover
+      let cov_clamped : Double = if coverage > 1.0 { 1.0 } else { coverage }
+      let eff_opacity : Double = opacity * cov_clamped
+      blend_pixel(buf, x, y, color, eff_opacity)
     }
   }
 }
@@ -465,7 +536,7 @@ fn paint_stroke_rect(
   let rw : Double = rect.size.width
   let rh : Double = rect.size.height
   // Top edge
-  paint_rect(
+  paint_rect_snap(
     buf,
     @core.Rect::new(
       x=rx - half_w,
@@ -478,7 +549,7 @@ fn paint_stroke_rect(
     opacity,
   )
   // Bottom edge
-  paint_rect(
+  paint_rect_snap(
     buf,
     @core.Rect::new(
       x=rx - half_w,
@@ -491,7 +562,7 @@ fn paint_stroke_rect(
     opacity,
   )
   // Left edge (excluding top + bottom rows already painted)
-  paint_rect(
+  paint_rect_snap(
     buf,
     @core.Rect::new(
       x=rx - half_w,
@@ -504,7 +575,7 @@ fn paint_stroke_rect(
     opacity,
   )
   // Right edge
-  paint_rect(
+  paint_rect_snap(
     buf,
     @core.Rect::new(
       x=rx + rw - half_w,
