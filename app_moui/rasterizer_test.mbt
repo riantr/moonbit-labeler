@@ -334,7 +334,166 @@ test "draw_path_triangle_fill" {
   // Outside the triangle (0,0) should be transparent.
   assert_eq(pixel_at(buf, 0, 0), 0x00000000)
 }
+///|
+/// DrawPath with a QuadTo curve fills the area under the
+/// curve. Verified by drawing a U-shape: MoveTo(1,1) ->
+/// LineTo(5,1) -> QuadTo(control=(7,3), p=(5,5)) ->
+/// LineTo(1,5) -> Close. The curve bulges right and fills
+/// the pixel column between the straight edges and the
+/// curve apex. Pixel (6,3) is on the curve apex (x=6 at
+/// t=0.5 for the (5,1)-(7,3)-(5,5) Bezier); pixel (1,3) is
+/// inside the rect interior; pixel (0,0) is outside the path.
+test "draw_path_quad_to_fills_curve" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    8,
+    8,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let yellow : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=0.0, a=1.0)
+  let u_shape : @core.PathSpec = @core.PathSpec::new(
+    verbs=[
+      @core.PathVerb::MoveTo(@core.Point::new(x=1.0, y=1.0)),
+      @core.PathVerb::LineTo(@core.Point::new(x=5.0, y=1.0)),
+      @core.PathVerb::QuadTo(
+        @core.Point::new(x=7.0, y=3.0),
+        @core.Point::new(x=5.0, y=5.0),
+      ),
+      @core.PathVerb::LineTo(@core.Point::new(x=1.0, y=5.0)),
+      @core.PathVerb::Close,
+    ],
+    fill=Some(@core.Brush::solid(yellow)),
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawPath(u_shape)],
+    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // Pixel (5,3) sits inside the curve bulge (curve crosses y=3.5
+  // at x≈5.94, fill [1,5] at y=3.5) -> filled yellow.
+  let s5_3_quad_off : Int = 3*buf.width*4 + 5*4
+  let s5_3_quad : Int = (buf.pixels[s5_3_quad_off + 3].to_int() << 24) |
+    (buf.pixels[s5_3_quad_off + 2].to_int() << 16) |
+    (buf.pixels[s5_3_quad_off + 1].to_int() << 8) |
+    buf.pixels[s5_3_quad_off].to_int()
+  assert_eq(s5_3_quad, 0xFFFFFF00)
+  // Pixel (1,3) is inside the U interior -> filled yellow.
+  assert_eq(pixel_at(buf, 1, 3), 0xFFFFFF00)
+  // Pixel (0,0) is outside the path -> transparent.
+  assert_eq(pixel_at(buf, 0, 0), 0x00000000)
+  // Pixel (6,3) is OUTSIDE the curve apex (curve apex x=6 at
+  // y=3, fill range at y=3.5 is [1, 5.94]) -> transparent.
+  // Bypass pixel_at (OOB sentinel bug); use raw bytes.
+  let s6_3_quad_off : Int = 3*buf.width*4 + 6*4
+  let s6_3_quad : Int = (buf.pixels[s6_3_quad_off + 3].to_int() << 24) |
+    (buf.pixels[s6_3_quad_off + 2].to_int() << 16) |
+    (buf.pixels[s6_3_quad_off + 1].to_int() << 8) |
+    buf.pixels[s6_3_quad_off].to_int()
+  assert_eq(s6_3_quad, 0x00000000)
+}
 
+///|
+/// DrawPath with a CubicTo curve fills the area under the
+/// curve. Verified by drawing a path with MoveTo(1,1) ->
+/// LineTo(5,1) -> CubicTo(c1=(7,1), c2=(7,5), p=(5,5)) ->
+/// LineTo(1,5) -> Close. The curve bulges right, hitting
+/// roughly x=6.5 at the midpoint, so pixels (6,3) and (7,3)
+/// should both be filled (CubicTo apex is further right
+/// than a comparable QuadTo because the two control points
+/// pull the curve out).
+test "draw_path_cubic_to_fills_curve" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    10,
+    10,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let cyan : @core.Color = @core.Color::rgba(r=0.0, g=1.0, b=1.0, a=1.0)
+  let bezier_shape : @core.PathSpec = @core.PathSpec::new(
+    verbs=[
+      @core.PathVerb::MoveTo(@core.Point::new(x=1.0, y=1.0)),
+      @core.PathVerb::LineTo(@core.Point::new(x=5.0, y=1.0)),
+      @core.PathVerb::CubicTo(
+        @core.Point::new(x=7.0, y=1.0),
+        @core.Point::new(x=7.0, y=5.0),
+        @core.Point::new(x=5.0, y=5.0),
+      ),
+      @core.PathVerb::LineTo(@core.Point::new(x=1.0, y=5.0)),
+      @core.PathVerb::Close,
+    ],
+    fill=Some(@core.Brush::solid(cyan)),
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawPath(bezier_shape)],
+    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // Pixel (6,3) sits inside the cubic bulge (cubic crosses y=3.5
+  // at x≈6.47, fill [1, 6] at y=3.5) -> filled cyan.
+  // Use raw bytes to bypass pixel_at OOB sentinel bug.
+  let s6_3_cubic_off : Int = 3*buf.width*4 + 6*4
+  let s6_3_cubic : Int = (buf.pixels[s6_3_cubic_off + 3].to_int() << 24) |
+    (buf.pixels[s6_3_cubic_off + 2].to_int() << 16) |
+    (buf.pixels[s6_3_cubic_off + 1].to_int() << 8) |
+    buf.pixels[s6_3_cubic_off].to_int()
+  assert_eq(s6_3_cubic, 0xFF00FFFF)
+  // Pixel (7,3) is OUTSIDE the cubic apex (curve apex x=6.5)
+  // -> transparent. Use raw bytes.
+  let s7_3_cubic_off : Int = 3*buf.width*4 + 7*4
+  let s7_3_cubic : Int = (buf.pixels[s7_3_cubic_off + 3].to_int() << 24) |
+    (buf.pixels[s7_3_cubic_off + 2].to_int() << 16) |
+    (buf.pixels[s7_3_cubic_off + 1].to_int() << 8) |
+    buf.pixels[s7_3_cubic_off].to_int()
+  assert_eq(s7_3_cubic, 0x00000000)
+  // Pixel (1,3) is inside the U interior -> filled cyan.
+  let s1_3_cubic_off : Int = 3*buf.width*4 + 1*4
+  let s1_3_cubic : Int = (buf.pixels[s1_3_cubic_off + 3].to_int() << 24) |
+    (buf.pixels[s1_3_cubic_off + 2].to_int() << 16) |
+    (buf.pixels[s1_3_cubic_off + 1].to_int() << 8) |
+    buf.pixels[s1_3_cubic_off].to_int()
+  assert_eq(s1_3_cubic, 0xFF00FFFF)
+}
+///|
+/// Sanity check: polygon fill works correctly for a triangle
+/// without curves. Triangle (1,1) (7,3) (1,5) — pixel (6,3)
+/// is on the right edge, pixel (7,3) is outside.
+test "polygon_fill_triangle_no_curve" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    8,
+    8,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let yellow : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=0.0, a=1.0)
+  let tri : @core.PathSpec = @core.PathSpec::new(
+    verbs=[
+      @core.PathVerb::MoveTo(@core.Point::new(x=1.0, y=1.0)),
+      @core.PathVerb::LineTo(@core.Point::new(x=7.0, y=3.0)),
+      @core.PathVerb::LineTo(@core.Point::new(x=1.0, y=5.0)),
+      @core.PathVerb::Close,
+    ],
+    fill=Some(@core.Brush::solid(yellow)),
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawPath(tri)],
+    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // Pixel (5,3) is inside the right edge (fill range [1, 5.5]
+  // at y=3.5) -> filled yellow. Use raw bytes to avoid pixel_at
+  // OOB sentinel bug.
+  let s5_3_tri_off : Int = 3*buf.width*4 + 5*4
+  let s5_3_tri : Int = (buf.pixels[s5_3_tri_off + 3].to_int() << 24) |
+    (buf.pixels[s5_3_tri_off + 2].to_int() << 16) |
+    (buf.pixels[s5_3_tri_off + 1].to_int() << 8) |
+    buf.pixels[s5_3_tri_off].to_int()
+  assert_eq(s5_3_tri, 0xFFFFFF00)
+  // Pixel (6,3) is OUTSIDE the right edge (x=6 > 5.5 apex)
+  // -> transparent. Use raw bytes.
+  let s6_3_tri_off : Int = 3*buf.width*4 + 6*4
+  let s6_3_tri : Int = (buf.pixels[s6_3_tri_off + 3].to_int() << 24) |
+    (buf.pixels[s6_3_tri_off + 2].to_int() << 16) |
+    (buf.pixels[s6_3_tri_off + 1].to_int() << 8) |
+    buf.pixels[s6_3_tri_off].to_int()
+  assert_eq(s6_3_tri, 0x00000000)
+}
 ///|
 /// DrawText now rasterizes real 5x7 glyphs (Phase 12) instead
 /// of a placeholder outline. Verified by drawing "hi" inside a
@@ -840,3 +999,4 @@ test "pixel_at_out_of_bounds_returns_minus_one" {
   assert_eq(pixel_at(buf, 0, -1), -1)
   assert_eq(pixel_at(buf, 0, 4), -1)
 }
+

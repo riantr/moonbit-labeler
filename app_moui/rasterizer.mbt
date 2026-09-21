@@ -883,19 +883,184 @@ fn in_corner_cut(
 }
 
 ///|
+/// De Casteljau subdivision for a quadratic Bezier
+/// P(t) = (1-t)^2*P0 + 2*(1-t)*t*P1 + t^2*P2. Recursively
+/// halves the curve until the perpendicular distance from the
+/// control point P1 to the chord P0-P2 is below the flatness
+/// tolerance (sub-pixel: 0.25 pixels), then emits P2 as a
+/// polygon vertex. Depth-limited to 16 to defend against
+/// pathological inputs (degenerate midpoints, NaN, etc.).
+///
+/// Flatness test:
+///   chord = P2 - P0
+///   cross = (P1 - P0) x chord   (perpendicular distance)
+///   if cross^2 / |chord|^2 <= tol^2  → flat
+fn flatten_quadratic(
+  p0 : @core.Point,
+  p1 : @core.Point,
+  p2 : @core.Point,
+  out : Array[@core.Point],
+  tol_sq : Double,
+  depth : Int,
+) -> Unit {
+  if depth > 16 {
+    out.push(p2)
+    return
+  }
+  let dx : Double = p2.x - p0.x
+  let dy : Double = p2.y - p0.y
+  let len_sq : Double = dx * dx + dy * dy
+  if len_sq < 1.0e-12 {
+    // p0 ≈ p2 — degenerate chord; treat as flat.
+    out.push(p2)
+    return
+  }
+  let cross : Double = (p1.x - p0.x) * dy - (p1.y - p0.y) * dx
+  let dist_sq : Double = cross * cross / len_sq
+  if dist_sq <= tol_sq {
+    out.push(p2)
+    return
+  }
+  // Subdivide at t=0.5: q0=P0, q1=mid(P0,P1), m=mid(P1,P2),
+  // q2=mid(q1,m), q3=P2. Left half: (q0, q1, q2); right:
+  // (q2, m, q3).
+  let q1 : @core.Point = @core.Point::new(
+    x=(p0.x + p1.x) * 0.5,
+    y=(p0.y + p1.y) * 0.5,
+  )
+  let m : @core.Point = @core.Point::new(
+    x=(p1.x + p2.x) * 0.5,
+    y=(p1.y + p2.y) * 0.5,
+  )
+  let q2 : @core.Point = @core.Point::new(
+    x=(q1.x + m.x) * 0.5,
+    y=(q1.y + m.y) * 0.5,
+  )
+  flatten_quadratic(p0, q1, q2, out, tol_sq, depth + 1)
+  flatten_quadratic(q2, m, p2, out, tol_sq, depth + 1)
+}
+
+///|
+/// De Casteljau subdivision for a cubic Bezier
+/// P(t) = (1-t)^3*P0 + 3*(1-t)^2*t*P1 + 3*(1-t)*t^2*P2 + t^3*P3.
+/// Subdivides until the max perpendicular distance from P1, P2
+/// to the chord P0-P3 is below the flatness tolerance, then
+/// emits P3 as a polygon vertex. Depth-limited to 16.
+fn flatten_cubic(
+  p0 : @core.Point,
+  p1 : @core.Point,
+  p2 : @core.Point,
+  p3 : @core.Point,
+  out : Array[@core.Point],
+  tol_sq : Double,
+  depth : Int,
+) -> Unit {
+  if depth > 16 {
+    out.push(p3)
+    return
+  }
+  let dx : Double = p3.x - p0.x
+  let dy : Double = p3.y - p0.y
+  let len_sq : Double = dx * dx + dy * dy
+  if len_sq < 1.0e-12 {
+    out.push(p3)
+    return
+  }
+  let cross1 : Double = (p1.x - p0.x) * dy - (p1.y - p0.y) * dx
+  let cross2 : Double = (p2.x - p0.x) * dy - (p2.y - p0.y) * dx
+  let d1_sq : Double = cross1 * cross1 / len_sq
+  let d2_sq : Double = cross2 * cross2 / len_sq
+  let max_d_sq : Double = if d1_sq > d2_sq {
+    d1_sq
+  } else {
+    d2_sq
+  }
+  if max_d_sq <= tol_sq {
+    out.push(p3)
+    return
+  }
+  // Subdivide at t=0.5:
+  //   q1 = mid(P0,P1), q2 = mid(P1,P2), q3 = mid(P2,P3)
+  //   r0 = mid(q1,q2), r1 = mid(q2,q3), r2 = mid(r0,r1)
+  // Left half: (P0, q1, r0, r2); right half: (r2, r1, q3, P3).
+  let q1 : @core.Point = @core.Point::new(
+    x=(p0.x + p1.x) * 0.5,
+    y=(p0.y + p1.y) * 0.5,
+  )
+  let q2 : @core.Point = @core.Point::new(
+    x=(p1.x + p2.x) * 0.5,
+    y=(p1.y + p2.y) * 0.5,
+  )
+  let q3 : @core.Point = @core.Point::new(
+    x=(p2.x + p3.x) * 0.5,
+    y=(p2.y + p3.y) * 0.5,
+  )
+  let r0 : @core.Point = @core.Point::new(
+    x=(q1.x + q2.x) * 0.5,
+    y=(q1.y + q2.y) * 0.5,
+  )
+  let r1 : @core.Point = @core.Point::new(
+    x=(q2.x + q3.x) * 0.5,
+    y=(q2.y + q3.y) * 0.5,
+  )
+  let r2 : @core.Point = @core.Point::new(
+    x=(r0.x + r1.x) * 0.5,
+    y=(r0.y + r1.y) * 0.5,
+  )
+  flatten_cubic(p0, q1, r0, r2, out, tol_sq, depth + 1)
+  flatten_cubic(r2, r1, q3, p3, out, tol_sq, depth + 1)
+}
+
+///|
 /// Extract a flat list of polygon vertices from a PathSpec's
-/// verbs. Phase 11 ignores QuadTo/CubicTo — those curve
-/// verbs are skipped. Returns MoveTo + LineTo vertices in
-/// path order.
+/// verbs. Phase 16.A: handles QuadTo/CubicTo by recursively
+/// subdividing curves via De Casteljau until each segment is
+/// flat within 0.25 sub-pixels, then appending the polyline
+/// vertices. `Close` emits an implicit lineTo back to the
+/// subpath's MoveTo point so the polygon is properly closed.
 fn path_vertices(spec : @core.PathSpec) -> Array[@core.Point] {
   let verts : Array[@core.Point] = []
+  // Flatness tolerance: 0.25 px (sub-pixel). The squared
+  // tolerance is what the helpers compare against.
+  let tol_sq : Double = 0.0625
+  let mut current : @core.Point = @core.Point::new(x=0.0, y=0.0)
+  let mut subpath_start : @core.Point = @core.Point::new(x=0.0, y=0.0)
+  let mut has_current : Bool = false
+  let mut has_subpath : Bool = false
   for verb in spec.verbs {
     match verb {
-      @core.PathVerb::MoveTo(p) => verts.push(p)
-      @core.PathVerb::LineTo(p) => verts.push(p)
-      @core.PathVerb::QuadTo(_, _) => () // Phase 11: skip
-      @core.PathVerb::CubicTo(_, _, _) => () // Phase 11: skip
-      @core.PathVerb::Close => () // Phase 11: no implicit close-to-origin
+      @core.PathVerb::MoveTo(p) => {
+        verts.push(p)
+        current = p
+        subpath_start = p
+        has_current = true
+        has_subpath = true
+      }
+      @core.PathVerb::LineTo(p) => {
+        verts.push(p)
+        current = p
+        has_current = true
+      }
+      @core.PathVerb::QuadTo(c, p) => {
+        if has_current {
+          flatten_quadratic(current, c, p, verts, tol_sq, 0)
+        }
+        current = p
+        has_current = true
+      }
+      @core.PathVerb::CubicTo(c1, c2, p) => {
+        if has_current {
+          flatten_cubic(current, c1, c2, p, verts, tol_sq, 0)
+        }
+        current = p
+        has_current = true
+      }
+      @core.PathVerb::Close => {
+        if has_current && has_subpath {
+          verts.push(subpath_start)
+          current = subpath_start
+        }
+      }
     }
   }
   verts
