@@ -42,6 +42,16 @@ let current_metrics : Ref[@core.SurfaceMetrics] = {
 }
 
 ///|
+/// Phase 13 — per-process image cache. The renderer session
+/// owns one cache for its lifetime; `paint_image` looks up
+/// `ImageRun.source` here on every `DrawImage`. The cache is
+/// populated externally (Moui `HostImageSource` integration
+/// is Phase 14; tests call `load_bytes` directly). Keeping
+/// it module-local rather than on the RendererSession avoids
+/// any churn in the Moui renderer-session shape.
+let image_cache : Ref[ImageCache] = { val: ImageCache::new() }
+
+///|
 /// Phase 10.2 — build a minimal RendererProvider that the
 /// windows backend can bind. Returns a `Bound(RendererSession)`
 /// on a HostSurface with `native_surface()` populated, or
@@ -151,7 +161,7 @@ fn render_placeholder_frame(
         height,
         @core.Color::rgba(r=0.1, g=0.1, b=0.12, a=1.0), // dark slate
       )
-      rasterize_draw_frame(buf, submission.frame())
+      rasterize_draw_frame(buf, submission.frame(), image_cache.val)
       let frame : @render.PixelFrame = @render.PixelFrame::new(
         width~,
         height~,

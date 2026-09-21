@@ -317,6 +317,137 @@ fn paint_text(
 }
 
 ///|
+/// Phase 13 — paint a decoded RGBA image into the BGRA buffer.
+///
+/// Behavior:
+///   - Cache hit: nearest-neighbor sample from `image.data`
+///     (row-major RGBA8) into `buf` over `run.frame`, alpha-
+///     blending with the destination. Out-of-frame pixels are
+///     skipped.
+///   - Cache miss: render the legacy gray-outline + diagonal
+///     hatch placeholder so the UI still shows something for
+///     every `DrawImage` slot.
+///
+/// Why nearest-neighbor (not bilinear) for Phase 13:
+///   - Zero per-pixel arithmetic beyond the byte reads.
+///   - The labeler's display images are screenshots of X-ray
+///     scans at native resolution; bilinear smoothing would
+///     blur security-relevant edges. Phase 14 may add an
+///     opt-in `ImageFit` -> bilinear path if a use case
+///     appears.
+fn paint_image(
+  buf : PixelBuffer,
+  run : @core.ImageRun,
+  clip : @core.Rect,
+  opacity : Double,
+  cache : ImageCache,
+) -> Unit {
+  let clipped : @core.Rect? = run.frame.intersection(clip)
+  guard clipped is Some(c) else { return }
+  let x0 : Int = c.origin.x.ceil().to_int()
+  let y0 : Int = c.origin.y.ceil().to_int()
+  let x1 : Int = (c.origin.x + c.size.width).floor().to_int()
+  let y1 : Int = (c.origin.y + c.size.height).floor().to_int()
+  let dst_w : Int = x1 - x0 + 1
+  let dst_h : Int = y1 - y0 + 1
+  if dst_w <= 0 || dst_h <= 0 {
+    return
+  }
+  match cache.get(run.source) {
+    Some(img) => {
+      // Map each destination pixel to a source pixel via
+      // nearest-neighbor. (src_x, src_y) live in image
+      // coordinates; the destination covers [x0..x1] x [y0..y1]
+      // which is dst_w x dst_h pixels.
+      let src_w : Int = img.width
+      let src_h : Int = img.height
+      if src_w <= 0 || src_h <= 0 {
+        // Defensive: zero-size image, render the placeholder.
+        paint_image_placeholder(buf, run, clip, opacity)
+        return
+      }
+      let src_stride : Int = src_w * 4
+      for dy = 0; dy < dst_h; dy = dy + 1 {
+        let dst_y : Int = y0 + dy
+        // Map dst_y ∈ [y0..y0+dst_h-1] to src_y ∈ [0..src_h-1].
+        let src_y : Int = dy * src_h / dst_h
+        let src_row_off : Int = src_y * src_stride
+        let dst_row_off : Int = dst_y * buf.width * 4
+        for dx = 0; dx < dst_w; dx = dx + 1 {
+          let dst_x : Int = x0 + dx
+          let src_x : Int = dx * src_w / dst_w
+          let s_off : Int = src_row_off + src_x * 4
+          let d_off : Int = dst_row_off + dst_x * 4
+          // Read source RGBA (premultiplied? no — to_rgba8 gives
+          // straight alpha).
+          let r : Int = img.data[s_off].to_int()
+          let g : Int = img.data[s_off + 1].to_int()
+          let b : Int = img.data[s_off + 2].to_int()
+          let a : Int = img.data[s_off + 3].to_int()
+          // Composite: out = src.rgb * src.a + dst.rgb * (1 - src.a),
+          // then multiply by the run's opacity. We approximate
+          // the blend in-place with `blend_pixel` for
+          // consistency with the rest of the rasterizer:
+          // `blend_pixel` takes a `Color` (0..1 floats), so
+          // build one from the source RGBA + run opacity * a/255.
+          if a > 0 {
+            let sa : Double = a.to_double() / 255.0 * opacity
+            let color : @core.Color = @core.Color::rgba(
+              r=r.to_double() / 255.0,
+              g=g.to_double() / 255.0,
+              b=b.to_double() / 255.0,
+              a=sa,
+            )
+            blend_pixel(buf, dst_x, dst_y, color, 1.0)
+          }
+        }
+      }
+    }
+    None =>
+      // Cache miss — render the placeholder so the UI shows
+      // a visual cue for the missing image. (Phase 14 will
+      // replace this with a synchronous disk load.)
+      paint_image_placeholder(buf, run, clip, opacity)
+  }
+}
+
+///|
+/// Phase 12 — fallback placeholder for an unresolved DrawImage.
+/// Gray outline + diagonal X across the image frame. Used when
+/// the cache has no entry for `run.source`. Kept as a separate
+/// helper so `paint_image` (Phase 13) can fall back to it on
+/// cache miss.
+fn paint_image_placeholder(
+  buf : PixelBuffer,
+  run : @core.ImageRun,
+  clip : @core.Rect,
+  opacity : Double,
+) -> Unit {
+  let outline : @core.Color = @core.Color::rgba(
+    r=0.35,
+    g=0.35,
+    b=0.35,
+    a=1.0,
+  )
+  paint_stroke_rect(buf, run.frame, 1.0, clip, outline, opacity)
+  let rx : Double = run.frame.origin.x
+  let ry : Double = run.frame.origin.y
+  let rw : Double = run.frame.size.width
+  let rh : Double = run.frame.size.height
+  paint_line(buf, rx, ry, rx + rw, ry + rh, clip, outline, opacity)
+  paint_line(
+    buf,
+    rx,
+    ry + rh,
+    rx + rw,
+    ry,
+    clip,
+    outline,
+    opacity,
+  )
+}
+
+///|
 /// Internal clipped stroke: paint `width` pixels on each of the
 /// 4 edges of `rect`. Corners are drawn twice (each edge
 /// covers its corner), which is fine for opaque strokes.
@@ -801,6 +932,7 @@ fn brush_color(brush : @core.Brush) -> @core.Color {
 pub fn rasterize_draw_frame(
   buf : PixelBuffer,
   frame : @core.DrawFrame,
+  cache : ImageCache,
 ) -> Unit {
   // Note: we do NOT clear to frame.clear_color here. The buf
   // was already initialized to its background by
@@ -820,7 +952,7 @@ pub fn rasterize_draw_frame(
   let clip_stack : Array[@core.Rect] = [full]
   let opacity_stack : Array[Double] = [1.0]
   for cmd in frame.commands {
-    dispatch_command(buf, cmd, clip_stack, opacity_stack)
+    dispatch_command(buf, cmd, clip_stack, opacity_stack, cache)
   }
 }
 
@@ -833,6 +965,7 @@ fn dispatch_command(
   cmd : @core.DrawCommand,
   clip_stack : Array[@core.Rect],
   opacity_stack : Array[Double],
+  cache : ImageCache,
 ) -> Unit {
   let clip : @core.Rect = clip_stack[clip_stack.length() - 1]
   let opacity : Double = opacity_stack[opacity_stack.length() - 1]
@@ -854,43 +987,15 @@ fn dispatch_command(
       // active clip rect. Out-of-range chars fall back to the
       // tofu glyph (filled 5x7 box) so layout never crashes.
       paint_text(buf, run, clip, opacity)
-    @core.DrawCommand::DrawImage(run) => {
-      // Phase 12 — placeholder: gray outline + diagonal hatch.
-      // Real image decoding is Phase 13+.
-      let outline : @core.Color = @core.Color::rgba(
-        r=0.35,
-        g=0.35,
-        b=0.35,
-        a=1.0,
-      )
-      paint_stroke_rect(buf, run.frame, 1.0, clip, outline, opacity)
-      // Two diagonal lines from (x0,y0)→(x1,y1) and
-      // (x0,y1)→(x1,y0) — visual "image loading" hint.
-      let rx : Double = run.frame.origin.x
-      let ry : Double = run.frame.origin.y
-      let rw : Double = run.frame.size.width
-      let rh : Double = run.frame.size.height
-      paint_line(
-        buf,
-        rx,
-        ry,
-        rx + rw,
-        ry + rh,
-        clip,
-        outline,
-        opacity,
-      )
-      paint_line(
-        buf,
-        rx,
-        ry + rh,
-        rx + rw,
-        ry,
-        clip,
-        outline,
-        opacity,
-      )
-    }
+    @core.DrawCommand::DrawImage(run) =>
+      // Phase 13 — real RGBA blit from the per-process
+      // ImageCache. On cache hit we nearest-neighbor sample the
+      // decoded image into `buf` (alpha-blended). On cache miss
+      // we fall back to the legacy gray-outline + diagonal X
+      // placeholder via `paint_image_placeholder`. The cache is
+      // owned by the caller (renderer.mbt) so the rasterizer
+      // itself stays stateless.
+      paint_image(buf, run, clip, opacity, cache)
     @core.DrawCommand::PushClip(r) => {
       // Intersect the pushed clip with the parent (caller's
       // responsibility: pairs with PopClip).

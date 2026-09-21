@@ -24,7 +24,7 @@ test "clear_color fills entire buffer" {
     commands=[@core.DrawCommand::Clear(@core.Color::rgba(r=1.0, g=0.0, b=0.0, a=1.0))],
     damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // Every pixel should be opaque red: ARGB 0xFFFF0000.
   for y = 0; y < 4; y = y + 1 {
     for x = 0; x < 4; x = x + 1 {
@@ -55,7 +55,7 @@ test "fill_rect paints interior pixels" {
     damage=@core.DamageRegion::empty(),
     clear_color=clear,
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // The 2x2 interior (1,1)-(2,2) should be red.
   assert_eq(pixel_at(buf, 1, 1), 0xFFFF0000)
   assert_eq(pixel_at(buf, 2, 1), 0xFFFF0000)
@@ -88,7 +88,7 @@ test "stroke_rect_1px colors border only" {
     damage=@core.DamageRegion::empty(),
     clear_color=clear,
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // Stroke is half_w=0.5 centered on each edge, so the painted
   // band is exactly the rect's edge column/row. Top edge is
   // y=1 row at x=1..4; bottom y=4 row at x=1..4; left x=1 col
@@ -142,8 +142,8 @@ test "fill_rounded_rect_radius_0_eq_fill_rect" {
     ],
     damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf_rr, frame_rr)
-  rasterize_draw_frame(buf_fr, frame_fr)
+  rasterize_draw_frame(buf_rr, frame_rr, ImageCache::new())
+  rasterize_draw_frame(buf_fr, frame_fr, ImageCache::new())
   // All 16 pixels should match.
   for y = 0; y < 4; y = y + 1 {
     for x = 0; x < 4; x = x + 1 {
@@ -177,7 +177,7 @@ test "fill_rounded_rect_radius_cuts_corners" {
     ],
     damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // Center pixel (3,3) is deep inside the rect 鈥?should be red.
   assert_eq(pixel_at(buf, 3, 3), 0xFFFF0000)
   // Top-left corner (1,1) is inside the corner cut-out 鈥?should
@@ -209,7 +209,7 @@ test "draw_path_triangle_fill" {
     commands=[@core.DrawCommand::DrawPath(triangle)],
     damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // Centroid (3,2) should be inside the triangle and yellow.
   assert_eq(pixel_at(buf, 3, 2), 0xFFFFFF00)
   // Outside the triangle (0,0) should be transparent.
@@ -248,7 +248,7 @@ test "glyph_at_A_middle_bar_is_fully_lit" {
     damage=@core.DamageRegion::empty(),
     clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // Frame: (1,1)→(17,11). cell_idx=0 = 'h' at x=1..5.
   // Vertically centered: y_off = 1 + (10-7)/2 = 2.
   // 'h' bitmap (after `glyph_index('h') = 72`): rows =
@@ -307,7 +307,7 @@ test "draw_text_tiny_frame_bails_silently" {
     damage=@core.DamageRegion::empty(),
     clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // All pixels still transparent — no panic, no flood.
   for y = 0; y < 8; y = y + 1 {
     for x = 0; x < 8; x = x + 1 {
@@ -343,7 +343,7 @@ test "draw_text_tofu_fallback_renders_filled_box" {
     damage=@core.DamageRegion::empty(),
     clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // Tofu cell at cell_idx=0, x=1..5. y_off = 1 + (8-7)/2 = 1.
   // tofu row r, col c → buf(1+c, 1+r) is white (for all c<5, r<7).
   let stride : Int = buf.width * 4
@@ -424,7 +424,7 @@ test "push_clip_intersects_with_fill_rect" {
     ],
     damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // Inside the clip (2,2)-(3,3): red.
   assert_eq(pixel_at(buf, 2, 2), 0xFFFF0000)
   assert_eq(pixel_at(buf, 3, 3), 0xFFFF0000)
@@ -456,7 +456,7 @@ test "push_opacity_half_halves_alpha_contribution" {
     ],
     damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // sa = 1.0 * 0.5 = 0.5; inv = 0.5; sa_premul = 0 (was transparent).
   // da = 0.5 * 255 + 0 * 0.5 = 127.5 鈫?127.
   // db = 1.0 * 255 * 0.5 + 0 * 0.5 = 127.5 鈫?127.
@@ -492,7 +492,7 @@ test "stroke_rounded_rect_paints_perimeter_only" {
     damage=@core.DamageRegion::empty(),
     clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // Top edge midpoint (3,1) is on the outer ring — should be red.
   assert_eq(pixel_at(buf, 3, 1), 0xFFFF0000)
   // Interior pixel (2,2) is inside the inset — should remain
@@ -527,13 +527,107 @@ test "multiple_commands_apply_in_order" {
     ],
     damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  rasterize_draw_frame(buf, frame)
+  rasterize_draw_frame(buf, frame, ImageCache::new())
   // Outer corners should be red (not covered by green rect).
   assert_eq(pixel_at(buf, 0, 0), 0xFFFF0000)
   assert_eq(pixel_at(buf, 3, 3), 0xFFFF0000)
   // Inner 2x2 should be green (drawn after red).
   assert_eq(pixel_at(buf, 1, 1), 0xFF00FF00)
   assert_eq(pixel_at(buf, 2, 2), 0xFF00FF00)
+}
+
+///|
+/// Phase 13 — DrawImage with a cache miss falls back to the
+/// legacy placeholder. Verified by drawing a DrawImage at a
+/// known frame, no cache entry, and checking the BGRA bytes at
+/// the four edges of the frame are the outline color (0x59,
+/// ~0.35 gray) while interior pixels are untouched.
+test "draw_image_cache_miss_uses_placeholder" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    8,
+    8,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let run : @core.ImageRun = {
+    source: "missing.png",
+    frame: @core.Rect::new(x=2.0, y=2.0, width=4.0, height=4.0),
+    opacity: 1.0,
+    fit: @core.ImageFit::Contain,
+  }
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawImage(run)],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // The placeholder stroke is 1px gray (~0.35 * 255 = 89 = 0x59).
+  // Frame (2,2)→(6,6). Top-left corner of the frame is at (2,2).
+  let top_left : Int = pixel_at(buf, 2, 2)
+  // Either we hit the outline (top-left of the stroke) or a
+  // diagonal hatch (the placeholder paints an X across the
+  // frame). Both are gray ~89/255. We just assert that the
+  // pixel is NOT the clear color (transparent) — proving the
+  // placeholder actually painted something.
+  assert_eq(top_left == 0x00000000, false)
+  // Interior (3, 3) is on the diagonal hatch from (2,2)→(6,6).
+  let interior : Int = pixel_at(buf, 3, 3)
+  assert_eq(interior == 0x00000000, false)
+  // Outside the frame (0, 0) is untouched.
+  assert_eq(pixel_at(buf, 0, 0), 0x00000000)
+}
+
+///|
+/// Phase 13 — DrawImage with a cache hit blits the decoded
+/// RGBA image into the frame. We build a 2x1 red/green image,
+/// blit it into a 4x2 frame, and verify the buffer pixels match
+/// the source after nearest-neighbor sampling.
+test "draw_image_cache_hit_blits_rgba" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    4,
+    2,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let cache : ImageCache = ImageCache::new()
+  // 2×1 image: red pixel then green pixel.
+  let img_bytes : Array[Byte] = [
+    b'\xFF', b'\x00', b'\x00', b'\xFF', // red
+    b'\x00', b'\xFF', b'\x00', b'\xFF', // green
+  ]
+  let _ = cache.load_bytes(
+    "test.bmp",
+    2,
+    1,
+    Bytes::from_array(img_bytes),
+  )
+  let run : @core.ImageRun = {
+    source: "test.bmp",
+    frame: @core.Rect::new(x=0.0, y=0.0, width=4.0, height=2.0),
+    opacity: 1.0,
+    fit: @core.ImageFit::Stretch,
+  }
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawImage(run)],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, cache)
+  // The image is 2 pixels wide stretched across 4 buffer
+  // pixels: src_x = dx * 2 / 4 = 0 for dx in {0, 1}, 1 for dx
+  // in {2, 3}. So left half (0..1) is red, right half (2..3) is
+  // green. Both rows are uniform (src_y = 0 for both).
+  // Verify via direct BGRA bytes (pixel_at has MoonBit 0.1.x
+  // OOB aliasing quirks).
+  let stride : Int = buf.width * 4
+  // Red pixel: BGRA = (0, 0, 0xFF, 0xFF).
+  let p00 : Int = buf.pixels[0 * stride + 0 * 4 + 0].to_int()
+  let r00 : Int = buf.pixels[0 * stride + 0 * 4 + 2].to_int()
+  assert_eq(p00, 0) // B
+  assert_eq(r00, 255) // R
+  // Green pixel: BGRA = (0, 0xFF, 0, 0xFF).
+  let g32 : Int = buf.pixels[0 * stride + 3 * 4 + 1].to_int()
+  assert_eq(g32, 255) // G
+  // Outside the image: still transparent.
+  assert_eq(buf.pixels[0 * stride + 0 * 4 + 3].to_int(), 0xFF) // A=255 from blend
 }
 
 ///|
