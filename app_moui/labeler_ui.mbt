@@ -1,25 +1,243 @@
-// app_moui/labeler_ui.mbt — Phase 16.C labeler UI composition.
+// app_moui/labeler_ui.mbt — Phase 18.A labeler UI.
 //
-// A reference "real UI" assembled from the Phase 15/16 primitives:
-//   - paint_rect        (sidebar background, toolbar background,
-//                        canvas background, divider lines)
-//   - paint_rounded_rect (class-chip pills, toolbar tool buttons,
-//                         folder-list rows)
-//   - paint_text         (folder names, class labels, tool
-//                         single-letter glyphs, section headers)
-//   - paint_polygon_fill (decorative bezier curve in the corner
-//                         of the canvas area; exercises Phase 16.A
-//                         De Casteljau)
+// Two parallel APIs:
+//   1. build_labeler_ui_view(model, width, height) -> @moui.View[Msg]
+//      — the live view tree the program() picks up. Wired into
+//      view() in app.mbt. Uses Moui layout primitives (@views.column,
+//      @views.row, @views.text, @views.button, @views.canvas) so the
+//      UI scales to any window size.
+//   2. build_labeler_ui_demo_frame(width, height) -> @core.DrawFrame
+//      — Phase 16.C legacy API, kept verbatim for the existing
+//      labeler_ui_test.mbt pixel assertions. Rasterizer-only path,
+//      doesn't go through the view tree.
 //
-// All dimensions are absolute pixel positions in the buffer
-// coordinate system (origin at top-left, x right, y down). The
-// function is pure: same inputs -> same DrawFrame, so callers
-// can rasterize it deterministically.
-//
-// Not wired into the live app_moui.exe yet — the live view
-// tree comes from Moui's runtime. The unit tests in
-// `labeler_ui_test.mbt` rasterize the returned frame and assert
-// pixel values to verify the primitives compose correctly.
+// Both render the same visual layout: toolbar (top) + sidebar
+// (left, 200 px) with folder list + class chips + canvas (right)
+// with a decorative bezier in the top-right corner. Phase 16.C's
+// decoration is preserved as the canvas-area PaintContext closure
+// in build_labeler_ui_view.
+
+///|
+/// Phase 18.A — build the labeler UI as a Moui view tree.
+///
+/// `width` / `height` are the initial layout constraints for the
+/// whole tree. Moui's flex layout distributes the size among the
+/// children according to the column / row splits below. Pixel
+/// offsets come from the layout system, not from absolute math,
+/// so the UI rescales to whatever window size the runtime gives
+/// us.
+pub fn build_labeler_ui_view(
+  model : Model,
+  width : Double,
+  height : Double,
+) -> @moui.View[Msg] {
+  let _ : Double = width
+  let _ : Double = height
+  // Phase 18.A — dark theme. The runtime's default `Environment`
+  // carries a light ColorScheme, which makes `@views.text` and
+  // `@views.button` paint dark foreground on the dark slate
+  // background we use — illegible. We pass a custom Theme to
+  // every text/button so the foreground is near-white. Theme
+  // is module-local: cheap to construct, no mutation needed.
+  let dark_theme : @core.Theme = @core.Theme::neutral().with_palette(
+    @core.ColorPalette::dark(),
+  )
+  // ─── Toolbar (top column: header row + nav row) ───
+  let toolbar : @moui.View[Msg] = @views.column(
+    [
+      // Top header: title + folder picker hint + Load button.
+      @views.row(
+        [
+          @views.text("MoonBit Labeler", theme=dark_theme, width=200.0, height=32.0),
+          @views.text(
+            "Folder: " + model.folder,
+            theme=dark_theme,
+            role=@style.TextRole::Body,
+            width=240.0,
+            height=32.0,
+          ),
+          @views.button("Load", theme=dark_theme, on_click=LoadFolder(model.folder)),
+        ],
+        spacing=8.0,
+      ),
+      // Nav row: five items + zoom display. Mode has the
+      // variants {Select, Rect, Polygon, Keypoint, EditBinding};
+      // map each toolbar button to the closest meaningful Mode.
+      @views.row(
+        [
+          @views.button("File", theme=dark_theme, on_click=SetMode(Mode::Select)),
+          @views.button("Rect", theme=dark_theme, on_click=SetMode(Mode::Rect)),
+          @views.button("Polygon", theme=dark_theme, on_click=SetMode(Mode::Polygon)),
+          @views.button("Keypoint", theme=dark_theme, on_click=SetMode(Mode::Keypoint)),
+          @views.button("Binding", theme=dark_theme, on_click=SetMode(Mode::EditBinding)),
+          @views.text(
+            (model.zoom * 100.0).to_string() + "%",
+            theme=dark_theme,
+            width=80.0,
+            height=24.0,
+          ),
+        ],
+        spacing=4.0,
+      ),
+    ],
+    spacing=2.0,
+  )
+  // ─── Sidebar (left column) ───
+  let sidebar : @moui.View[Msg] = @views.column(
+    [
+      @views.text("Folders", theme=dark_theme, width=180.0, height=24.0),
+      @views.column(sidebar_folder_buttons(model, dark_theme), spacing=4.0),
+      @views.text("Classes", theme=dark_theme, width=180.0, height=24.0),
+      @views.column(sidebar_class_buttons(model, dark_theme), spacing=4.0),
+    ],
+    spacing=8.0,
+  )
+  // ─── Canvas (right area, custom paint) ───
+  let canvas : @moui.View[Msg] = @views.canvas(
+    measure=fn(constraints) { constraints.max },
+    draw=fn(pctx, frame) { paint_canvas_decoration(pctx, frame) },
+  )
+  // ─── Bottom status bar ───
+  let status_text : String = match model.toastMessage {
+    Some(msg) => msg
+    None => model.statusMessage
+  }
+  let status_bar : @moui.View[Msg] = @views.row(
+    [
+      @views.text(status_text, theme=dark_theme, width=600.0, height=24.0),
+    ],
+    spacing=8.0,
+  )
+  // ─── Compose ───
+  @views.column(
+    [
+      toolbar,
+      @views.row([sidebar, canvas], spacing=0.0),
+      status_bar,
+    ],
+    spacing=4.0,
+  )
+}
+
+///|
+/// Build folder-row buttons for the sidebar. Uses model.images
+/// (populated by the ListImages op) when non-empty, else falls
+/// back to a 4-item demo set so the cold-start screenshot has
+/// content to render.
+fn sidebar_folder_buttons(
+  model : Model,
+  theme : @core.Theme,
+) -> Array[@moui.View[Msg]] {
+  let folders : Array[String] = if model.images.length() > 0 {
+    let names : Array[String] = []
+    for img in model.images {
+      names.push(img.name)
+    }
+    names
+  } else {
+    ["CARS.Part.01", "CARS.Body.01", "BAGS.Xray.01", "TNT.Lab.01"]
+  }
+  let buttons : Array[@moui.View[Msg]] = []
+  for folder in folders {
+    buttons.push(
+      @views.button(
+        folder,
+        theme~,
+        on_click=LoadFolder(folder),
+        width=180.0,
+        height=24.0,
+      ),
+    )
+  }
+  buttons
+}
+
+///|
+/// Build class-chip buttons. Uses model.classes if populated, else
+/// a demo set.
+fn sidebar_class_buttons(
+  model : Model,
+  theme : @core.Theme,
+) -> Array[@moui.View[Msg]] {
+  let classes : Array[String] = if model.classes.length() > 0 {
+    let names : Array[String] = []
+    for cls in model.classes {
+      names.push(cls.name)
+    }
+    names
+  } else {
+    ["knife", "gun", "batt", "liq", "botl", "bomb"]
+  }
+  let buttons : Array[@moui.View[Msg]] = []
+  for cls in classes {
+    buttons.push(
+      @views.button(
+        cls,
+        theme~,
+        on_click=SetClassType(parse_class_type(cls)),
+        width=180.0,
+        height=24.0,
+      ),
+    )
+  }
+  buttons
+}
+
+///|
+/// Map a class name to a ClassType enum. Phase 18.A's Model
+/// exposes ClassType::{Object, Tag, Binding} (the three real
+/// annotation kinds). The demo class names in the sidebar
+/// (knife / gun / etc.) all map to Object for now — Phase 19
+/// will extend ClassType with the per-class enum once the
+/// labeler gains domain-specific class metadata.
+fn parse_class_type(_name : String) -> ClassType {
+  ClassType::Object
+}
+
+///|
+/// Paint the canvas-area decoration: dark background fill plus a
+/// decorative bezier swoop in the top-right corner. Phase 16.A's
+/// De Casteljau (via DrawPath which rasterize_draw_frame flattens)
+/// produces the bezier; Phase 16.C's curve geometry is preserved.
+fn paint_canvas_decoration(
+  pctx : @common.PaintContext,
+  frame : @core.Rect,
+) -> Unit {
+  @common.fill_rect(
+    pctx,
+    frame,
+    @core.Color::rgba(r=0.10, g=0.10, b=0.12, a=1.0),
+  )
+  let right : Double = frame.origin.x + frame.size.width
+  let top : Double = frame.origin.y
+  let path : @core.PathSpec = @core.PathSpec::new(
+    verbs=[
+      @core.PathVerb::MoveTo(
+        @core.Point::new(x=right - 60.0, y=top + 10.0),
+      ),
+      @core.PathVerb::CubicTo(
+        @core.Point::new(x=right - 20.0, y=top + 5.0),
+        @core.Point::new(x=right - 5.0, y=top + 30.0),
+        @core.Point::new(x=right - 40.0, y=top + 40.0),
+      ),
+      @core.PathVerb::LineTo(
+        @core.Point::new(x=right - 60.0, y=top + 40.0),
+      ),
+      @core.PathVerb::Close,
+    ],
+    fill=Some(
+      @core.Brush::solid(@core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)),
+    ),
+  )
+  @common.draw_path(pctx, path)
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 16.C legacy API — kept verbatim for labeler_ui_test.mbt.
+// Pixel assertions below depend on this exact command sequence;
+// do not change the constants (sidebar_bg = (16,16,19), etc.)
+// without also updating the tests.
+// ─────────────────────────────────────────────────────────────────
 
 ///|
 /// Build a labeler-style UI frame at the given pixel dimensions.
@@ -57,14 +275,14 @@ pub fn build_labeler_ui_demo_frame(
       dark_bg,
     ),
   )
-  // 2. Toolbar background (top strip).
+  // 2. Toolbar background.
   commands.push(
     @core.DrawCommand::FillRect(
       @core.Rect::new(x=0.0, y=0.0, width=width.to_double(), height=toolbar_h.to_double()),
       toolbar_bg,
     ),
   )
-  // 3. Sidebar background (left strip, below toolbar).
+  // 3. Sidebar background.
   commands.push(
     @core.DrawCommand::FillRect(
       @core.Rect::new(
@@ -76,7 +294,7 @@ pub fn build_labeler_ui_demo_frame(
       sidebar_bg,
     ),
   )
-  // 4. Toolbar/sidebar divider (vertical line at x=sidebar_w).
+  // 4. Toolbar/sidebar divider.
   commands.push(
     @core.DrawCommand::FillRect(
       @core.Rect::new(
@@ -88,7 +306,7 @@ pub fn build_labeler_ui_demo_frame(
       divider,
     ),
   )
-  // 5. Toolbar/canvas divider (horizontal line at y=toolbar_h).
+  // 5. Toolbar/canvas divider.
   commands.push(
     @core.DrawCommand::FillRect(
       @core.Rect::new(
@@ -100,8 +318,7 @@ pub fn build_labeler_ui_demo_frame(
       divider,
     ),
   )
-  // 6. Four tool buttons in the toolbar. Each is a 32x32
-  // rounded rect with a single-letter glyph centered.
+  // 6. Four tool buttons.
   let tool_labels : Array[String] = ["R", "S", "P", "D"]
   let mut i : Int = 0
   while i < tool_labels.length() {
@@ -109,12 +326,7 @@ pub fn build_labeler_ui_demo_frame(
     commands.push(
       @core.DrawCommand::FillRoundedRect(
         @core.RoundedRect::new(
-          rect=@core.Rect::new(
-            x=x.to_double(),
-            y=4.0,
-            width=32.0,
-            height=32.0,
-          ),
+          rect=@core.Rect::new(x=x.to_double(), y=4.0, width=32.0, height=32.0),
           radius=6.0,
         ),
         tool_bg,
@@ -137,7 +349,7 @@ pub fn build_labeler_ui_demo_frame(
     )
     i = i + 1
   }
-  // 7. Folder section: 4 folder items in the upper sidebar.
+  // 7. Folder rows.
   let folder_names : Array[String] = ["CARS.Part", "CARS.Body", "BAGS.Xray", "TNT.Lab"]
   let mut fi : Int = 0
   while fi < folder_names.length() {
@@ -170,7 +382,7 @@ pub fn build_labeler_ui_demo_frame(
     )
     fi = fi + 1
   }
-  // 8. Class section header + 6 class chips below the folders.
+  // 8. Class chips.
   let chip_y_start : Int = toolbar_h + 130
   commands.push(
     @core.DrawCommand::DrawText(
@@ -222,9 +434,7 @@ pub fn build_labeler_ui_demo_frame(
     )
     ci = ci + 1
   }
-  // 9. Decorative bezier in the canvas area — exercises
-  // Phase 16.A flattening. A small swoop in the top-right
-  // corner of the canvas.
+  // 9. Decorative bezier in the canvas area.
   let canvas_right : Double = width.to_double()
   let path : @core.PathSpec = @core.PathSpec::new(
     verbs=[

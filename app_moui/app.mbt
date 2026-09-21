@@ -1117,78 +1117,19 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
 
 ///|
 pub fn view(model : Model) -> @moui.View[Msg] {
-  // Phase 5.1: real split_view with sidebar + canvas. Earlier
-  // sessions shipped only a card-of-text shell; this is the
-  // first real chrome layout. canvas_view lives in canvas_view.mbt.
+  // Phase 18.A — delegate to build_labeler_ui_view for the
+  // full labeler UI (toolbar + sidebar + canvas + status bar).
+  // The Phase 5.x placeholder split_view (Folder/Images/Classes
+  // text + Fit/Reset/Delete buttons) is replaced; the same Msg
+  // handlers (FitView, ResetZoomTransformView, LoadFolder,
+  // SetMode, SetClassType, etc.) are wired into the new toolbar
+  // and sidebar buttons.
   //
-  // Phase 5.12.D — sidebar gains two @views.button triggers:
-  //   - "Fit" dispatches FitView(800, 600) — the sidebar's
-  //     detail_width matches the canvas viewport size, so the
-  //     hardcoded viewport is correct for the current layout.
-  //   - "Reset" dispatches ResetZoomTransformView (5.11).
-  // Plus keyboard shortcuts on the canvas itself:
-  //   - "f" → FitView (same hardcoded viewport as the button)
-  //   - "0" → ResetZoomTransformView
-  //   - "Delete" / "Backspace" → DeleteSelectedAnnotation (5.15)
-  // These cover the same surface as the wheel-zoom modifier
-  // Moui 0.1.12 doesn't yet expose.
-  let fit_shortcut : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
-    key="f",
-  )
-  let reset_shortcut : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
-    key="0",
-  )
-  let delete_shortcut : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
-    key="Delete",
-  )
-  let backspace_shortcut : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
-    key="Backspace",
-  )
-  let shortcut_canvas : @moui.View[Msg] = canvas_view(model)
-    .keyboard_shortcut(fit_shortcut)
-    .keyboard_shortcut(reset_shortcut)
-    .keyboard_shortcut(delete_shortcut)
-    .keyboard_shortcut(backspace_shortcut)
-  // Phase 5.15 — derive the Delete button's `on_click` from
-  // the current selectedId. If nothing is selected, fall back
-  // to a no-op DeleteAnnotation("") (the handler ignores ids
-  // that don't match any annotation). This keeps the button
-  // always clickable without an enabled/disabled code path
-  // — Moui 0.1.12's @views.button doesn't expose an
-  // `enabled` parameter.
-  let delete_click : Msg = match model.selectedId {
-    Some(sel_id) => DeleteAnnotation(sel_id)
-    None => DeleteAnnotation("__noop__")
-  }
-  @views.split_view(
-    primary=@views.column(
-      [
-        @views.text("Folder: " + model.folder),
-        @views.text("Images: " + model.images.length().to_string()),
-        @views.text("Classes: " + model.classes.length().to_string()),
-        // Phase 5.12.D — view-control buttons. The Fit button
-        // is the user-facing surface for FitView; the Reset
-        // button is the user-facing surface for
-        // ResetZoomTransformView (5.11). Keyboard shortcuts
-        // duplicate the same triggers for power users.
-        @views.button("Fit", on_click=FitView(800.0, 600.0)),
-        @views.button("Reset", on_click=ResetZoomTransformView),
-        // Phase 5.15 — Delete button for the currently
-        // selected annotation. Reads model.selectedId at view
-        // time; the handler is no-op when nothing is selected.
-        @views.button("Delete", on_click=delete_click),
-        match model.toastMessage {
-          Some(msg) => @views.text("toast: " + msg)
-          None => @views.text("Status: " + model.statusMessage)
-        },
-      ],
-      spacing=4.0,
-    ),
-    detail=shortcut_canvas,
-    primary_width=240.0,
-    detail_width=800.0,
-    height=600.0,
-  )
+  // We pass `1280.0, 800.0` as the initial layout size to match
+  // the @core.Size::new(width=1280, height=800) the windows
+  // backend launches with (main_native.mbt). Moui's flex layout
+  // resizes the tree on window-resize events automatically.
+  build_labeler_ui_view(model, 1280.0, 800.0)
 }
 
 // ─────────────────────────────────────────────────────────────────

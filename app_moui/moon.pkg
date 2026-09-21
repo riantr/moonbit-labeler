@@ -17,6 +17,8 @@ import {
   "wzzc-dev/moui/views",
   "wzzc-dev/moui/views/common",
   "wzzc-dev/moui/views/layout",
+  "wzzc-dev/moui/views/canvas",
+  "wzzc-dev/moui/views/style",
   "wzzc-dev/moui/runtime",
   "wzzc-dev/moui/backend/windows",
   "moonbitlang/async/fs",
