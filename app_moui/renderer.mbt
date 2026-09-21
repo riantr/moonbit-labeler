@@ -107,13 +107,16 @@ fn bind_renderer(
 }
 
 ///|
-/// Phase 10.2 — produce a single placeholder frame. Fills
-/// the PixelFrame with dark-grey RGBA pixels and calls
-/// `surface.cpu_present().present(frame)` to blit it to the
-/// native surface. Real Skia/Direct2D translation of the Moui
-/// render tree lands in a follow-up batch.
+/// Phase 11 — produce a real frame by rasterizing the Moui
+/// `DrawFrame` from the submission into a BGRA pixel buffer
+/// (via `rasterizer.mbt`), then handing it to the PresentTarget.
+/// Phase 10.2 painted a flat-grey placeholder; Phase 11
+/// actually translates the Moui view tree (Clear / FillRect /
+/// StrokeRect / FillRoundedRect / StrokeRoundedRect / DrawPath
+/// polygon / DrawText placeholder / DrawImage placeholder)
+/// into BGRA bytes.
 fn render_placeholder_frame(
-  _submission : @render.RenderFrameSubmission,
+  submission : @render.RenderFrameSubmission,
   surface : @render.HostSurface,
 ) -> @render.RenderFrameResult {
   // We need a PresentTarget to push pixels to. The HostSurface
@@ -127,19 +130,24 @@ fn render_placeholder_frame(
       let metrics : @core.SurfaceMetrics = current_metrics.val
       let width : Int = metrics.logical_size.width.to_int()
       let height : Int = metrics.logical_size.height.to_int()
-      let row_bytes : Int = width * 4 // RGBA8888 = 4 bytes/px
-      let total : Int = row_bytes * height
-      // Fill the buffer with #1f1f1f (dark grey). Pre-allocate
-      // a Bytes of the right size once and reuse via the
-      // closure; for simplicity we just construct it per
-      // frame here (Phase 11 will cache it).
-      let pixels : Bytes = Bytes::make(total, 0x1f)
+      let row_bytes : Int = width * 4 // BGRA8888 = 4 bytes/px
+      // Allocate a fresh BGRA buffer and rasterize the Moui
+      // view tree into it. `PixelBuffer::new` initializes to
+      // the clear color; `rasterize_draw_frame` walks the
+      // command array and writes shape primitives. We hand
+      // the result to the PresentTarget as immutable Bytes.
+      let buf : PixelBuffer = PixelBuffer::new(
+        width,
+        height,
+        @core.Color::rgba(r=0.1, g=0.1, b=0.12, a=1.0), // dark slate
+      )
+      rasterize_draw_frame(buf, submission.frame())
       let frame : @render.PixelFrame = @render.PixelFrame::new(
         width~,
         height~,
         row_bytes~,
         scale_factor=metrics.scale_factor,
-        pixels~,
+        pixels=PixelBuffer::to_bytes(buf),
       )
       let presented : Bool = present_target.present(frame)
       present_count.val = present_count.val + 1
