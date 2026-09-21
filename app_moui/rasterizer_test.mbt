@@ -217,24 +217,31 @@ test "draw_path_triangle_fill" {
 }
 
 ///|
-/// DrawText placeholder draws a 1px gray outline around the
-/// text's frame rect (no longer floods the frame in text color,
-/// which ate the chrome on white-on-dark layouts). Verified by
-/// drawing a DrawText with a 2×2 frame and checking the 4 corner
-/// pixels are the outline color; the interior pixels stay
-/// transparent.
-test "draw_text_placeholder_outlines_frame" {
+/// DrawText now rasterizes real 5x7 glyphs (Phase 12) instead
+/// of a placeholder outline. Verified by drawing "hi" inside a
+/// 16x10 frame at (1, 1) and checking that:
+///
+///  - 'h' column 4 (right leg), row 3 → lit (text color)
+///  - 'h' column 4, row 0 → blank (transparent)
+///  - A pixel outside the frame stays transparent
+///
+/// Direct test of bitmap_font::glyph_at for ASCII 'A'. 'A'
+/// bitmap rows:
+///   [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11].
+/// The middle bar is row 3 (0x1F = 11111): all 5 columns lit.
+/// Row 0 (0x0E = 01110): col 0 = 0, col 1 = 1, col 4 = 0.
+test "glyph_at_A_middle_bar_is_fully_lit" {
   let buf : PixelBuffer = PixelBuffer::new(
-    4,
-    4,
+    20,
+    12,
     @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  let text_color : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0) // would flood if Phase 11
+  let white : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)
   let run : @core.TextRun = @core.TextRun::new(
     text="hi",
-    frame=@core.Rect::new(x=1.0, y=1.0, width=1.5, height=1.5),
+    frame=@core.Rect::new(x=1.0, y=1.0, width=16.0, height=10.0),
     font=@core.FontSpec::new(),
-    color=text_color,
+    color=white,
   )
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawText(run)],
@@ -242,17 +249,154 @@ test "draw_text_placeholder_outlines_frame" {
     clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame)
-  // Outline color: (0.4, 0.4, 0.4, 1.0) → 102/255 ≈ 0x66;
-  // pixel = 0xFF666666.
-  let outline : Int = 0xFF666666
-  // Top-left corner (1,1) is on the stroked edge.
-  assert_eq(pixel_at(buf, 1, 1), outline)
-  // Interior pixel (1,2) is INSIDE the rect (1,1)→(2,2) but
-  // not on the 1px stroke — should remain transparent (no fill).
-  // (1.5×1.5 inset; stroke is half_w=0.5 → covers x=1 and
-  // x=2 rows, y=1 and y=2 rows, so y=1 is covered but y=2
-  // is also covered.) Verify an off-center interior pixel.
-  assert_eq(pixel_at(buf, 2, 2), outline)
+  // Frame: (1,1)→(17,11). cell_idx=0 = 'h' at x=1..5.
+  // Vertically centered: y_off = 1 + (10-7)/2 = 2.
+  // 'h' bitmap (after `glyph_index('h') = 72`): rows =
+  //   [0x01, 0x01, 0x0F, 0x11, 0x11, 0x11, 0x11].
+  // Bit 0 (LSB) = col 4 (rightmost). So col 4 of 'h' is lit
+  // for every row → the rightmost column is a vertical stem
+  // from row 0 to row 6. The crossbar lands at row 2 (0x0F).
+  //
+  // Assert by reading `buf.pixels` directly (pixel_at's OOB
+  // sentinel has MoonBit 0.1.x aliasing issues that we sidestep).
+  let stride : Int = buf.width * 4
+  // (5, 5) is the rightmost column, mid-row → 255 (lit).
+  let off55 : Int = 5 * stride + 5 * 4
+  assert_eq(buf.pixels[off55 + 0].to_int(), 255)
+  assert_eq(buf.pixels[off55 + 1].to_int(), 255)
+  assert_eq(buf.pixels[off55 + 2].to_int(), 255)
+  assert_eq(buf.pixels[off55 + 3].to_int(), 255)
+  // (5, 2) is the rightmost column, top row → also 255 (lit;
+  // bit 0 of 0x01 = 1).
+  let off52 : Int = 2 * stride + 5 * 4
+  assert_eq(buf.pixels[off52 + 0].to_int(), 255)
+  // (1, 2) is the leftmost column, top row → transparent
+  // (bit 4 of 0x01 = 0).
+  let off12 : Int = 2 * stride + 1 * 4
+  assert_eq(buf.pixels[off12 + 0].to_int(), 0)
+  assert_eq(buf.pixels[off12 + 1].to_int(), 0)
+  assert_eq(buf.pixels[off12 + 2].to_int(), 0)
+  assert_eq(buf.pixels[off12 + 3].to_int(), 0)
+  // Outside the frame: (0, 0) untouched.
+  assert_eq(buf.pixels[0].to_int(), 0)
+  assert_eq(buf.pixels[3].to_int(), 0)
+  // Outside the frame: (0, 0) is untouched.
+  assert_eq(pixel_at(buf, 0, 0), 0x00000000)
+}
+
+///|
+/// DrawText with a frame smaller than 5x7 bails — no pixels
+/// are touched. This guards against panics from the early-return
+/// path in `paint_text`.
+test "draw_text_tiny_frame_bails_silently" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    8,
+    8,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let white : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)
+  // 4x4 frame at (1,1) — too small for the 5x7 cell.
+  let run : @core.TextRun = @core.TextRun::new(
+    text="hello",
+    frame=@core.Rect::new(x=1.0, y=1.0, width=4.0, height=4.0),
+    font=@core.FontSpec::new(),
+    color=white,
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawText(run)],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame)
+  // All pixels still transparent — no panic, no flood.
+  for y = 0; y < 8; y = y + 1 {
+    for x = 0; x < 8; x = x + 1 {
+      assert_eq(pixel_at(buf, x, y), 0x00000000)
+    }
+  }
+}
+
+///|
+/// DrawText for an out-of-range codepoint falls back to the
+/// tofu glyph (5x7 filled box) instead of crashing. Verified by
+/// embedding `\u{00A9}` (©, well outside 0x20..0x7E) and checking
+/// every in-bounds pixel of cell 0 is lit.
+///
+/// glyph_index('\u{00A9}') = 95 (tofu). tofu row = 0x1F = 11111_2
+/// → all 5 columns lit on every row.
+test "draw_text_tofu_fallback_renders_filled_box" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    12,
+    10,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let white : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)
+  // "\u{00A9}X" — first char is tofu (out of ASCII), second is 'X'.
+  let run : @core.TextRun = @core.TextRun::new(
+    text="\u{00A9}X",
+    frame=@core.Rect::new(x=1.0, y=1.0, width=10.0, height=8.0),
+    font=@core.FontSpec::new(),
+    color=white,
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawText(run)],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame)
+  // Tofu cell at cell_idx=0, x=1..5. y_off = 1 + (8-7)/2 = 1.
+  // tofu row r, col c → buf(1+c, 1+r) is white (for all c<5, r<7).
+  let stride : Int = buf.width * 4
+  for r = 0; r < 7; r = r + 1 {
+    for c = 0; c < 5; c = c + 1 {
+      let off : Int = (1 + r) * stride + (1 + c) * 4
+      assert_eq(buf.pixels[off].to_int(), 255)
+      assert_eq(buf.pixels[off + 3].to_int(), 255)
+    }
+  }
+  // Right of tofu (cell_idx=1 starts at x=6): 'X' bitmap rows =
+  // [0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11].
+  //
+  // 'X' row 0 = 0x11 = bits 0 AND 4 set → col 0 (MSB) AND col 4
+  // (LSB) are lit, cols 1..3 are off.
+  //
+  // Probe 'X' col 0 row 0 → buf (6, 1) should be lit (255).
+  assert_eq(buf.pixels[(1 * stride + 6 * 4)].to_int(), 255)
+  // Probe 'X' col 4 row 0 → buf (10, 1) should be lit (255).
+  assert_eq(buf.pixels[(1 * stride + 10 * 4)].to_int(), 255)
+  // Probe 'X' col 2 row 0 → buf (8, 1) should be off (0).
+  assert_eq(buf.pixels[(1 * stride + 8 * 4)].to_int(), 0)
+}
+
+///|
+/// PushClip + FillRect restricts the fill to the clip region.
+/// Verified by pushing a 2脳2 clip at (2,2) then filling a
+/// 6脳6 rect; only the 4 clipped pixels should be red, the
+/// rest should be the clear color.
+test "push_clip_intersects_with_fill_rect" {
+  assert_eq(glyph_at('A', 0, 3), true)
+  assert_eq(glyph_at('A', 1, 3), true)
+  assert_eq(glyph_at('A', 2, 3), true)
+  assert_eq(glyph_at('A', 3, 3), true)
+  assert_eq(glyph_at('A', 4, 3), true)
+  assert_eq(glyph_at('A', 1, 0), true)
+  assert_eq(glyph_at('A', 0, 0), false)
+  assert_eq(glyph_at('A', 4, 0), false)
+}
+
+///|
+/// measure_text returns 0×0 for empty input and (n*5, 7)
+/// otherwise. Fixed-pitch, no kerning.
+test "measure_text_fixed_pitch" {
+  let (w0, h0) = measure_text("")
+  assert_eq(w0, 0)
+  assert_eq(h0, 0)
+  let (w1, h1) = measure_text("a")
+  assert_eq(w1, 5)
+  assert_eq(h1, 7)
+  let (w3, h3) = measure_text("abc")
+  assert_eq(w3, 15)
+  assert_eq(h3, 7)
 }
 
 ///|

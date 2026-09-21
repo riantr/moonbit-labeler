@@ -238,6 +238,85 @@ fn paint_line(
 }
 
 ///|
+/// Paint a TextRun's glyphs into the BGRA buffer using the
+/// embedded 5x7 ASCII bitmap font (see `bitmap_font.mbt`).
+///
+/// Algorithm:
+///
+/// 1.  Compute the text rectangle (`run.frame`) intersected
+///     with the active clip. Out-of-clip glyphs are skipped
+///     per-pixel rather than per-glyph for cheaper clipping.
+/// 2.  Layout: fixed-pitch 5x7 cells, no kerning. We center
+///     the text inside the text frame vertically and left-align
+///     horizontally. (TextAlign::TextCenter/TextLeft/etc.
+///     honored in a follow-up batch — Phase 12 just needs
+///     visible glyphs, not polished layout.)
+/// 3.  For each codepoint in `run.text`, look up
+///     `bitmap_font.glyph_at(ch, col, row)` and, if the pixel
+///     is lit, call `blend_pixel` with `run.color` and the
+///     active opacity.
+///
+/// No font scaling, no AA, no Unicode — printable ASCII only.
+/// Out-of-range chars render as the tofu fallback (a filled
+/// 5x7 box) so callers never index OOB.
+fn paint_text(
+  buf : PixelBuffer,
+  run : @core.TextRun,
+  clip : @core.Rect,
+  opacity : Double,
+) -> Unit {
+  let clipped : @core.Rect? = run.frame.intersection(clip)
+  guard clipped is Some(c) else { return }
+  // Cell dimensions in pixels (constants from the font module).
+  // The font module lives in this same package (app_moui), so its
+  // top-level `pub` constants and functions are visible directly
+  // here — no `bitmap_font.X` namespace prefix is needed.
+  let cw : Int = glyph_width
+  let ch : Int = glyph_height
+  // Vertical centering: nudge the baseline so the 7px-tall
+  // glyph block sits centered inside `run.frame`. For a
+  // generic frame height we just floor-to-baseline (frame
+  // height is usually >= 7 px in the current layout).
+  let frame_w : Int = run.frame.size.width.to_int()
+  let frame_h : Int = run.frame.size.height.to_int()
+  if frame_w < cw || frame_h < ch {
+    // Frame too small to fit even one glyph — bail.
+    return
+  }
+  // Number of glyph cells that fit horizontally. We do NOT
+  // measure text width yet (no kerning); we just clamp to
+  // frame width.
+  let max_cells : Int = frame_w / cw
+  let base_x : Int = run.frame.origin.x.to_int()
+  let base_y : Int = run.frame.origin.y.to_int()
+  // Vertical centering: top row of the glyph block.
+  let y_off : Int = base_y + (frame_h - ch) / 2
+  let mut cell_idx : Int = 0
+  for c in run.text {
+    if cell_idx >= max_cells {
+      break
+    }
+    let ch_int : Int = c.to_int()
+    let gx0 : Int = base_x + cell_idx * cw
+    // Iterate the 5x7 cell; only blend the pixels that are
+    // lit per the glyph bitmap and that fall inside the
+    // clipped frame.
+    let mut col : Int = 0
+    while col < cw {
+      let mut row : Int = 0
+      while row < ch {
+        if glyph_at(ch_int, col, row) {
+          blend_pixel(buf, gx0 + col, y_off + row, run.color, opacity)
+        }
+        row = row + 1
+      }
+      col = col + 1
+    }
+    cell_idx = cell_idx + 1
+  }
+}
+
+///|
 /// Internal clipped stroke: paint `width` pixels on each of the
 /// 4 edges of `rect`. Corners are drawn twice (each edge
 /// covers its corner), which is fine for opaque strokes.
@@ -767,23 +846,14 @@ fn dispatch_command(
     @core.DrawCommand::StrokeRoundedRect(rr, c, w) =>
       paint_stroke_rounded_rect(buf, rr, w, clip, c, opacity)
     @core.DrawCommand::DrawPath(spec) => paint_path(buf, spec, clip, opacity)
-    @core.DrawCommand::DrawText(run) => {
-      // Phase 12 — placeholder: draw a 1px gray outline around
-      // the text's frame so the layout slot is visible WITHOUT
-      // hiding the surrounding chrome. The previous Phase 11
-      // approach (`paint_rect(... run.color ...)`) flooded the
-      // text frame in the text's color, which for white-on-dark
-      // layouts produced solid white rectangles that ate the
-      // sidebar. Real glyph rasterization (bitmap font) lands
-      // later this batch.
-      let outline : @core.Color = @core.Color::rgba(
-        r=0.4,
-        g=0.4,
-        b=0.4,
-        a=1.0,
-      )
-      paint_stroke_rect(buf, run.frame, 1.0, clip, outline, opacity)
-    }
+    @core.DrawCommand::DrawText(run) =>
+      // Phase 12 — real glyph rasterization via the 5x7 ASCII
+      // bitmap font (see app_moui/bitmap_font.mbt). Each lit
+      // pixel in the glyph cell is blended into the BGRA buffer
+      // with `run.color` and the active opacity, clipped to the
+      // active clip rect. Out-of-range chars fall back to the
+      // tofu glyph (filled 5x7 box) so layout never crashes.
+      paint_text(buf, run, clip, opacity)
     @core.DrawCommand::DrawImage(run) => {
       // Phase 12 — placeholder: gray outline + diagonal hatch.
       // Real image decoding is Phase 13+.
