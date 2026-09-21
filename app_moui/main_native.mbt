@@ -72,15 +72,19 @@ fn main {
     program~,
     size~,
   )
-  // Read the smoke env var (default = false). `@env` isn't
-  // safe to call from this context, so we go through the
-  // C runtime via `@ffi` indirectly... actually no, for a
-  // quick smoke harness the simplest path is to just hard-
-  // wire `false` and rely on the build script to flip it via
-  // a small code edit when running the smoke. Tracked for a
-  // future batch; the smoke path is exercised by
-  // `_build/run_smoke.ps1` toggling a separate code path.
-  let smoke : Bool = false
+  // Phase 17 — smoke auto-exit: pass `--smoke` on the
+  // command line to make the windows backend exit after the
+  // first frame is presented. Used by `_build/run_smoke.ps1`
+  // to verify the binary boots, the windows_skia runtime
+  // spins up, and the Direct2D presenter can produce at
+  // least one frame without a human closing the window.
+  //
+  // We use `@env.args()` (same pattern as `app/main.mbt` for
+  // `--stdio` / `--debug`) because Moon's stdlib in this
+  // version doesn't expose `getenv`. `--smoke` is a no-op in
+  // the normal interactive flow (default = false).
+  let args : Array[String] = @env.args()
+  let smoke : Bool = args.contains("--smoke")
   let smoke_options : @windows.WindowsHostSmokeOptions = @windows.WindowsHostSmokeOptions::new(
     first_frame_smoke_auto_exit=smoke,
   )

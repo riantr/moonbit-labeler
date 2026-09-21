@@ -22,6 +22,7 @@ import {
   "moonbitlang/async/fs",
   "moonbitlang/async/io",
   "riantr/moonbit_image",
+  "moonbitlang/core/env",
   "moonbitlang/core/math",
 }
 
