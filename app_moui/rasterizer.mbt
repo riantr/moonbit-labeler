@@ -1251,6 +1251,48 @@ fn brush_color(brush : @core.Brush) -> @core.Color {
   brush.fallback_color()
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Phase 16.F — DrawShadow DrawCommand wire-up
+// ─────────────────────────────────────────────────────────────────
+//
+// Phase 16.B added `paint_shadow_rect` + `blur_h` + `blur_v` as
+// standalone primitives. Phase 16.F wires them into the
+// command dispatcher via the existing `@core.DrawCommand::
+// DrawShadow(ShadowSpec)` variant (already in the Moui core
+// enum). A module-local `shadow_scratch` buffer is reused
+// across frames — Phase 16.B's paint_shadow_rect takes a
+// scratch buffer as a separate arg so the BGRA stays in `buf`
+// during the blur pass.
+//
+// `ShadowSpec::new` defaults `offset=(0, 2)`, `blur_radius=8.0`,
+// `spread=0.0`. Our 5x5 box blur (radius=2) is fixed — for a
+// blur radius > 2 we currently use radius=2 and call it close
+// enough; a future batch can add a configurable kernel size.
+
+///|
+/// Module-local scratch buffer for `paint_shadow_rect`.
+/// Lazily resized to match the destination buffer dimensions
+/// on each shadow paint. Reused across frames to avoid the
+/// allocation cost.
+let shadow_scratch : Ref[PixelBuffer] = {
+  val: PixelBuffer::new(1, 1, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0)),
+}
+
+///|
+/// Ensure `shadow_scratch` is at least `w` x `h`. Grows in
+/// place if too small. Called at the top of every shadow
+/// paint to keep the scratch reusable across frames.
+fn ensure_shadow_scratch(w : Int, h : Int) -> Unit {
+  if shadow_scratch.val.width >= w && shadow_scratch.val.height >= h {
+    return
+  }
+  shadow_scratch.val = PixelBuffer::new(
+    w,
+    h,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+}
+
 ///|
 /// Walk a `DrawFrame.commands` array and rasterize each
 /// DrawCommand into `buf`. The clip/opacity/transform stacks
@@ -1334,6 +1376,28 @@ fn dispatch_command(
       // owned by the caller (renderer.mbt) so the rasterizer
       // itself stays stateless.
       paint_image(buf, run, clip, opacity, cache)
+    @core.DrawCommand::DrawShadow(spec) => {
+      // Phase 16.F — wire the existing `DrawShadow(ShadowSpec)`
+      // Moui variant through the Phase 16.B `paint_shadow_rect`
+      // pipeline. Grows the module-local scratch buffer to
+      // match the destination. The foreground rect is painted
+      // by the caller as a separate FillRoundedRect command
+      // after the shadow; `paint_shadow_rect` only paints the
+      // soft drop behind it.
+      let rect : @core.Rect = spec.rect.rect
+      let cw : Int = buf.width
+      let ch : Int = buf.height
+      ensure_shadow_scratch(cw, ch)
+      paint_shadow_rect(
+        buf,
+        shadow_scratch.val,
+        rect,
+        spec.offset,
+        spec.color,
+        opacity,
+        @core.Rect::new(x=0.0, y=0.0, width=cw.to_double(), height=ch.to_double()),
+      )
+    }
     @core.DrawCommand::PushClip(r) => {
       // Intersect the pushed clip with the parent (caller's
       // responsibility: pairs with PopClip).

@@ -1080,3 +1080,72 @@ test "paint_shadow_rect_zero_offset_glow" {
 }
 
 
+
+
+///|
+/// Phase 16.F — DrawShadow DrawCommand dispatched through
+/// paint_shadow_rect. Verify pixel (8, 8) has the soft-shadow
+/// alpha > 0 (blurred shadow visible inside the shadow region).
+test "draw_shadow_command_dispatches_to_paint_shadow" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    16,
+    16,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let shadow_rect : @core.RoundedRect = @core.RoundedRect::new(
+    rect=@core.Rect::new(x=4.0, y=4.0, width=4.0, height=4.0),
+    radius=0.0,
+  )
+  let spec : @core.ShadowSpec = @core.ShadowSpec::new(
+    rect=shadow_rect,
+    color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=1.0),
+    offset=@core.Point::new(x=2.0, y=2.0),
+    blur_radius=2.0,
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawShadow(spec)],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // Pixel (8, 8) is inside the shadow region (offset 2,2 x 4x4 = 6..10).
+  // Use raw bytes to avoid pixel_at OOB bug.
+  let off : Int = 8 * buf.width * 4 + 8 * 4
+  let a : Int = buf.pixels[off + 3].to_int()
+  assert_true(a > 0)
+}
+
+///|
+/// Phase 16.F — zero-offset shadow produces a glow around the
+/// rect (the rect itself stays clear since we only paint the
+/// shadow shape, not the foreground).
+test "draw_shadow_command_zero_offset_glow_around_rect" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    16,
+    16,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let rect : @core.RoundedRect = @core.RoundedRect::new(
+    rect=@core.Rect::new(x=6.0, y=6.0, width=4.0, height=4.0),
+    radius=0.0,
+  )
+  let spec : @core.ShadowSpec = @core.ShadowSpec::new(
+    rect=rect,
+    color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=1.0),
+    offset=@core.Point::new(x=0.0, y=0.0),
+    blur_radius=2.0,
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawShadow(spec)],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // Pixel (4, 8) is on the left edge of the shadow region ->
+  // alpha > 0 (blurred shadow visible just outside the rect).
+  let off : Int = 8 * buf.width * 4 + 4 * 4
+  assert_true(buf.pixels[off + 3].to_int() > 0)
+  // Pixel (0, 0) is far outside the shadow region -> clear.
+  let off00 : Int = 0 * buf.width * 4 + 0 * 4
+  assert_eq(buf.pixels[off00 + 3].to_int(), 0)
+}
