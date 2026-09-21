@@ -60,13 +60,23 @@
 /// the smoke flag, the binary blocks indefinitely waiting for
 /// the user to close the window.
 fn main {
-  // Initial window framebuffer size. 1280×800 leaves room
+  // Initial window framebuffer size. 1920×1080 leaves room
   // for the 240 px sidebar + an 800 px canvas viewport (5.12.D
   // hardcodes 800×600 for FitView; 800 is the minimum that
   // matters, but 800 is the canvas width not the window width,
   // so the window itself can be wider for the sidebar +
   // chrome).
-  let size : @core.Size = @core.Size::new(width=1280.0, height=800.0)
+  //
+  // Phase 18.B — bumped from 1280×800 to 1920×1080 so the
+  // view-tree path has plenty of room to lay out the toolbar +
+  // 4 folder buttons + 6 chips + canvas decoration + status bar
+  // side by side. The earlier 1280×800 fit, but Phase 18.B's
+  // explicit-width buttons (180×20 for folders/chips, 80×24 for
+  // toolbar buttons, 200×24 for the title text, 320×24 for the
+  // folder label) plus the toolbar's two-row layout push the
+  // intrinsic width past 1280 px, which is what was clipping
+  // the sidebar buttons and toolbar nav row.
+  let size : @core.Size = @core.Size::new(width=1920.0, height=1080.0)
   let program : @moui.Program[Model, Msg] = program()
   let runtime : @runtime.AppRuntime = @runtime.new_program(
     program~,

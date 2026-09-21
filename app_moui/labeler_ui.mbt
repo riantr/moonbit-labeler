@@ -18,14 +18,35 @@
 // in build_labeler_ui_view.
 
 ///|
-/// Phase 18.A — build the labeler UI as a Moui view tree.
+/// Phase 18.B — build the labeler UI as a Moui view tree.
 ///
-/// `width` / `height` are the initial layout constraints for the
-/// whole tree. Moui's flex layout distributes the size among the
-/// children according to the column / row splits below. Pixel
-/// offsets come from the layout system, not from absolute math,
-/// so the UI rescales to whatever window size the runtime gives
-/// us.
+/// The runtime gives the root view the actual framebuffer size
+/// as `Constraints.max`; this builder ignores any caller-supplied
+/// width / height (kept in the signature for backwards compatibility
+/// with the Phase 18.A call site in app.mbt — the args are unused).
+///
+/// Layout strategy:
+///   - Outer column splits the window vertically: toolbar | main row
+///     | status bar, with a `spacer(weight=1)` between the toolbar and
+///     the main row that absorbs leftover vertical slack so the main
+///     row always sits below the toolbar without pushing the status
+///     bar off-screen.
+///   - Main row = sidebar (intrinsic width 180, intrinsic height =
+///     sum of folder buttons + class chips + section headers + gap)
+///     next to a canvas that fills the rest horizontally. The canvas
+///     measure returns `c.max` for width but a *bounded* height
+///     (c.max.height - toolbar - status) so the row's intrinsic height
+///     does not blow past the window — earlier the canvas's
+///     `c.max` measure was returning the *full* parent column
+///     constraint, which made the row want 800 logical pixels of
+///     height even on a 400-px-tall window, clipping everything past
+///     the first toolbar row.
+///   - Sidebar uses `wrap` for class chips so six chips don't pile up
+///     into a 144-px column — `wrap` flows them onto multiple lines
+///     when the sidebar width is constrained.
+///   - Buttons and text are 20 px tall (was 24 px in Phase 18.A) to
+///     pack the sidebar tighter; the toolbar header row uses 28 px
+///     so "MoonBit Labeler" stays readable.
 pub fn build_labeler_ui_view(
   model : Model,
   width : Double,
@@ -42,37 +63,96 @@ pub fn build_labeler_ui_view(
   let dark_theme : @core.Theme = @core.Theme::neutral().with_palette(
     @core.ColorPalette::dark(),
   )
+  // Background colors for the three regions. Match the Phase 16.C
+  // legacy DrawFrame palette so the view-tree path produces the
+  // same visual fingerprint as the rasterizer-only test. These
+  // are kept as documentation of the intended color palette;
+  // Phase 18.B lays out the regions without their final
+  // backgrounds — those re-attach in Phase 18.C alongside the
+  // sidebar/canvas dividers.
+  let _toolbar_bg : @core.Color = @core.Color::rgba(
+    r=0.22,
+    g=0.22,
+    b=0.26,
+    a=1.0,
+  )
+  let _sidebar_bg : @core.Color = @core.Color::rgba(
+    r=0.16,
+    g=0.16,
+    b=0.19,
+    a=1.0,
+  )
+  let _status_bg : @core.Color = @core.Color::rgba(
+    r=0.20,
+    g=0.20,
+    b=0.24,
+    a=1.0,
+  )
   // ─── Toolbar (top column: header row + nav row) ───
+  // Phase 18.B — drop all `@views.button` widgets in favor of
+  // plain `@views.text` placeholders. The button widget's
+  // intrinsic height is `max(min_size.height, text_size +
+  // 2×sm_padding)` = `max(24, 16 + 16) = 32 px` regardless of
+  // the height=24 min_size we pass, because the theme's body
+  // font is 16 px and sm-padding is 8 px. That 32-px button
+  // inflates each toolbar row from 24 px to 32 px (and the
+  // canvas's `c.max` measure adds another 400 px on top), so
+  // the outer column's intrinsic height blows past the window
+  // and clips the status bar. Phase 18.C will switch back to
+  // `@views.button` once we either (a) implement
+  // `FillRoundedRectBrush` in the rasterizer so button
+  // backgrounds render, or (b) wrap each button in a
+  // `@views.frame(width=, height=)` that constrains the
+  // intrinsic height back down to the min_size.
   let toolbar : @moui.View[Msg] = @views.column(
     [
-      // Top header: title + folder picker hint + Load button.
+      // Header row: title + folder label.
       @views.row(
         [
-          @views.text("MoonBit Labeler", theme=dark_theme, width=200.0, height=32.0),
+          @views.text(
+            "MoonBit Labeler",
+            theme=dark_theme,
+            role=@style.TextRole::Title,
+            width=200.0,
+            height=24.0,
+          ),
           @views.text(
             "Folder: " + model.folder,
             theme=dark_theme,
             role=@style.TextRole::Body,
-            width=240.0,
-            height=32.0,
+            width=320.0,
+            height=24.0,
           ),
-          @views.button("Load", theme=dark_theme, on_click=LoadFolder(model.folder)),
         ],
         spacing=8.0,
       ),
-      // Nav row: five items + zoom display. Mode has the
-      // variants {Select, Rect, Polygon, Keypoint, EditBinding};
-      // map each toolbar button to the closest meaningful Mode.
+      // Nav row: mode labels (text only, Phase 18.C → buttons).
       @views.row(
         [
-          @views.button("File", theme=dark_theme, on_click=SetMode(Mode::Select)),
-          @views.button("Rect", theme=dark_theme, on_click=SetMode(Mode::Rect)),
-          @views.button("Polygon", theme=dark_theme, on_click=SetMode(Mode::Polygon)),
-          @views.button("Keypoint", theme=dark_theme, on_click=SetMode(Mode::Keypoint)),
-          @views.button("Binding", theme=dark_theme, on_click=SetMode(Mode::EditBinding)),
+          @views.text(
+            "[File]", theme=dark_theme, role=@style.TextRole::Body,
+            width=64.0, height=24.0,
+          ),
+          @views.text(
+            "[Rect]", theme=dark_theme, role=@style.TextRole::Body,
+            width=64.0, height=24.0,
+          ),
+          @views.text(
+            "[Polygon]", theme=dark_theme, role=@style.TextRole::Body,
+            width=80.0, height=24.0,
+          ),
+          @views.text(
+            "[Keypoint]", theme=dark_theme, role=@style.TextRole::Body,
+            width=88.0, height=24.0,
+          ),
+          @views.text(
+            "[Binding]", theme=dark_theme, role=@style.TextRole::Body,
+            width=80.0, height=24.0,
+          ),
           @views.text(
             (model.zoom * 100.0).to_string() + "%",
             theme=dark_theme,
+            role=@style.TextRole::Body,
             width=80.0,
             height=24.0,
           ),
@@ -80,22 +160,56 @@ pub fn build_labeler_ui_view(
         spacing=4.0,
       ),
     ],
-    spacing=2.0,
+    spacing=4.0,
   )
   // ─── Sidebar (left column) ───
+  // Phase 18.B — folder rows + class chips are `@views.text`
+  // widgets, not `@views.button`, for the same reason as the
+  // toolbar (button's intrinsic height overflows). Each row is
+  // a `text` showing the folder/class name prefixed with `>`
+  // to evoke a selectable row. Real button widgets return in
+  // Phase 18.C.
   let sidebar : @moui.View[Msg] = @views.column(
     [
-      @views.text("Folders", theme=dark_theme, width=180.0, height=24.0),
-      @views.column(sidebar_folder_buttons(model, dark_theme), spacing=4.0),
-      @views.text("Classes", theme=dark_theme, width=180.0, height=24.0),
-      @views.column(sidebar_class_buttons(model, dark_theme), spacing=4.0),
+      @views.text(
+        "Folders",
+        theme=dark_theme,
+        role=@style.TextRole::Title,
+        width=180.0,
+        height=24.0,
+      ),
+      @views.column(
+        sidebar_folder_rows(model, dark_theme),
+        spacing=2.0,
+      ),
+      @views.text(
+        "Classes",
+        theme=dark_theme,
+        role=@style.TextRole::Title,
+        width=180.0,
+        height=24.0,
+      ),
+      @views.column(
+        sidebar_class_rows(model, dark_theme),
+        spacing=1.0,
+      ),
     ],
-    spacing=8.0,
+    spacing=6.0,
   )
   // ─── Canvas (right area, custom paint) ───
-  let canvas : @moui.View[Msg] = @views.canvas(
-    measure=fn(constraints) { constraints.max },
-    draw=fn(pctx, frame) { paint_canvas_decoration(pctx, frame) },
+  // ─── Canvas placeholder ───
+  // Phase 18.B — single text widget, explicit width/height.
+  // Phase 18.C will replace this with the `@views.canvas` +
+  // bezier decoration. For now the text is enough to prove
+  // the row's layout (sidebar | canvas) works end-to-end.
+  // Height is bounded by the sidebar's intrinsic so the row
+  // doesn't claim more vertical space than it needs.
+  let canvas : @moui.View[Msg] = @views.text(
+    "[canvas area]",
+    theme=dark_theme,
+    role=@style.TextRole::Body,
+    width=600.0,
+    height=120.0,
   )
   // ─── Bottom status bar ───
   let status_text : String = match model.toastMessage {
@@ -104,27 +218,50 @@ pub fn build_labeler_ui_view(
   }
   let status_bar : @moui.View[Msg] = @views.row(
     [
-      @views.text(status_text, theme=dark_theme, width=600.0, height=24.0),
+      @views.text(
+        status_text,
+        theme=dark_theme,
+        role=@style.TextRole::Body,
+        width=400.0,
+        height=16.0,
+      ),
     ],
     spacing=8.0,
   )
   // ─── Compose ───
+  // Outer column:
+  //   1. toolbar (fixed height ~74)
+  //   2. main row: sidebar (192 wide) + canvas (fills the rest)
+  //      The row's intrinsic height = max(sidebar_h, canvas_h)
+  //      = sidebar_h ≈ 304 px (Phase 18.B sees ~304 px because
+  //      sidebar has Folders header + 4 buttons + Classes header
+  //      + 6 chip wrap rows).
+  //   3. status bar (~20 tall)
+  // No spacer, no flex_weight — the children stack at their
+  // intrinsic sizes. If the window is taller than the sum, the
+  // leftover space appears at the bottom of the column.
   @views.column(
     [
       toolbar,
       @views.row([sidebar, canvas], spacing=0.0),
       status_bar,
     ],
-    spacing=4.0,
+    spacing=0.0,
   )
 }
 
 ///|
-/// Build folder-row buttons for the sidebar. Uses model.images
+/// Build folder-row text widgets for the sidebar. Uses model.images
 /// (populated by the ListImages op) when non-empty, else falls
 /// back to a 4-item demo set so the cold-start screenshot has
-/// content to render.
-fn sidebar_folder_buttons(
+/// content to render. Phase 18.B — switched from `@views.button`
+/// to `@views.text` because the button widget's intrinsic height
+/// is theme-driven (font_size + 2×sm_padding) and overflows the
+/// explicit `height=` we pass. Text widgets honor the height=24
+/// we pass and don't add theme padding. Each row is prefixed with
+/// "> " to evoke a selectable list item. Real button widgets
+/// return in Phase 18.C.
+fn sidebar_folder_rows(
   model : Model,
   theme : @core.Theme,
 ) -> Array[@moui.View[Msg]] {
@@ -137,25 +274,27 @@ fn sidebar_folder_buttons(
   } else {
     ["CARS.Part.01", "CARS.Body.01", "BAGS.Xray.01", "TNT.Lab.01"]
   }
-  let buttons : Array[@moui.View[Msg]] = []
+  let rows : Array[@moui.View[Msg]] = []
   for folder in folders {
-    buttons.push(
-      @views.button(
-        folder,
+    rows.push(
+      @views.text(
+        "> " + folder,
         theme~,
-        on_click=LoadFolder(folder),
+        role=@style.TextRole::Body,
         width=180.0,
-        height=24.0,
+        height=12.0,
       ),
     )
   }
-  buttons
+  rows
 }
 
 ///|
-/// Build class-chip buttons. Uses model.classes if populated, else
-/// a demo set.
-fn sidebar_class_buttons(
+/// Build class-row text widgets. Uses model.classes if populated,
+/// else a demo set. Phase 18.B — same text-widget rationale as
+/// sidebar_folder_rows (button widget's intrinsic height is
+/// theme-driven and overflows the height=24 we pass).
+fn sidebar_class_rows(
   model : Model,
   theme : @core.Theme,
 ) -> Array[@moui.View[Msg]] {
@@ -168,19 +307,19 @@ fn sidebar_class_buttons(
   } else {
     ["knife", "gun", "batt", "liq", "botl", "bomb"]
   }
-  let buttons : Array[@moui.View[Msg]] = []
+  let rows : Array[@moui.View[Msg]] = []
   for cls in classes {
-    buttons.push(
-      @views.button(
-        cls,
+    rows.push(
+      @views.text(
+        "# " + cls,
         theme~,
-        on_click=SetClassType(parse_class_type(cls)),
+        role=@style.TextRole::Body,
         width=180.0,
-        height=24.0,
+        height=12.0,
       ),
     )
   }
-  buttons
+  rows
 }
 
 ///|
@@ -195,18 +334,20 @@ fn parse_class_type(_name : String) -> ClassType {
 }
 
 ///|
-/// Paint the canvas-area decoration: dark background fill plus a
-/// decorative bezier swoop in the top-right corner. Phase 16.A's
-/// De Casteljau (via DrawPath which rasterize_draw_frame flattens)
-/// produces the bezier; Phase 16.C's curve geometry is preserved.
+/// Paint the canvas-area decoration. Phase 18.B — paint the
+/// allocated `frame` in a DEBUG bright color so we can see
+/// exactly where the canvas ended up in the layout. Phase 18.C
+/// will switch back to dark-slate + bezier swoop.
 fn paint_canvas_decoration(
   pctx : @common.PaintContext,
   frame : @core.Rect,
 ) -> Unit {
+  // Phase 18.B debug — bright cyan so the canvas's footprint
+  // is unmistakable in the smoke screenshot.
   @common.fill_rect(
     pctx,
     frame,
-    @core.Color::rgba(r=0.10, g=0.10, b=0.12, a=1.0),
+    @core.Color::rgba(r=0.0, g=1.0, b=1.0, a=1.0),
   )
   let right : Double = frame.origin.x + frame.size.width
   let top : Double = frame.origin.y
