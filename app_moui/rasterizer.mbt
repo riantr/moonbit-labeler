@@ -634,7 +634,12 @@ fn rounded_rect_pixel_coverage(
   if px + 1.0 <= rx || py + 1.0 <= ry || px >= rx_hi || py >= ry_hi {
     return 0.0
   }
-  // No rounding → full pixel.
+  // Pixel cell entirely inside the rounded-rect "interior box"
+  // [rx+r, rx+rw-r] x [ry+r, ry+rh-r] (the band between the
+  // four corner quadrants, well inside the inscribed circles)
+  // AND r <= 0 (no rounding at all) → full coverage.
+  // Phase 15.C: the interior-box check needs r > 0 (otherwise
+  // cx_left = cx_right and the cell can't satisfy both bounds).
   if r <= 0.0 {
     return 1.0
   }
@@ -642,8 +647,16 @@ fn rounded_rect_pixel_coverage(
   let cx_right : Double = rx_hi - r
   let cy_top : Double = ry + r
   let cy_bot : Double = ry_hi - r
-  // Sample the 4 corners of the pixel cell. Middle-band
-  // pixels short-circuit to "inside" without the circle test.
+  if px >= cx_left && px + 1.0 <= cx_right &&
+    py >= cy_top && py + 1.0 <= cy_bot {
+    return 1.0
+  }
+  // Sample the 4 corners of the pixel cell. For each corner:
+  //   - Outside the rect's bounding box → 0 contribution
+  //   - In a corner quadrant and inside the inscribed circle → 1
+  //   - In a corner quadrant but outside the inscribed circle → 0
+  //   - Not in any corner quadrant (middle band) → 1
+  // Coverage = sum / 4.
   let corners : Array[(Double, Double)] = [
     (px, py),
     (px + 1.0, py),
@@ -654,6 +667,14 @@ fn rounded_rect_pixel_coverage(
   let mut i : Int = 0
   while i < corners.length() {
     let (sx, sy) = corners[i]
+    // Sample outside the rect's bounding box → not inside.
+    // Strict inequality on the upper bounds because the rect
+    // is treated as closed — a sample at (sx=rx_hi, sy=cy_top)
+    // is on the corner boundary and counts as inside.
+    if sx < rx || sx > rx_hi || sy < ry || sy > ry_hi {
+      i = i + 1
+      continue
+    }
     let in_tl : Bool = sx < cx_left && sy < cy_top
     let in_tr : Bool = sx >= cx_right && sy < cy_top
     let in_bl : Bool = sx < cx_left && sy >= cy_bot
@@ -760,60 +781,56 @@ fn paint_stroke_rounded_rect(
     rr.radius
   }
   // Inset (inner) rounded rect: rect shrunk by `width` on each
-  // side, radius reduced by `width` (clamped to 0).
-  let inner_rect : @core.Rect = @core.Rect::new(
-    x=rx + width,
-    y=ry + width,
-    width=rw - 2.0 * width,
-    height=rh - 2.0 * width,
-  )
+  // side, radius reduced by `width` (clamped to 0). Phase 15.C
+  // hands this to `rounded_rect_pixel_coverage` instead of the
+  // hard-membership check, so a fractional stroke width gets
+  // soft edges on both the outer AND inner boundary.
+  let inner_rx : Double = rx + width
+  let inner_ry : Double = ry + width
+  let inner_rw : Double = rw - 2.0 * width
+  let inner_rh : Double = rh - 2.0 * width
   let inner_r : Double = if r - width < 0.0 {
     0.0
   } else {
     r - width
   }
-  let inner : @core.RoundedRect = @core.RoundedRect::new(
-    rect=inner_rect,
-    radius=inner_r,
-  )
   let clipped : @core.Rect? = rect.intersection(clip)
   guard clipped is Some(c) else { return }
-  let x0 : Int = c.origin.x.ceil().to_int()
-  let y0 : Int = c.origin.y.ceil().to_int()
-  let x1 : Int = (c.origin.x + c.size.width).floor().to_int()
-  let y1 : Int = (c.origin.y + c.size.height).floor().to_int()
+  // Phase 15.C: extend by 1 pixel on each side so partial-
+  // coverage edges still get visited.
+  let x0 : Int = c.origin.x.floor().to_int()
+  let y0 : Int = c.origin.y.floor().to_int()
+  let x1 : Int = (c.origin.x + c.size.width).ceil().to_int() - 1
+  let y1 : Int = (c.origin.y + c.size.height).ceil().to_int() - 1
   for y = y0; y <= y1; y = y + 1 {
     for x = x0; x <= x1; x = x + 1 {
-      // In outer (after corner cuts) AND NOT in inner (after
-      // inner corner cuts).
-      let in_outer : Bool = !in_corner_cut(
-        x.to_double(),
-        y.to_double(),
-        rx,
-        ry,
-        rw,
-        rh,
-        r,
+      let px : Double = x.to_double()
+      let py : Double = y.to_double()
+      // Stroke coverage = outer coverage - inner coverage. The
+      // inner rect can degenerate (negative width when stroke
+      // width >= rw/2), in which case `rounded_rect_pixel_coverage`
+      // returns 0 for every pixel — stroke degenerates to the
+      // outer fill, which is the right behaviour for a "stroke
+      // wider than the rect" edge case.
+      let outer_cov : Double = rounded_rect_pixel_coverage(
+        px, py, rx, ry, rw, rh, r,
       )
-      if not(in_outer) {
+      let inner_cov : Double = rounded_rect_pixel_coverage(
+        px, py, inner_rx, inner_ry, inner_rw, inner_rh, inner_r,
+      )
+      let raw : Double = outer_cov - inner_cov
+      let stroke_cov : Double = if raw < 0.0 {
+        0.0
+      } else if raw > 1.0 {
+        1.0
+      } else {
+        raw
+      }
+      if stroke_cov <= 0.0 {
         continue
       }
-      let ix : Double = x.to_double() + 0.5
-      let iy : Double = y.to_double() + 0.5
-      // Inner membership: pixel inside inner_rect (with inner
-      // corner cuts).
-      let ix0 : Double = inner_rect.origin.x
-      let iy0 : Double = inner_rect.origin.y
-      let iw : Double = inner_rect.size.width
-      let ih : Double = inner_rect.size.height
-      let in_inner_rect : Bool = ix >= ix0 && ix < ix0 + iw && iy >= iy0 &&
-        iy < iy0 + ih
-      let in_inner : Bool = in_inner_rect &&
-        !in_corner_cut(ix, iy, ix0, iy0, iw, ih, inner_r)
-      if in_inner {
-        continue
-      }
-      blend_pixel(buf, x, y, color, opacity)
+      let eff_opacity : Double = opacity * stroke_cov
+      blend_pixel(buf, x, y, color, eff_opacity)
     }
   }
 }

@@ -618,6 +618,79 @@ test "stroke_rounded_rect_paints_perimeter_only" {
   // the clear color (transparent).
   assert_eq(pixel_at(buf, 2, 2), 0x00000000)
 }
+///|
+/// StrokeRoundedRect with fractional width=0.5 produces a
+/// 50% AA pixel where the inner rect's left edge cuts the
+/// pixel cell. Rect (1,1,4,4) r=1, outer rect is (1,1,4,4),
+/// inner rect is (1.5,1.5,3,3). Pixel (1,2) cell (1..2)x(2..3)
+/// is fully inside outer (middle band, coverage=1) but only
+/// 50% inside inner (samples (2,2) and (2,3) in middle band,
+/// samples (1,2) and (1,3) outside inner rect on the left).
+/// Stroke coverage = 1 - 0.5 = 0.5 -> 0x7F7F0000.
+test "stroke_rounded_rect_fractional_width_aa" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    6,
+    6,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let red : @core.Color = @core.Color::rgba(r=1.0, g=0.0, b=0.0, a=1.0)
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[
+      @core.DrawCommand::StrokeRoundedRect(
+        @core.RoundedRect::new(
+          rect=@core.Rect::new(x=1.0, y=1.0, width=4.0, height=4.0),
+          radius=1.0,
+        ),
+        red,
+        0.5,
+      ),
+    ],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // Pixel (1,2) cell straddles inner left edge (x=1.5).
+  assert_eq(pixel_at(buf, 1, 2), 0x7F7F0000)
+  // Pixel (2,2) cell is fully inside inner -> no stroke.
+  assert_eq(pixel_at(buf, 2, 2), 0x00000000)
+  // Pixel (0,2) is outside outer rect entirely -> no stroke.
+  assert_eq(pixel_at(buf, 0, 2), 0x00000000)
+}
+
+///|
+/// StrokeRoundedRect with fractional width=0.5 + r=1 produces
+/// a 50% AA corner pixel. Top-left corner of outer rect has
+/// the inscribed circle (2,2) r=1 cutting the corner. Inner
+/// rect (1.5,1.5,3,3) r=0.5 has inscribed circle (2,2) r=0.5
+/// cutting the inner corner.
+/// Pixel (1,1) cell (1..2)x(1..2): outer coverage 3/4 = 0.75,
+/// inner coverage 1/4 = 0.25 (only sample (2,2) inside inner
+/// middle band). Stroke coverage = 0.75 - 0.25 = 0.5 ->
+/// 0x7F7F0000.
+test "stroke_rounded_rect_corner_aa" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    6,
+    6,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let red : @core.Color = @core.Color::rgba(r=1.0, g=0.0, b=0.0, a=1.0)
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[
+      @core.DrawCommand::StrokeRoundedRect(
+        @core.RoundedRect::new(
+          rect=@core.Rect::new(x=1.0, y=1.0, width=4.0, height=4.0),
+          radius=1.0,
+        ),
+        red,
+        0.5,
+      ),
+    ],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  assert_eq(pixel_at(buf, 1, 1), 0x7F7F0000)
+}
 
 ///|
 /// Multiple commands are applied in order. Verified by
