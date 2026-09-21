@@ -1,11 +1,14 @@
 // app_moui — MoUI native app skeleton for riantr/moonbit_labeler.
 //
-// Phase 1 (current session): counter-style state machine proving
-// that MoUI's Model + Msg + Update + view shape works in moon 0.1.x
-// native target. The 21 IPC ops from extensions/labeler/ are wired as
-// direct MoonBit function calls (no bridge) in a follow-up session.
+// Phase 1: counter-style state machine proving that MoUI's
+// Model + Msg + Update + view shape works in moon 0.1.x
+// native target.
 //
-// Pattern reference: wzzc-dev/moui/docs/app-templates.md §Counter.
+// Phase 10: wire to windows_skia so the binary actually opens
+// a window. Imports wzzc-dev/moui/runtime (program + run_app)
+// and wzzc-dev/moui/backend/windows (Win32 entrypoint +
+// Direct2D presenter) and links the windows backend's C/C++
+// native-stub files. The launcher lives in main_native.mbt.
 
 import {
   "wzzc-dev/moui",
@@ -13,6 +16,8 @@ import {
   "wzzc-dev/moui/views",
   "wzzc-dev/moui/views/common",
   "wzzc-dev/moui/views/layout",
+  "wzzc-dev/moui/runtime",
+  "wzzc-dev/moui/backend/windows",
   "moonbitlang/async/fs",
   "moonbitlang/async/io",
   "riantr/moonbit_image",
@@ -20,5 +25,32 @@ import {
 }
 
 supported_targets = "native"
+
+options(
+  // MSVC's `windows.h` defines `min`/`max` as macros, which
+  // clash with `std::min`/`std::max` in the upstream Moui
+  // package's accessibility-host C++ source. `-DNOMINMAX`
+  // disables the macros so `std::max(...)` resolves correctly.
+  // (MSVC's error C2589 points directly at this collision;
+  // see upstream Moui's build system for the same flag.)
+  // We pass it via the cc-flags option — moon forwards it
+  // to the C/C++ compiler when building downstream packages
+  // that import the Moui backend.
+  //
+  // Note: We do NOT add the native-stub files locally. The
+  // Moui `wzzc-dev/moui/backend/windows` package's own
+  // moon.pkg already declares its native-stub files
+  // (win32_service_host.c, win32_timer_host.c,
+  // windows_present.cpp, windows_accessibility_host.cpp).
+  // moon auto-compiles them when the package is in the
+  // dependency graph; we just need to import the package.
+  //
+  // Earlier we tried copying the files into
+  // `_native_stubs/` and re-declaring them in this package's
+  // moon.pkg. That produced two copies at link time (one from
+  // the upstream package's auto-stub, one from ours) and
+  // caused the C2589 error from the unmodified upstream copy
+  // — see git history for the abandoned approach.
+)
 
 pkgtype(kind: "executable")

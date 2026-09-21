@@ -1211,9 +1211,12 @@ pub fn program() -> @moui.Program[Model, Msg] {
 // + .run_app("MoonBit Labeler", runtime).backend(@<plat>.entry()).
 // ─────────────────────────────────────────────────────────────────
 
-///|
-fn main {
-  let _p : @moui.Program[Model, Msg] = program()
-  let _m : Model = Model::new()
-  println("app_moui: skeleton compiled. _p=_m=")
-}
+// ─────────────────────────────────────────────────────────────────
+// Entry — Phase 10 moved the windows_skia launcher to
+// main_native.mbt (where the @runtime / @windows imports and
+// the native-stub C/C++ linker directives live). The remaining
+// sub-routines below (`program`, `view`) are used by both the
+// test environment (where `program` is called for blackbox
+// tests via `update` / `init`) and the runtime (where
+// `main_native.mbt`'s `main` constructs the same Program).
+// ─────────────────────────────────────────────────────────────────
