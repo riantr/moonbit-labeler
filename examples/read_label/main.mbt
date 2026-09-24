@@ -21,8 +21,10 @@ async fn main {
   // would POST via `ext:labeler/read_label`).
   let payload : Json = { "path": Json::string(label_path) }
 
-  // Dispatch via the public embedding entry point.
-  let reply = @labeler.dispatch_op("read_label", payload)
+  // Dispatch via the public embedding entry point. We import the
+  // labeler module via its full module path; the `@labeler` shortcut
+  // only works inside the riantr/moonbit_labeler main package.
+  let reply = @riantr.moonbit_labeler.labeler.dispatch_op("read_label", payload)
 
   // Pretty-print the parsed label.
   println(reply.stringify(indent=2))

@@ -1,9 +1,13 @@
-name = "examples/read_label"
+name = "riantr/moonbit_labeler/examples/read_label"
 
 version = "0.1.0"
 
 import {
-  "riantr/moonbit_labeler",
+  "moonbitlang/async@0.22.1",
+  "riantr/moonbit_labeler@0.2.10",
 }
 
-preferred_target = "native"
+options(
+  preferred_target: "native",
+  supported_targets: "+native",
+)
