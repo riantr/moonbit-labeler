@@ -1,0 +1,99 @@
+# Configuration for https://github.com/crate-ci/typos
+#
+# Run with `typos` (cargo install typos-cli) or `pre-commit run typos`.
+# Tracks spelling across MoonBit source, Markdown docs, and shell scripts.
+# Common false-positives (file names, code identifiers, etc.) are listed
+# under [default.extend-words].
+
+[files]
+extend-exclude = [
+  "_build/",
+  "target/",
+  ".mooncakes/",
+  ".proton/",
+  "frontend/dist/",
+  "frontend/node_modules/",
+  "_typos.toml",
+  "*.lock",
+  "moon.lock",
+  ".moon-lock",
+  "*.bat",
+  "*.ps1",
+  "*.mjs",
+  "*.json",
+  "*.png",
+  "*.exe",
+  "*.dll",
+  "*.log",
+  "data/Image*/",
+  "data/Label*/",
+  "staging-moonbit-image/",
+  "target/proton-dist/",
+]
+
+[default.extend-words]
+# Code identifiers + acronyms — never auto-correct.
+asyncin = "asyncin"
+moonbit = "moonbit"
+Moonbit = "Moonbit"
+MoonBit = "MoonBit"
+MoonbitCommunity = "MoonbitCommunity"
+mooncakes = "mooncakes"
+mooncake = "mooncake"
+Mooncake = "Mooncake"
+moui = "moui"
+MoUI = "MoUI"
+proton = " "  # proton is fine, no-op correction
+cefsdk = "cefsdk"
+ffmpeg = "ffmpeg"
+stdin = "stdin"
+stdout = "stdout"
+stderr = "stderr"
+asyncio = "asyncio"
+jpg = "jpg"
+jpeg = "jpeg"
+png = "png"
+bmp = "bmp"
+qoi = "qoi"
+tga = "tga"
+gif = "gif"
+tiff = "tiff"
+voc = "voc"
+yolo = "yolo"
+json = "json"
+jsonrpc = "jsonrpc"
+derive = "derive"
+debuggable = "debuggable"
+mkdir = "mkdir"
+navigatable = "navigatable"
+prebuild = "prebuild"
+readme = "readme"
+unmount = "unmount"
+untracked = "untracked"
+untag = "untag"
+worktree = "worktree"
+workspace = "workspace"
+horizontally = "horizontally"
+vertically = "vertically"
+styling = "styling"
+votable = "votable"
+categorizable = "categorizable"
+finalizable = "finalizable"
+unzip = "unzip"
+zipping = "zipping"
+zipped = "zipped"
+stdout = "stdout"
+semver = "semver"
+
+[default.extend-identifiers]
+moonbit_image = "moonbit_image"
+riantr = "riantr"
+moonbitted = "moonbitted"
+unmarshalled = "unmarshalled"
+marshalled = "marshalled"
+marshalling = "marshalling"
+subsequencename = "subsequencename"
+synchronizable = "synchronizable"
+
+[default]
+locale = "en-us"

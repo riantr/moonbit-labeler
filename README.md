@@ -22,6 +22,26 @@ and CARS-dataset legacy schemas.
 └────────────────────────────────────────────────────────────────────┘
 ```
 
+## Quick Start
+
+```powershell
+# One-time CEF runtime download (~150 MB) into .proton/runtimes/
+proton_cli cef setup
+
+# Sync MoonBit deps + frontend deps
+moon update
+cd frontend ; npm install ; cd ..
+
+# Hot-reload dev (Vite + CEF)
+proton_cli dev
+
+# Or build + package the portable exe
+moon check --target native --diagnostic-limit 40
+moon test --target native
+proton_cli package --format app
+# Output: target\proton-dist\moonbit-labeler\moonbit-labeler.exe
+```
+
 ## Features
 
 - **Image annotation** — 4 primitives (rectangle, polygon, keypoint,
@@ -43,9 +63,9 @@ and CARS-dataset legacy schemas.
 
 | Layer | Choice | Why |
 |---|---|---|
-| Backend | MoonBit 0.4.43 + async runtime | Native AOT compile, no GC pauses in the hot path |
-| UI shell | Proton 0.2.5 + CEF 150.0.19 | Self-contained portable exe, no Electron |
-| Image codec | shared [`riantr/moonbit_image@0.3.4`](https://mooncakes.io/riantr/moonbit_image) (MIT / Apache-2.0) | Faster than `mizchi/image` for our workload; includes JPEG IDCT fix |
+| Backend | MoonBit 0.1.20260920 + async runtime | Native AOT compile, no GC pauses in the hot path |
+| UI shell | Proton 0.3.3 + CEF 150.0.19 | Self-contained portable exe, no Electron |
+| Image codec | shared [`riantr/moonbit_image@0.3.5`](https://mooncakes.io/riantr/moonbit_image) (MIT / Apache-2.0) | Faster than `mizchi/image` for our workload; includes JPEG IDCT fix |
 | Frontend | Vanilla JS + Vite | No framework lock-in, fast cold reload |
 | IPC | MoonBit `@proton_contract.Command` + `@proton_extension.typed` | Type-safe Request/Reply structs, bound via `CommandRegistrar` |
 

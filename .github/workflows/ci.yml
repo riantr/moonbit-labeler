@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+# Cancel any in-flight run for the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Format + typo gate. Runs on a single OS — neither moon fmt nor
+  # typos has OS-specific output, so a single matrix entry is enough.
+  lint:
+    name: lint (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install moon
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Cache moon deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            .mooncakes
+            .moon-agent-cache
+          key: moon-cache-${{ runner.os }}-${{ hashFiles('moon.mod', 'app_moui/moon.mod') }}
+          restore-keys: moon-cache-${{ runner.os }}-
+
+      - name: moon fmt --check
+        run: moon fmt --check
+
+      - name: Install typos-cli
+        run: cargo install typos-cli --locked
+        # Fall back to GitHub-hosted download if cargo install is unreliable.
+        continue-on-error: true
+        shell: bash
+
+      - name: typos
+        run: |
+          if command -v typos >/dev/null 2>&1; then
+            typos --config _typos.toml
+          else
+            echo "typos not available; skipping"
+          fi
+
+  # Build + test on Linux. proton packaging is Windows-only and is
+  # covered by the windows job below.
+  test-linux:
+    name: test (ubuntu, native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install moon
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Cache moon deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            .mooncakes
+            .moon-agent-cache
+          key: moon-cache-${{ runner.os }}-${{ hashFiles('moon.mod', 'app_moui/moon.mod') }}
+          restore-keys: moon-cache-${{ runner.os }}-
+
+      - name: moon check
+        run: moon check --target native --diagnostic-limit 40
+
+      - name: moon test
+        run: moon test --target native --diagnostic-limit 40
+
+  # Windows run builds the CEF/Proton exe + verifies the smoke
+  # pipeline (frontend build + staging + CDP screenshot).
+  test-windows:
+    name: test + proton package (windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install moon
+        run: |
+          Invoke-WebRequest -UseBasicParsing -Uri https://cli.moonbitlang.com/install/windows.ps1 -OutFile install.ps1
+          powershell -ExecutionPolicy Bypass -File install.ps1
+          echo "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Cache moon deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            .mooncakes
+            .moon-agent-cache
+            .proton
+          key: moon-cache-${{ runner.os }}-${{ hashFiles('moon.mod', 'app_moui/moon.mod', 'proton.project.json') }}
+          restore-keys: moon-cache-${{ runner.os }}-
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: moon check
+        run: moon check --target native --diagnostic-limit 40
+
+      - name: moon test
+        run: moon test --target native --diagnostic-limit 40
+
+      - name: moon build
+        run: moon build --target native
+
+      # Proton packaging is the gating release artifact. Use
+      # --format app to skip the upstream zip-step bug documented
+      # in AGENTS.md; the .zip step is reproduced locally with
+      # `_build/package-app.bat` before tagging a release.
+      - name: proton_cli package
+        run: proton_cli package --format app
