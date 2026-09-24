@@ -4,7 +4,7 @@ version = "0.1.0"
 
 import {
   "wzzc-dev/moui@0.1.12",
-  "moonbitlang/async@0.22.1",
+  "moonbitlang/async@0.22.4",
   "riantr/moonbit_image@0.3.5",
 }
 
