@@ -6,7 +6,7 @@ import {
   "moonbitlang/async@0.19.4",
   "moonbit-community/proton@0.3.3",
   "moonbit-community/proton_contract@0.3.3",
-  "riantr/moonbit_image@0.3.4",
+  "riantr/moonbit_image@0.3.5",
   "wzzc-dev/moui@0.1.12",
 }
 
