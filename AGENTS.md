@@ -164,7 +164,17 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   `@proton_extension.typed(...)` in `extensions/labeler/extension.mbt`) or the headless
   `--stdio` JSON-RPC bridge in `app/stdio_main.mbt`.
 
-## MoUI `app_moui` migration status
+## MoUI `app_moui/` migration status
+
+> **Status: SPIKE SCOPE — future cleanup candidate.** `app_moui/` is a
+> parallel spike demonstrating an alternative native view tree (MoUI 0.1.12)
+> that could replace the CEF/JS frontend. It is **not** on the production
+> path; the production frontend is `frontend/` (Vite + vanilla JS + CEF
+> 150.0.19). The 217 tests in `app_moui/` are reference + smoke tests, not
+> the gating regression suite — the gating suite is
+> `extensions/labeler/labeler_test.mbt` (39 tests). `app_moui/` should
+> eventually either be promoted to production scope (when MoUI upstream
+> fixes the `@views.button` rendering bug) or be deleted entirely.
 
 The CEF/JS frontend is being replaced by a native Moui 0.1.12 view tree driven through
 `app_moui/main_native.mbt`. Phase history:
