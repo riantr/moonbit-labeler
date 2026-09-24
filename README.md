@@ -49,7 +49,7 @@ proton_cli package --format app
   prefix/suffix batch ops.
 - **Video annotation** — frames are flat annotations with a `frames: []`
   field that lists which frames the annotation applies to. Frame timeline
-  + copy-to-next + coverage badge. See [docs/VIDEO_LABELING.md](docs/VIDEO_LABELING.md).
+  + copy-to-next + coverage badge. See [doc/VIDEO_LABELING.md](doc/VIDEO_LABELING.md).
 - **Two render modes** — native browser `<img>` (default) and backend
   decode + BMP (`image/bmp` data URL), selectable at runtime via the
   Settings menu.
@@ -105,7 +105,7 @@ don't match the documented target.
 │       ├── log.js                     # per-stage timing instrumentation
 │       └── style.css                  # all CSS in one place
 ├── data/                              # local sample dataset (Image@CARS.Part.01)
-├── docs/VIDEO_LABELING.md
+├── doc/VIDEO_LABELING.md
 ├── proton.project.json                # 0.2.5 canonical app config (identifier, backend, frontend, package)
 ├── moon.mod                           # deps: moonbit-community/proton@0.2.5 + proton_contract@0.2.5
 └── README.mbt.md                      # generated Proton README (do not edit)

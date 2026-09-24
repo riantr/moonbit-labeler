@@ -63,10 +63,10 @@ staging-moonbit-image/
 *.disabled
 !app/moon.pkg.disabled
 
-# Draft / proposal Markdown under docs/ (review-stage material, not source).
+# Draft / proposal Markdown under doc/ (review-stage material, not source).
 # Real shipped docs live next to the code; PROPOSAL_*.md are working drafts
 # the user reviews locally before deciding whether to promote to README.
-docs/PROPOSAL_*.md
+doc/PROPOSAL_*.md
 
 # moon info / moon build generates these; not part of source.
 **/pkg.generated.mbti
