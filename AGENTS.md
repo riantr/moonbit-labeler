@@ -156,6 +156,65 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   `@proton_extension.typed(...)` in `extensions/labeler/extension.mbt`) or the headless
   `--stdio` JSON-RPC bridge in `app/stdio_main.mbt`.
 
+## MoUI `app_moui` migration status
+
+The CEF/JS frontend is being replaced by a native Moui 0.1.12 view tree driven through
+`app_moui/main_native.mbt`. Phase history:
+
+- **Phase 17** — `_build/run_smoke.ps1` + `--smoke` flag launches the packaged exe,
+  raises the Win32 HWND to foreground, and screenshots via PrintWindow (`PW_RENDERFULLCONTENT`).
+  Per-window screenshots saved as `_build/phase18x_smoke._window.png` (640×400 / 960×540 / etc.
+  depending on host DPI).
+- **Phase 18.A** — `app_moui/app.mbt::view()` calls `build_labeler_ui_view(model, 1280, 800)`,
+  which returns `@moui.View[Msg]` from `@views.column` / `@views.row` / `@views.text` /
+  `@views.canvas`. The toolbar / sidebar / canvas placeholder / status bar are all visible
+  on screen, but the canvas text is just a placeholder.
+- **Phase 18.B** — Layout fits the smoke window. Discovered that `@views.button`'s intrinsic
+  height is theme-driven (`max(min_size.height, font_size + 2×sm_padding)` = 32 px regardless
+  of the `height=` we pass because the dark theme's body font is 16 px + sm spacing is 8 px).
+  Worked around by using `@views.text` placeholders for the toolbar mode buttons and the
+  sidebar folder / class rows. Live screenshot (`_build/phase18b_postrevert._window.png`)
+  shows all regions of the UI: toolbar header, nav row, sidebar headers + 4 folder rows +
+  5-6 class chips, canvas placeholder, status bar `Ready` text. All 217 tests pass.
+
+### Phase 18.C/D — `@views.button` rendering in this version is broken
+
+**Important gotcha for future Phase 18 attempts**: every form of `@views.button` we tried
+became **completely invisible** in the smoke screenshot — no text, no background, even
+when the row's column reported the button's expected size. Two attempts both failed the same way:
+
+1. **`@views.frame(@views.button(text, theme, on_click), width=W, height=H)`** — the frame
+   wrapper's child walking should reach the button's paint, but the button's DrawText command
+   doesn't appear in the final command list. FrameLayout has no `fn paint` override, so it
+   returns `ViewPaintPlan::empty()` by default — that's correct (children paint themselves),
+   but somehow the button's commands vanish. Phase 18.C experiment confirmed this by replacing
+   ONE sidebar text row with a framed button — that single row's text vanished while the 3
+   surrounding text rows still rendered.
+
+2. **`@views.button(text, theme=slim_button_theme_with_sm_0, on_click, width, height)`** (no frame).
+   A custom `SpacingScale` with `sm = 0.0` should reduce content_height to `max(24, 16 + 0) = 24`
+   instead of `max(24, 32) = 32`. Build succeeded, 217 tests passed, but every toolbar / sidebar
+   button vanished from the smoke screenshot. The plain `@views.text` widgets next to the buttons
+   (zoom %, section headers) still rendered correctly.
+
+The actual root cause (button's DrawText not reaching the rasterizer) is uninvestigated —
+needs either (a) `FillRoundedRectBrush` implemented in the rasterizer first so button backgrounds
+paint (and we can see whether the text reaches the bitmap at all), or (b) deeper debugging of
+`place_measured_with_text_system` in `moui/runtime/layout.mbt:148-157` which calls `view_node.layout`
+a SECOND time with `Constraints::tight(frame.size)` but uses `child.intrinsic_size(...)` from
+`self.children.map(...)` rather than the already-measured `child_sizes`. The intrinsic_size call
+re-measures each child with unbounded constraints, which is where the button's theme-driven 32 px
+height comes from. Even though FrameLayout clamps its own size to (120, 24), the button's
+re-measured intrinsic (120, 32) is fed into FrameLayout's `resolve_frame_size` as the `child` arg,
+which then gets clamped via `Size(120, 24).clamp({min:(0,0), max:(120,24)}) = (120, 24)` — so the
+layout result is correct, but the re-measurement path may also be invoking something else that
+messes up paint ordering.
+
+For now: **stay on Phase 18.B's text-placeholder design**. The button rendering issue blocks a
+return to real `@views.button` widgets. Track upstream Moui 0.1.12 patches and revisit after
+either the rasterizer gains `FillRoundedRectBrush` or the moui runtime's `place_measured_with_text_system`
+is refactored to skip the redundant re-measure.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as
