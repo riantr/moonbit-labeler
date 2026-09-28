@@ -81,14 +81,14 @@ don't match the documented target.
 ```
 .
 ├── app/
-│   └── main.mbt                       # 0.2.5 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
+│   └── main.mbt                       # 0.3.3 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
 ├── extensions/
 │   ├── labeler/                       # 21 IPC ops + the image/label/VOC/YOLO pipeline
 │   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
-│   │   ├── extension.mbt               # 0.2.5 extension registration (CommandRegistrar::bind for all 21 ops)
+│   │   ├── extension.mbt               # 0.3.3 extension registration (returns @proton_contract.Extension; 21 commands registered via @proton_extension.typed)
 │   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
 │   │   └── moon.pkg
-│   # Image codec lives in the shared riantr/moonbit_image@0.3.4 mooncake
+│   # Image codec lives in the shared riantr/moonbit_image@0.3.5 mooncake
 │   # (see moon.mod), not in this tree. Prior `extensions/image/` vendored
 │   # copy was removed in 20fbdf2.
 ├── frontend/
@@ -106,8 +106,8 @@ don't match the documented target.
 │       └── style.css                  # all CSS in one place
 ├── data/                              # local sample dataset (Image@CARS.Part.01)
 ├── doc/VIDEO_LABELING.md
-├── proton.project.json                # 0.2.5 canonical app config (identifier, backend, frontend, package)
-├── moon.mod                           # deps: moonbit-community/proton@0.2.5 + proton_contract@0.2.5
+├── proton.project.json                # 0.3.3 canonical app config (identifier, backend, frontend, package)
+├── moon.mod                           # deps: proton@0.3.3 + proton_contract@0.3.3 + moonbit_image@0.3.5 + moui@0.1.12 + async@0.22.4
 └── README.mbt.md                      # generated Proton README (do not edit)
 ```
 
@@ -162,8 +162,11 @@ incremental. If the Proton runtime is missing, run `proton_cli cef setup`.
 
 The packaged binary is at
 `target/proton-dist/moonbit-labeler/moonbit-labeler.exe`. (The `zip` format
-in `proton.project.json` produces a sibling `moonbit-labeler-0.2.5.zip` —
-self-contained, drop on any Windows machine, unzip, double-click the exe.)
+in `proton.project.json` would produce a sibling `moonbit-labeler-0.2.11.zip` —
+self-contained, drop on any Windows machine, unzip, double-click the exe.
+Note: Proton 0.3.3's built-in zip step is upstream-broken on Windows; ship
+the `app/` dir with `proton_cli package --format app` and zip manually via
+`_build/package-app.bat`. See [AGENTS.md](AGENTS.md) for the workaround.)
 
 ## Keyboard shortcuts
 
@@ -192,7 +195,7 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 |---|---|---|
 | `list_images` | frontend → backend | List image files in a folder |
 | `read_image` / `read_thumb` | frontend → backend | Read image bytes (base64), with optional resize for thumbs |
-| `decode_image` / `resize_image` | frontend → backend | Backend-side image decode / resize (shared `riantr/moonbit_image@0.3.4`) |
+| `decode_image` / `resize_image` | frontend → backend | Backend-side image decode / resize (shared `riantr/moonbit_image@0.3.5`) |
 | `read_text` / `write_text` | frontend → backend | Read / write a UTF-8 text file |
 | `read_label` / `write_label` | frontend → backend | Read / write the on-disk label JSON for a given image path |
 | `scan_classes` / `save_classes` / `load_classes` / `load_classes_from_file` | frontend → backend | Manage the curated class list (TXT or JSON, by file path or by Image/Label dir scan) |
@@ -202,13 +205,13 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 
 ## Vendored dependencies
 
-- **`riantr/moonbit_image@0.3.4`** — shared mooncake, MIT / Apache-2.0,
+- **`riantr/moonbit_image@0.3.5`** — shared mooncake, MIT / Apache-2.0,
   original copyright 2025 lws. Pulled in via `moon.mod` (see the
   `import` block). Used for the backend decode + resize + BMP encode
   paths. A prior vendored copy under `extensions/image/` was removed
   in commit `20fbdf2`; see the commit message for the deletion
   rationale (the vendored buildliming fork was missing the JPEG
-  IDCT fix that the upstream 0.3.4 release ships).
+  IDCT fix that the upstream 0.3.5 release ships).
 - **CEF / Proton runtime** — assembled into `target/proton-dist/...` at
   build time by `proton_cli package`. The runtime itself is downloaded
   by `proton_cli cef setup` and cached under `.proton/runtimes/`.
