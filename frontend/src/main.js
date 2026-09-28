@@ -1652,6 +1652,135 @@ async function runExportFolder(kind) {
   }
 }
 
+// ============================================================
+// runImportFolder — drives the Pascal VOC / YOLO TXT / COCO JSON
+// import menu items. The flow mirrors `runExportFolder` in reverse:
+// pick a source path (folder for VOC/YOLO, JSON file for COCO),
+// pick a destination `Label@<dataset>` folder, then invoke the
+// matching `import_*` op. YOLO additionally needs the image folder
+// so the backend can denormalize the 0..1 bbox coords using real
+// pixel dimensions. COCO doesn't need an image_root (the JSON
+// itself carries width/height); we send "" to keep the payload
+// shape symmetric.
+// ============================================================
+async function runImportFolder(kind) {
+  const whichName = kind === "voc"
+    ? "Pascal VOC XML"
+    : kind === "yolo"
+    ? "YOLO TXT"
+    : "COCO JSON";
+  let pick;
+  try {
+    if (kind === "coco") {
+      // COCO is a single JSON file, not a folder.
+      pick = await pickFile("application/json,.json,application/json");
+    } else {
+      pick = await pickFolderViaBackend(
+        "",
+        `Select ${whichName} source folder`,
+      );
+    }
+  } catch (err) {
+    console.error(`pick (import ${kind}) failed:`, err);
+    flashHint(`选择源失败: ${err}`, "info");
+    return;
+  }
+  if (pick?.cancelled || !pick?.path) {
+    flashHint("已取消", "info");
+    return;
+  }
+  let destPick;
+  try {
+    destPick = await pickFolderViaBackend(
+      "",
+      `Select destination Label folder for ${whichName}`,
+    );
+  } catch (err) {
+    console.error(`pick dest (import ${kind}) failed:`, err);
+    flashHint(`选择目标文件夹失败: ${err}`, "info");
+    return;
+  }
+  if (destPick?.cancelled || !destPick?.path) {
+    flashHint("已取消", "info");
+    return;
+  }
+  // YOLO needs the image folder to read width/height for bbox
+  // denormalization.
+  let imageDir = "";
+  if (kind === "yolo") {
+    let imgPick;
+    try {
+      imgPick = await pickFolderViaBackend(
+        "",
+        "Select YOLO image folder (contains .jpg/.png matching label stems)",
+      );
+    } catch (err) {
+      console.error(`pick image dir (yolo) failed:`, err);
+      flashHint(`选择图片文件夹失败: ${err}`, "info");
+      return;
+    }
+    if (imgPick?.cancelled || !imgPick?.path) {
+      flashHint("已取消", "info");
+      return;
+    }
+    imageDir = imgPick.path;
+  }
+  let op;
+  let payload;
+  if (kind === "voc") {
+    op = "import_voc_folder";
+    payload = { src_dir: pick.path, dest_label_dir: destPick.path };
+  } else if (kind === "yolo") {
+    op = "import_yolo_folder";
+    payload = {
+      src_dir: pick.path,
+      image_dir: imageDir,
+      dest_label_dir: destPick.path,
+    };
+  } else {
+    // COCO. The backend doesn't actually need image_root (it reads
+    // width/height from the JSON itself); we send "" so the request
+    // payload stays symmetric.
+    op = "import_coco_file";
+    payload = {
+      src_json: pick.path,
+      image_root: "",
+      dest_label_dir: destPick.path,
+    };
+  }
+  flashHint(`正在导入 ${whichName} 到 ${destPick.path} ...`, "info");
+  let reply;
+  try {
+    reply = await invokeLabeler(op, payload);
+  } catch (err) {
+    console.error(`${op} failed:`, err);
+    flashHint(`导入失败: ${err}`, "info");
+    return;
+  }
+  if (!reply) {
+    flashHint("导入失败:后端无返回", "info");
+    return;
+  }
+  const head = `${whichName} 导入完成`;
+  const classesInfo = reply.classes?.length
+    ? `，${reply.classes.length} 个类别：${reply.classes.join(", ")}`
+    : "";
+  const errTail = reply.error_count > 0
+    ? `，${reply.error_count} 个错误${reply.errors?.length ? `（前几条: ${reply.errors.slice(0, 3).join("; ")}）` : ""}`
+    : "";
+  if (reply.imported_count > 0) {
+    flashHint(
+      `${head}（已写入 ${reply.imported_count} 个标签到 ${destPick.path}，${reply.skipped_count} 个跳过${classesInfo}${errTail}）`,
+      "ok",
+    );
+  } else {
+    flashHint(
+      `${head}（已写入 0 个标签到 ${destPick.path}）请检查源格式 / classes.txt / 图片路径`,
+      "info",
+    );
+  }
+}
+
 function bindEvents() {
   bindToolbar();
   els.folderForm.addEventListener("submit", (ev) => {
@@ -1966,6 +2095,15 @@ async function runMenuAction(action) {
       break;
     case "export-yolo":
       await runExportFolder("yolo");
+      break;
+    case "import-voc":
+      await runImportFolder("voc");
+      break;
+    case "import-yolo":
+      await runImportFolder("yolo");
+      break;
+    case "import-coco":
+      await runImportFolder("coco");
       break;
     case "quit":
       window.close();

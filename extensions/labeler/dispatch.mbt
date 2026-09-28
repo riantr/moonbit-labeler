@@ -102,6 +102,18 @@ pub async fn dispatch_op(op : String, payload : Json) -> Json {
       let req : ExportYoloRequest = @json.from_json(payload)
       ToJson::to_json(op_export_yolo_folder(req))
     }
+    "import_voc_folder" => {
+      let req : ImportVocRequest = @json.from_json(payload)
+      ToJson::to_json(op_import_voc_folder(req))
+    }
+    "import_yolo_folder" => {
+      let req : ImportYoloRequest = @json.from_json(payload)
+      ToJson::to_json(op_import_yolo_folder(req))
+    }
+    "import_coco_file" => {
+      let req : ImportCocoRequest = @json.from_json(payload)
+      ToJson::to_json(op_import_coco_file(req))
+    }
     "pick_folder" =>
       // The pick_folder op requires a CEF CommandWindow (calls the
       // native folder dialog). In stdio mode we have no GUI, so
@@ -129,6 +141,8 @@ pub fn dispatch_op_list() -> Array[String] {
     "write_text", "read_label", "write_label", "parse_label", "serialize_label",
     "scan_classes", "save_classes", "load_classes", "load_classes_from_file",
     "list_videos", "read_video_info", "read_video_frame",
-    "export_voc_folder", "export_yolo_folder", "pick_folder",
+    "export_voc_folder", "export_yolo_folder",
+    "import_voc_folder", "import_yolo_folder", "import_coco_file",
+    "pick_folder",
   ]
 }

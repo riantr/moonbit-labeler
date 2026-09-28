@@ -55,6 +55,21 @@ proton_cli package --format app
   Settings menu.
 - **Export** — Pascal VOC XML and YOLO TXT format with classes.txt,
   per-image batch export to a chosen folder.
+- **Import** — bring external annotations into the on-disk JSON
+  format. Three formats supported:
+  - **Pascal VOC XML** — `<annotation>/<object>/<bndbox>` per file.
+    `<difficult>` is preserved in the bbox coords (we don't have a
+    `difficult` field, so the user can post-filter from the JSON if
+    they need to).
+  - **YOLO TXT** — `<stem>.txt` per image with normalized bbox,
+    plus a global `classes.txt`. The image folder is required to
+    denormalize the 0..1 coords into absolute pixel space.
+  - **COCO instances JSON** — single `instances_*.json` file with
+    `images[]`, `annotations[]`, `categories[]`. Annotations without
+    a `bbox` (segmentation-only) are skipped — our schema has no
+    native segmentation field. `file_name` subdirectories
+    (`train2017/...`) are stripped to the basename so the resulting
+    JSON keys match what `list_images` returns.
 - **Custom class lists** — TXT (`id|name|#RRGGBB`) or JSON format,
   editable via the menubar, persisted next to the image folder as
   `classes.json`. Colors travel with each class.
@@ -202,6 +217,7 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 | `parse_label` / `serialize_label` | frontend → backend | Round-trip a label JSON through the shared normalizer (handles legacy + modern schema) |
 | `list_videos` / `read_video_info` / `read_video_frame` | frontend → backend | Video enumeration + per-frame decode (via `ffprobe / ffmpeg`) |
 | `export_voc_folder` / `export_yolo_folder` | frontend → backend | Batch export the current Image/Label folder to Pascal VOC XML or YOLO TXT |
+| `import_voc_folder` / `import_yolo_folder` / `import_coco_file` | frontend → backend | Batch import Pascal VOC XML / YOLO TXT / COCO JSON into a destination `Label@<dataset>` folder (see Features above) |
 
 ## Vendored dependencies
 

@@ -3736,3 +3736,871 @@ async fn op_pick_folder(
     { path: chosen, cancelled: false, }
   }
 }
+
+// =====================================================================
+// Import pipeline — read Pascal VOC XML, YOLO TXT, or COCO instances
+// JSON from external annotation sources and emit normalized
+// `Label@<dataset>/<file_name>.json` files using the same
+// `normalize_label_json` path the live editor uses. Mirrors the
+// existing `export_voc_folder` / `export_yolo_folder` pipeline so
+// the round-trip stays consistent.
+// =====================================================================
+
+///|
+/// Request to import a folder of Pascal VOC `.xml` files. `src_dir` is
+/// the path of the Annotations/ directory (or any flat directory of
+/// `<stem>.xml` files). `dest_label_dir` is the destination directory
+/// (typically `Label@<dataset>`); created if missing. Each XML's
+/// `` element names the destination `<file_name>.json`.
+pub struct ImportVocRequest {
+  src_dir : String
+  dest_label_dir : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+/// Request to import a folder of YOLO `.txt` label files. `src_dir`
+/// must contain `classes.txt` and one `<stem>.txt` per labelled
+/// image. `image_dir` is the directory holding the actual image
+/// files (needed to read width/height for denormalising the 0..1
+/// bounding boxes). `dest_label_dir` is the destination.
+pub struct ImportYoloRequest {
+  src_dir : String
+  image_dir : String
+  dest_label_dir : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+/// Request to import a COCO instances JSON file. `src_json` is the
+/// path to a single `instances_*.json` file (it groups all images
+/// and annotations). `image_root` is the base directory containing
+/// the image files referenced by the JSON's `file_name` field
+/// (commonly `train2017/` or `val2017/`). `dest_label_dir` is the
+/// destination.
+pub struct ImportCocoRequest {
+  src_json : String
+  image_root : String
+  dest_label_dir : String
+} derive(FromJson, ToJson, Eq, Debug)
+
+///|
+/// Result of any of the import ops. `imported_count` is the number
+/// of label files successfully written; `skipped_count` is files we
+/// could not parse or that yielded no annotations; `error_count` is
+/// hard failures (read error, write failure). `errors` is capped at
+/// 32 entries so a pathological input cannot blow up the wire reply.
+pub struct ImportReply {
+  imported_count : Int
+  skipped_count : Int
+  error_count : Int
+  classes : Array[String]
+  errors : Array[String]
+} derive(ToJson, Eq, Debug)
+
+///|
+/// Split a string on `\n` (trimming a trailing `\r`). Empty trailing
+/// line is dropped. Returns the array of lines.
+pub fn import_split_lines(s : String) -> Array[String] {
+  let out : Array[String] = []
+  let n = s.length()
+  let mut start = 0
+  let mut i = 0
+  while i < n {
+    if s[i] == '\n' {
+      let mut end = i
+      if end > start && s[end - 1] == '\r' {
+        end = end - 1
+      }
+      out.push(s[start:end].to_string())
+      start = i + 1
+    }
+    i = i + 1
+  }
+  if start < n {
+    let mut end = n
+    if end > start && s[end - 1] == '\r' {
+      end = end - 1
+    }
+    out.push(s[start:end].to_string())
+  }
+  out
+}
+
+///|
+/// Split a string on whitespace (space or tab). Consecutive
+/// separators are collapsed. Returns the array of tokens.
+pub fn import_split_whitespace(s : String) -> Array[String] {
+  let out : Array[String] = []
+  let n = s.length()
+  let mut i = 0
+  while i < n {
+    let c = s[i]
+    if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+      i = i + 1
+      continue
+    }
+    let mut j = i + 1
+    while j < n {
+      let c2 = s[j]
+      if c2 == ' ' || c2 == '\t' || c2 == '\r' || c2 == '\n' {
+        break
+      }
+      j = j + 1
+    }
+    out.push(s[i:j].to_string())
+    i = j
+  }
+  out
+}
+
+///|
+/// Locate the body of the first occurrence of `<tag>...</tag>` (or
+/// `<tag attrs>...</tag>`) starting at or after `from`. Returns the
+/// body-start offset and the offset just past the closing tag's
+/// `<`. Returns `(-1, -1)` if no such element exists. Self-closing
+/// `<tag/>` is reported as not-found (no body to return).
+pub fn xml_find_element(s : String, from : Int, tag : String) -> (Int, Int) {
+  let n = s.length()
+  let open_prefix = "<" + tag
+  let open_len = open_prefix.length()
+  let close_suffix = "</" + tag + ">"
+  let close_len = close_suffix.length()
+  let mut i = from
+  while i + open_len + 1 <= n {
+    if s[i] != '<' {
+      i = i + 1
+      continue
+    }
+    // Match the `<tag` prefix.
+    let mut k = 0
+    while k < open_len && i + k < n && s[i + k] == open_prefix[k] {
+      k = k + 1
+    }
+    if k != open_len {
+      i = i + 1
+      continue
+    }
+    // Char after `<tag` must be `>`, whitespace, or `/`.
+    let after = if i + open_len < n { s[i + open_len] } else { '\u{0}' }
+    if after != '>' && after != ' ' && after != '\t' && after != '\n' && after != '\r' && after != '/' {
+      i = i + 1
+      continue
+    }
+    // Find the closing `>` of the open tag.
+    let mut j = i + open_len
+    while j < n && s[j] != '>' {
+      j = j + 1
+    }
+    if j >= n {
+      return (-1, -1)
+    }
+    // Self-closing `<tag/>` has no body.
+    if j > i && s[j - 1] == '/' {
+      return (-1, -1)
+    }
+    let body_start = j + 1
+    // Walk forward to find `</tag>`.
+    let mut p = body_start
+    while p + close_len <= n {
+      if s[p] == '<' && s[p:p + close_len] == close_suffix {
+        return (body_start, p)
+      }
+      p = p + 1
+    }
+    return (-1, -1)
+  }
+  (-1, -1)
+}
+
+///|
+/// Read the trimmed text content of `<tag>...</tag>` in `s`. Returns
+/// `""` if not found.
+pub fn xml_element_text(s : String, tag : String) -> String {
+  let (bs, be) = xml_find_element(s, 0, tag)
+  if bs < 0 {
+    return ""
+  }
+  s[bs:be].to_string().trim().to_string()
+}
+
+///|
+/// Parse a Pascal VOC `.xml` file and return one `ExportAnn` per
+/// `<object>` block. Only `<bndbox>` shapes are supported — VOC has
+/// no native polygon / keypoint concept. `<difficult>` objects are
+/// kept (we don't have a `difficult` field in our schema, so the
+/// user can post-filter from the JSON if they want to). Coordinates
+/// are returned as absolute pixel values (the `<xmin>/<ymin>/<xmax>/
+/// <ymax>` are already pixel-space in VOC). Invalid boxes
+/// (non-integer, xmin>=xmax, ymin>=ymax) are silently dropped.
+pub fn parse_voc_xml(text : String) -> Array[ExportAnn] {
+  let out : Array[ExportAnn] = []
+  let stripped = strip_bom(text)
+  let n = stripped.length()
+  let close_tag = "</object>"
+  let close_len = close_tag.length()
+  let mut from = 0
+  while from < n {
+    let (bs, be) = xml_find_element(stripped, from, "object")
+    if bs < 0 {
+      break
+    }
+    let body = stripped[bs:be].to_string()
+    let name = xml_element_text(body, "name")
+    let xmin_s = xml_element_text(body, "xmin")
+    let ymin_s = xml_element_text(body, "ymin")
+    let xmax_s = xml_element_text(body, "xmax")
+    let ymax_s = xml_element_text(body, "ymax")
+    if name != "" && xmin_s != "" && ymin_s != "" && xmax_s != "" && ymax_s != "" {
+      let xmin = parse_int_range(xmin_s, 0, xmin_s.length())
+      let ymin = parse_int_range(ymin_s, 0, ymin_s.length())
+      let xmax = parse_int_range(xmax_s, 0, xmax_s.length())
+      let ymax = parse_int_range(ymax_s, 0, ymax_s.length())
+      if xmax > xmin && ymax > ymin && xmin >= 0 && ymin >= 0 {
+        out.push(
+          { shape: "rect", type_: name, points: [
+            (xmin.to_double(), ymin.to_double()),
+            (xmax.to_double(), ymax.to_double()),
+          ] },
+        )
+      }
+    }
+    from = be + close_len
+  }
+  out
+}
+
+///|
+/// Read `classes.txt` from `dir` and return the ordered list of
+/// class names. Empty / missing file yields an empty array. Lines
+/// starting with `#` are skipped. Lines may be either bare names or
+/// `<id>\t<name>` (some YOLO writers prefix the row with an index) —
+/// we take the last whitespace-separated token as the name.
+async fn read_yolo_classes(dir : String) -> Array[String] {
+  let path = join_path(dir, "classes.txt")
+  let out : Array[String] = []
+  let data = @fs.read_file(path) catch { _ => return out }
+  let text = data.text() catch { _ => return out }
+  for line in import_split_lines(text) {
+    let t = line.trim().to_string()
+    if t == "" || t.has_prefix("#") {
+      continue
+    }
+    let parts = import_split_whitespace(t)
+    if parts.length() == 0 {
+      continue
+    } else if parts.length() == 1 {
+      out.push(parts[0])
+    } else {
+      out.push(parts[parts.length() - 1])
+    }
+  }
+  out
+}
+
+///|
+/// Parse the body of one YOLO `<stem>.txt` file. Each line is
+/// `class_id x_center y_center width height` (5 numbers, normalized
+/// 0..1). A 6th token (confidence) is tolerated and ignored. Lines
+/// starting with `#` or empty lines are skipped. Returns one
+/// `ExportAnn` per valid line. `classes` is the ordered list from
+/// `classes.txt` (index = class id). `img_w` and `img_h` are the
+/// image dimensions in pixels; normalized values are denormalised
+/// to absolute pixel coordinates.
+pub fn parse_yolo_lines(
+  lines : Array[String],
+  classes : Array[String],
+  img_w : Int,
+  img_h : Int,
+) -> Array[ExportAnn] {
+  let out : Array[ExportAnn] = []
+  for line in lines {
+    let trimmed = line.trim().to_string()
+    if trimmed == "" || trimmed.has_prefix("#") {
+      continue
+    }
+    let parts = import_split_whitespace(trimmed)
+    if parts.length() < 5 {
+      continue
+    }
+    let class_id = parse_int_range(parts[0], 0, parts[0].length())
+    if class_id < 0 || class_id >= classes.length() {
+      continue
+    }
+    let x_c = parse_double_text(parts[1])
+    let y_c = parse_double_text(parts[2])
+    let w_n = parse_double_text(parts[3])
+    let h_n = parse_double_text(parts[4])
+    if x_c < 0.0 || y_c < 0.0 || w_n <= 0.0 || h_n <= 0.0 {
+      continue
+    }
+    let img_w_d = img_w.to_double()
+    let img_h_d = img_h.to_double()
+    if img_w_d <= 0.0 || img_h_d <= 0.0 {
+      continue
+    }
+    let w_px = w_n * img_w_d
+    let h_px = h_n * img_h_d
+    let cx_px = x_c * img_w_d
+    let cy_px = y_c * img_h_d
+    let xmin = cx_px - w_px / 2.0
+    let ymin = cy_px - h_px / 2.0
+    let xmax = cx_px + w_px / 2.0
+    let ymax = cy_px + h_px / 2.0
+    if xmax <= xmin || ymax <= ymin {
+      continue
+    }
+    out.push(
+      { shape: "rect", type_: classes[class_id], points: [(xmin, ymin), (xmax, ymax)] },
+    )
+  }
+  out
+}
+
+///|
+/// Build a normalized label JSON object from `ExportAnn[]` and the
+/// source `img_name`. Reuses the same `normalize_label_json` path
+/// the live editor uses so the imported files round-trip identically.
+fn anns_to_label_json(
+  anns : Array[ExportAnn],
+  img_name : String,
+) -> Json {
+  let infos_in : Array[Json] = []
+  for ann in anns {
+    let pts : Array[Array[Double]] = []
+    for p in ann.points {
+      pts.push([p.0, p.1])
+    }
+    let shape = if ann.shape == "" { infer_shape_from_points(pts) } else { ann.shape }
+    infos_in.push(
+      Json::object(
+        Map::from_array([
+          ("id", Json::string(gen_label_id("obj"))),
+          ("shape", Json::string(shape)),
+          ("type", Json::string(ann.type_)),
+          ("points", points_to_json(pts)),
+        ]),
+      ),
+    )
+  }
+  let raw = Json::object(
+    Map::from_array([
+      ("img_name", Json::string(img_name)),
+      ("infos", Json::array(infos_in)),
+      ("bindings", Json::array([])),
+    ]),
+  )
+  normalize_label_json(raw, img_name)
+}
+
+///|
+/// Take a normalized label Json and write it to
+/// `<dest_label_dir>/<img_stem>.json` as pretty-printed text. Returns
+/// true on success, false on any write failure. `<img_stem>` is the
+/// `img_name` without its `.ext` suffix.
+async fn write_imported_label(
+  dest_label_dir : String,
+  img_name : String,
+  normalized : Json,
+) -> Bool {
+  let (stem, _) = split_stem_ext(img_name)
+  if stem == "" {
+    return false
+  }
+  let out_path = join_path(dest_label_dir, stem + ".json")
+  write_text_or_log(out_path, normalized.stringify())
+}
+
+///|
+/// Push an error message into the import reply's `errors` array,
+/// capped at 32 entries (pathological input won't blow up the wire
+/// reply).
+fn push_import_error(errors : Array[String], msg : String) -> Unit {
+  if errors.length() < 32 {
+    errors.push(msg)
+  }
+}
+
+///|
+/// Driver: walk a directory of Pascal VOC `.xml` files and write one
+/// `<file_name>.json` per file into `dest_label_dir`. `file_name` is
+/// read from each XML's `` element; fallbacks are the
+/// `<folder>/<stem>` pair, then the source filename's stem. Empty
+/// or unparseable XMLs are counted as skipped; missing source dir is
+/// a hard error.
+async fn import_voc_internal(
+  src_dir : String,
+  dest_label_dir : String,
+) -> ImportReply {
+  if src_dir == "" {
+    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_voc_folder: src_dir is empty"] }
+  }
+  if dest_label_dir == "" {
+    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_voc_folder: dest_label_dir is empty"] }
+  }
+  ensure_dir(dest_label_dir) catch {
+    e =>
+      return {
+        imported_count: 0,
+        skipped_count: 0,
+        error_count: 1,
+        classes: [],
+        errors: ["import_voc_folder: cannot create dest_label_dir '" + dest_label_dir + "': " + e.to_string()],
+      }
+  }
+  let names = @fs.readdir(src_dir, include_hidden=false, sort=true) catch {
+    _ =>
+      return {
+        imported_count: 0,
+        skipped_count: 0,
+        error_count: 1,
+        classes: [],
+        errors: ["import_voc_folder: cannot read src_dir '" + src_dir + "'"],
+      }
+  }
+  let mut imported = 0
+  let mut skipped = 0
+  let classes_ordered : Array[String] = []
+  let errors : Array[String] = []
+  for name in names {
+    let lname = lower(name)
+    if !lname.has_suffix(".xml") {
+      continue
+    }
+    let src_path = join_path(src_dir, name)
+    let data = @fs.read_file(src_path) catch {
+      e => {
+        skipped = skipped + 1
+        push_import_error(errors, "read failed for " + src_path + ": " + e.to_string())
+        continue
+      }
+    }
+    let text = data.text() catch {
+      _ => {
+        skipped = skipped + 1
+        push_import_error(errors, "decode failed for " + src_path)
+        continue
+      }
+    }
+    // img_name: prefer ``, else `<folder>/<stem>`, else `<stem>`.
+    let stem = {
+      let (s, _) = split_stem_ext(name)
+      s
+    }
+    let folder = xml_element_text(text, "folder")
+    let fname = xml_element_text(text, "filename")
+    let img_name = if fname != "" {
+      fname
+    } else if folder != "" {
+      folder + "/" + stem + ".jpg"
+    } else {
+      stem + ".jpg"
+    }
+    let anns = parse_voc_xml(text)
+    if anns.length() == 0 {
+      skipped = skipped + 1
+      push_import_error(errors, "no <object> in " + src_path)
+      continue
+    }
+    for a in anns {
+      dedup_push(classes_ordered, a.type_)
+    }
+    let normalized = anns_to_label_json(anns, img_name)
+    if write_imported_label(dest_label_dir, img_name, normalized) {
+      imported = imported + 1
+    } else {
+      skipped = skipped + 1
+      push_import_error(errors, "write failed for " + stem + ".json")
+    }
+  }
+  { imported_count: imported, skipped_count: skipped, error_count: errors.length(), classes: classes_ordered, errors }
+}
+
+///|
+/// Driver: walk a directory of YOLO `.txt` label files and write one
+/// `<file_stem>.json` per file into `dest_label_dir`. Reads
+/// `classes.txt` from `src_dir` and uses `image_dir` to denormalise
+/// bbox coordinates. Files whose stem has no matching image are
+/// skipped (we can't denormalise without image dims).
+async fn import_yolo_internal(
+  src_dir : String,
+  image_dir : String,
+  dest_label_dir : String,
+) -> ImportReply {
+  if src_dir == "" {
+    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_yolo_folder: src_dir is empty"] }
+  }
+  if image_dir == "" {
+    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_yolo_folder: image_dir is empty"] }
+  }
+  if dest_label_dir == "" {
+    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_yolo_folder: dest_label_dir is empty"] }
+  }
+  ensure_dir(dest_label_dir) catch {
+    e =>
+      return {
+        imported_count: 0,
+        skipped_count: 0,
+        error_count: 1,
+        classes: [],
+        errors: ["import_yolo_folder: cannot create dest_label_dir '" + dest_label_dir + "': " + e.to_string()],
+      }
+  }
+  let classes = read_yolo_classes(src_dir)
+  if classes.length() == 0 {
+    return {
+      imported_count: 0,
+      skipped_count: 0,
+      error_count: 1,
+      classes: [],
+      errors: ["import_yolo_folder: classes.txt missing or empty in " + src_dir],
+    }
+  }
+  let names = @fs.readdir(src_dir, include_hidden=false, sort=true) catch {
+    _ =>
+      return {
+        imported_count: 0,
+        skipped_count: 0,
+        error_count: 1,
+        classes: [],
+        errors: ["import_yolo_folder: cannot read src_dir '" + src_dir + "'"],
+      }
+  }
+  let mut imported = 0
+  let mut skipped = 0
+  let classes_ordered : Array[String] = []
+  let errors : Array[String] = []
+  for name in names {
+    let lname = lower(name)
+    if !lname.has_suffix(".txt") || lname == "classes.txt" {
+      continue
+    }
+    let (stem, _) = split_stem_ext(name)
+    if stem == "" {
+      continue
+    }
+    let img_filename = find_image_filename(image_dir, stem)
+    if img_filename == "" {
+      skipped = skipped + 1
+      push_import_error(errors, "no image found in " + image_dir + " for stem " + stem)
+      continue
+    }
+    let src_path = join_path(src_dir, name)
+    let data = @fs.read_file(src_path) catch {
+      e => {
+        skipped = skipped + 1
+        push_import_error(errors, "read failed for " + src_path + ": " + e.to_string())
+        continue
+      }
+    }
+    let text = data.text() catch {
+      _ => {
+        skipped = skipped + 1
+        push_import_error(errors, "decode failed for " + src_path)
+        continue
+      }
+    }
+    let (img_w, img_h) = read_image_dims(join_path(image_dir, img_filename))
+    if img_w <= 0 || img_h <= 0 {
+      skipped = skipped + 1
+      push_import_error(errors, "cannot read image dims for " + img_filename + " (only PNG / JPEG / BMP / GIF / TGA / QOI are supported)")
+      continue
+    }
+    let lines = import_split_lines(text)
+    let anns = parse_yolo_lines(lines, classes, img_w, img_h)
+    if anns.length() == 0 {
+      skipped = skipped + 1
+      push_import_error(errors, "no valid lines in " + src_path)
+      continue
+    }
+    for a in anns {
+      dedup_push(classes_ordered, a.type_)
+    }
+    let normalized = anns_to_label_json(anns, img_filename)
+    if write_imported_label(dest_label_dir, img_filename, normalized) {
+      imported = imported + 1
+    } else {
+      skipped = skipped + 1
+      push_import_error(errors, "write failed for " + stem + ".json")
+    }
+  }
+  { imported_count: imported, skipped_count: skipped, error_count: errors.length(), classes: classes_ordered, errors }
+}
+
+///|
+/// Driver: parse a COCO instances JSON and write one
+/// `<file_name>.json` per image with annotations into
+/// `dest_label_dir`. `image_root` is the directory holding the
+/// images referenced by the JSON's `file_name` field. Annotations
+/// lacking `bbox` (segmentation-only) are skipped with a note — our
+/// schema has no native segmentation. Categories without a `name`
+/// use the stringified `id` as the type.
+async fn import_coco_internal(
+  src_json : String,
+  image_root : String,
+  dest_label_dir : String,
+) -> ImportReply {
+  if src_json == "" {
+    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_coco_file: src_json is empty"] }
+  }
+  if dest_label_dir == "" {
+    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_coco_file: dest_label_dir is empty"] }
+  }
+  ensure_dir(dest_label_dir) catch {
+    e =>
+      return {
+        imported_count: 0,
+        skipped_count: 0,
+        error_count: 1,
+        classes: [],
+        errors: ["import_coco_file: cannot create dest_label_dir '" + dest_label_dir + "': " + e.to_string()],
+      }
+  }
+  let data = @fs.read_file(src_json) catch {
+    e =>
+      return {
+        imported_count: 0,
+        skipped_count: 0,
+        error_count: 1,
+        classes: [],
+        errors: ["import_coco_file: cannot read src_json '" + src_json + "': " + e.to_string()],
+      }
+  }
+  let text = strip_bom(data.text() catch { _ => "" })
+  let raw = @json.parse(text) catch {
+    e =>
+      return {
+        imported_count: 0,
+        skipped_count: 0,
+        error_count: 1,
+        classes: [],
+        errors: ["import_coco_file: cannot parse JSON '" + src_json + "': " + e.to_string()],
+      }
+  }
+  let root_obj : Map[String, Json] = match raw {
+    Object(m) => m
+    _ =>
+      return {
+        imported_count: 0,
+        skipped_count: 0,
+        error_count: 1,
+        classes: [],
+        errors: ["import_coco_file: top-level JSON is not an object"],
+      }
+  }
+  // Build category id -> name map.
+  let cat_id_to_name : Map[String, String] = Map::from_array([])
+  match root_obj.get("categories") {
+    Some(Array(arr)) =>
+      for entry in arr {
+        match entry {
+          Object(o) => {
+            let id = match o.get("id") {
+              Some(Number(n, ..)) => n.to_int().to_string()
+              Some(String(s)) => s
+              _ => continue
+            }
+            let name = match o.get("name") {
+              Some(String(s)) => s
+              _ => id
+            }
+            cat_id_to_name.set(id, name)
+          }
+          _ => ()
+        }
+      }
+    _ => ()
+  }
+  // Build image_id -> file_name map. We also keep an ordered array of
+  // (id, file_name) tuples so the second pass can `await` the async
+  // write call (Map::each closures are sync).
+  let image_id_to_file : Map[String, String] = Map::from_array([])
+  let image_id_to_file_order : Array[(String, String)] = []
+  match root_obj.get("images") {
+    Some(Array(arr)) =>
+      for entry in arr {
+        match entry {
+          Object(o) => {
+            let id = match o.get("id") {
+              Some(Number(n, ..)) => n.to_int().to_string()
+              Some(String(s)) => s
+              _ => continue
+            }
+            let file = match o.get("file_name") {
+              Some(String(s)) => s
+              _ => continue
+            }
+            image_id_to_file.set(id, file)
+            image_id_to_file_order.push((id, file))
+          }
+          _ => ()
+        }
+      }
+    _ =>
+      return {
+        imported_count: 0,
+        skipped_count: 0,
+        error_count: 1,
+        classes: [],
+        errors: ["import_coco_file: no `images` array"],
+      }
+  }
+  // Group annotations by image_id.
+  let anns_by_image : Map[String, Array[ExportAnn]] = Map::from_array([])
+  let mut skipped_no_bbox = 0
+  match root_obj.get("annotations") {
+    Some(Array(arr)) =>
+      for entry in arr {
+        match entry {
+          Object(o) => {
+            let image_id = match o.get("image_id") {
+              Some(Number(n, ..)) => n.to_int().to_string()
+              Some(String(s)) => s
+              _ => {
+                skipped_no_bbox = skipped_no_bbox + 1
+                continue
+              }
+            }
+            let category_id = match o.get("category_id") {
+              Some(Number(n, ..)) => n.to_int().to_string()
+              Some(String(s)) => s
+              _ => {
+                skipped_no_bbox = skipped_no_bbox + 1
+                continue
+              }
+            }
+            let cat_name = match cat_id_to_name.get(category_id) {
+              Some(n) => n
+              None => category_id
+            }
+            // bbox = [x, y, w, h] in absolute pixel coords (or
+            // normalized — COCO spec is absolute; we honour absolute
+            // and trust upstream datasets to be consistent).
+            match o.get("bbox") {
+              Some(Array(bbox_arr)) =>
+                if bbox_arr.length() >= 4 {
+                  let x = match bbox_arr[0] {
+                    Number(n, ..) => n
+                    _ => 0.0
+                  }
+                  let y = match bbox_arr[1] {
+                    Number(n, ..) => n
+                    _ => 0.0
+                  }
+                  let w = match bbox_arr[2] {
+                    Number(n, ..) => n
+                    _ => 0.0
+                  }
+                  let h = match bbox_arr[3] {
+                    Number(n, ..) => n
+                    _ => 0.0
+                  }
+                  if w > 0.0 && h > 0.0 {
+                    let ann : ExportAnn = {
+                      shape: "rect",
+                      type_: cat_name,
+                      points: [(x, y), (x + w, y + h)],
+                    }
+                    match anns_by_image.get(image_id) {
+                      Some(list) => list.push(ann)
+                      None => anns_by_image.set(image_id, [ann])
+                    }
+                  } else {
+                    skipped_no_bbox = skipped_no_bbox + 1
+                  }
+                } else {
+                  skipped_no_bbox = skipped_no_bbox + 1
+                }
+              _ => skipped_no_bbox = skipped_no_bbox + 1
+            }
+          }
+          _ => skipped_no_bbox = skipped_no_bbox + 1
+        }
+      }
+    _ =>
+      return {
+        imported_count: 0,
+        skipped_count: 0,
+        error_count: 1,
+        classes: [],
+        errors: ["import_coco_file: no `annotations` array"],
+      }
+  }
+  let _ = skipped_no_bbox
+  // Walk image_id_to_file in id order and write one label per image
+  // with annotations.
+  let mut imported = 0
+  let mut skipped = 0
+  let classes_ordered : Array[String] = []
+  let errors : Array[String] = []
+  for entry in image_id_to_file_order {
+    let (id_str, file_name) = entry
+    let anns_opt = anns_by_image.get(id_str)
+    let anns : Array[ExportAnn] = match anns_opt {
+      Some(a) => a
+      None => []
+    }
+    if anns.length() == 0 {
+      skipped = skipped + 1
+      continue
+    }
+    // The dest image filename is `<file_name>` (basename). If the
+    // COCO `file_name` includes a subdirectory like `train2017/...`,
+    // we strip it so the resulting JSON keys match the basename that
+    // the user will load via `list_images`.
+    let (_, basename) = split_dir_name(file_name)
+    let img_name = if basename != "" { basename } else { file_name }
+    for a in anns {
+      dedup_push(classes_ordered, a.type_)
+    }
+    let normalized = anns_to_label_json(anns, img_name)
+    if write_imported_label(dest_label_dir, img_name, normalized) {
+      imported = imported + 1
+    } else {
+      skipped = skipped + 1
+      push_import_error(errors, "write failed for " + img_name + ".json")
+    }
+  }
+  let _ = image_root
+  { imported_count: imported, skipped_count: skipped, error_count: errors.length(), classes: classes_ordered, errors }
+}
+
+// ---------------------------------------------------------------------
+// op_handlers — thin wrappers that validate the request, run the
+// internal driver, and let any error propagate as a structured
+// failure to the typed IPC layer.
+// ---------------------------------------------------------------------
+
+///|
+async fn op_import_voc_folder(req : ImportVocRequest) -> ImportReply {
+  if req.src_dir == "" {
+    fail("import_voc_folder: src_dir is empty")
+  }
+  if req.dest_label_dir == "" {
+    fail("import_voc_folder: dest_label_dir is empty")
+  }
+  import_voc_internal(req.src_dir, req.dest_label_dir)
+}
+
+///|
+async fn op_import_yolo_folder(req : ImportYoloRequest) -> ImportReply {
+  if req.src_dir == "" {
+    fail("import_yolo_folder: src_dir is empty")
+  }
+  if req.image_dir == "" {
+    fail("import_yolo_folder: image_dir is empty")
+  }
+  if req.dest_label_dir == "" {
+    fail("import_yolo_folder: dest_label_dir is empty")
+  }
+  import_yolo_internal(req.src_dir, req.image_dir, req.dest_label_dir)
+}
+
+///|
+async fn op_import_coco_file(req : ImportCocoRequest) -> ImportReply {
+  if req.src_json == "" {
+    fail("import_coco_file: src_json is empty")
+  }
+  if req.dest_label_dir == "" {
+    fail("import_coco_file: dest_label_dir is empty")
+  }
+  import_coco_internal(req.src_json, req.image_root, req.dest_label_dir)
+}

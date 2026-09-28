@@ -1,7 +1,7 @@
 ///| ---------------------------------------------------------------
 /// 0.2.5 Proton extension registration for the labeler backend.
 ///
-/// Defines the 21 IPC ops as `ext:labeler/<op>` and binds them to the
+/// Defines the 24 IPC ops as `ext:labeler/<op>` and binds them to the
 /// existing `op_*` handlers in `labeler.mbt`. The frontend invokes
 /// these via `window.__MoonBit__.core.invokeOp("ext:labeler/<op>", payload)`.
 ///
@@ -29,6 +29,9 @@
 /// | read_video_frame            | ReadVideoFrameRequest    | ReadVideoFrameReply   |
 /// | export_voc_folder           | ExportVocRequest         | ExportReply           |
 /// | export_yolo_folder          | ExportYoloRequest        | ExportReply           |
+/// | import_voc_folder           | ImportVocRequest         | ImportReply           |
+/// | import_yolo_folder          | ImportYoloRequest        | ImportReply           |
+/// | import_coco_file            | ImportCocoRequest        | ImportReply           |
 /// | pick_folder                 | PickFolderRequest        | PickFolderReply       |
 ///
 /// The shape mirrors the 0.1.12 `@proton_command` annotation that
@@ -125,6 +128,15 @@ pub fn extension() -> @proton_extension.Extension {
   let export_yolo_folder : @proton_contract.Command[ExportYoloRequest, ExportReply] = contract.command(
     "export_yolo_folder",
   )
+  let import_voc_folder : @proton_contract.Command[ImportVocRequest, ImportReply] = contract.command(
+    "import_voc_folder",
+  )
+  let import_yolo_folder : @proton_contract.Command[ImportYoloRequest, ImportReply] = contract.command(
+    "import_yolo_folder",
+  )
+  let import_coco_file : @proton_contract.Command[ImportCocoRequest, ImportReply] = contract.command(
+    "import_coco_file",
+  )
   let pick_folder : @proton_contract.Command[PickFolderRequest, PickFolderReply] = contract.command(
     "pick_folder",
   )
@@ -155,6 +167,9 @@ pub fn extension() -> @proton_extension.Extension {
     read_video_frame.contract_route(),
     export_voc_folder.contract_route(),
     export_yolo_folder.contract_route(),
+    import_voc_folder.contract_route(),
+    import_yolo_folder.contract_route(),
+    import_coco_file.contract_route(),
     pick_folder.contract_route(),
   ]
   @proton_extension.typed(
@@ -187,6 +202,9 @@ pub fn extension() -> @proton_extension.Extension {
       registrar.bind(read_video_frame, (_ctx, req) => op_read_video_frame(req))
       registrar.bind(export_voc_folder, (_ctx, req) => op_export_voc_folder(req))
       registrar.bind(export_yolo_folder, (_ctx, req) => op_export_yolo_folder(req))
+      registrar.bind(import_voc_folder, (_ctx, req) => op_import_voc_folder(req))
+      registrar.bind(import_yolo_folder, (_ctx, req) => op_import_yolo_folder(req))
+      registrar.bind(import_coco_file, (_ctx, req) => op_import_coco_file(req))
       // pick_folder keeps the context (the only one of the 21 that does).
       registrar.bind(pick_folder, (ctx, req) => op_pick_folder(ctx, req))
     },
