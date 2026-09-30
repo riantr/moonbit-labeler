@@ -80,7 +80,7 @@ proton_cli package --format app
 |---|---|---|
 | Backend | MoonBit 0.1.20260920 + async runtime | Native AOT compile, no GC pauses in the hot path |
 | UI shell | Proton 0.3.3 + CEF 150.0.19 | Self-contained portable exe, no Electron |
-| Image codec | shared [`riantr/moonbit_image@0.3.5`](https://mooncakes.io/riantr/moonbit_image) (MIT / Apache-2.0) | Faster than `mizchi/image` for our workload; includes JPEG IDCT fix |
+| Image codec | shared [`riantr/moonbit_image@0.3.7`](https://mooncakes.io/riantr/moonbit_image) (MIT) | Faster than `mizchi/image` for our workload; includes JPEG IDCT fix |
 | Frontend | Vanilla JS + Vite | No framework lock-in, fast cold reload |
 | IPC | MoonBit `@proton_contract.Command` + `@proton_extension.typed` | Type-safe Request/Reply structs, bound via `CommandRegistrar` |
 
@@ -103,7 +103,7 @@ don't match the documented target.
 │   │   ├── extension.mbt               # 0.3.3 extension registration (returns @proton_contract.Extension; 21 commands registered via @proton_extension.typed)
 │   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
 │   │   └── moon.pkg
-│   # Image codec lives in the shared riantr/moonbit_image@0.3.5 mooncake
+│   # Image codec lives in the shared riantr/moonbit_image@0.3.7 mooncake
 │   # (see moon.mod), not in this tree. Prior `extensions/image/` vendored
 │   # copy was removed in 20fbdf2.
 ├── frontend/
@@ -122,7 +122,7 @@ don't match the documented target.
 ├── data/                              # local sample dataset (Image@CARS.Part.01)
 ├── doc/VIDEO_LABELING.md
 ├── proton.project.json                # 0.3.3 canonical app config (identifier, backend, frontend, package)
-├── moon.mod                           # deps: proton@0.3.3 + proton_contract@0.3.3 + moonbit_image@0.3.5 + moui@0.1.12 + async@0.22.4
+├── moon.mod                           # deps: proton@0.3.3 + proton_contract@0.3.3 + moonbit_image@0.3.7 + moui@0.1.12 + async@0.22.4
 └── README.mbt.md                      # generated Proton README (do not edit)
 ```
 
@@ -210,7 +210,7 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 |---|---|---|
 | `list_images` | frontend → backend | List image files in a folder |
 | `read_image` / `read_thumb` | frontend → backend | Read image bytes (base64), with optional resize for thumbs |
-| `decode_image` / `resize_image` | frontend → backend | Backend-side image decode / resize (shared `riantr/moonbit_image@0.3.5`) |
+| `decode_image` / `resize_image` | frontend → backend | Backend-side image decode / resize (shared `riantr/moonbit_image@0.3.7`) |
 | `read_text` / `write_text` | frontend → backend | Read / write a UTF-8 text file |
 | `read_label` / `write_label` | frontend → backend | Read / write the on-disk label JSON for a given image path |
 | `scan_classes` / `save_classes` / `load_classes` / `load_classes_from_file` | frontend → backend | Manage the curated class list (TXT or JSON, by file path or by Image/Label dir scan) |
@@ -221,7 +221,7 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 
 ## Vendored dependencies
 
-- **`riantr/moonbit_image@0.3.5`** — shared mooncake, MIT / Apache-2.0,
+- **`riantr/moonbit_image@0.3.7`** — shared mooncake, MIT,
   original copyright 2025 lws. Pulled in via `moon.mod` (see the
   `import` block). Used for the backend decode + resize + BMP encode
   paths. A prior vendored copy under `extensions/image/` was removed
