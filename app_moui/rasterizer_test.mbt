@@ -1,4 +1,4 @@
-﻿// app_moui/rasterizer_test.mbt 鈥?Phase 11 tests for the CPU
+// app_moui/rasterizer_test.mbt 鈥?Phase 11 tests for the CPU
 // rasterizer in `rasterizer.mbt`. Each test builds a
 // `DrawFrame` from literal `DrawCommand` values, calls
 // `rasterize_draw_frame`, then inspects specific pixels via
@@ -21,8 +21,11 @@ test "clear_color fills entire buffer" {
   )
   // Build a DrawFrame with one Clear command.
   let frame : @core.DrawFrame = @core.DrawFrame::new(
-    commands=[@core.DrawCommand::Clear(@core.Color::rgba(r=1.0, g=0.0, b=0.0, a=1.0))],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    commands=[
+      @core.DrawCommand::Clear(@core.Color::rgba(r=1.0, g=0.0, b=0.0, a=1.0)),
+    ],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Every pixel should be opaque red: ARGB 0xFFFF0000.
@@ -167,7 +170,8 @@ test "fill_rounded_rect_radius_0_eq_fill_rect" {
         red,
       ),
     ],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   let frame_fr : @core.DrawFrame = @core.DrawFrame::new(
     commands=[
@@ -176,7 +180,8 @@ test "fill_rounded_rect_radius_0_eq_fill_rect" {
         red,
       ),
     ],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf_rr, frame_rr, ImageCache::new())
   rasterize_draw_frame(buf_fr, frame_fr, ImageCache::new())
@@ -220,7 +225,8 @@ test "fill_rounded_rect_radius_cuts_corners" {
         red,
       ),
     ],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Center pixel (3,3) is deep inside the rect 鈥?should be red.
@@ -235,6 +241,7 @@ test "fill_rounded_rect_radius_cuts_corners" {
   // inside-coverage than the older 4-corner supersample (~25%).
   assert_eq(pixel_at(buf, 1, 1), 0x50500000)
 }
+
 ///|
 /// FillRoundedRect radius=1.0 produces a 79% corner pixel
 /// (Phase 16.E bezier-corner AA). Rect (1,1,4,4) on a 6x6
@@ -261,7 +268,8 @@ test "fill_rounded_rect_corner_aa_75_pct" {
         red,
       ),
     ],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   assert_eq(pixel_at(buf, 1, 1), 0xCACA0000)
@@ -300,7 +308,8 @@ test "fill_rounded_rect_pixel_outside_bbox_stays_clear" {
         red,
       ),
     ],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Pixel (0,0) is outside the rect entirely -> clear.
@@ -331,7 +340,8 @@ test "draw_path_triangle_fill" {
   )
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawPath(triangle)],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Centroid (3,2) should be inside the triangle and yellow.
@@ -339,6 +349,7 @@ test "draw_path_triangle_fill" {
   // Outside the triangle (0,0) should be transparent.
   assert_eq(pixel_at(buf, 0, 0), 0x00000000)
 }
+
 ///|
 /// DrawPath with a QuadTo curve fills the area under the
 /// curve. Verified by drawing a U-shape: MoveTo(1,1) ->
@@ -370,12 +381,13 @@ test "draw_path_quad_to_fills_curve" {
   )
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawPath(u_shape)],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Pixel (5,3) sits inside the curve bulge (curve crosses y=3.5
   // at x≈5.94, fill [1,5] at y=3.5) -> filled yellow.
-  let s5_3_quad_off : Int = 3*buf.width*4 + 5*4
+  let s5_3_quad_off : Int = 3 * buf.width * 4 + 5 * 4
   let s5_3_quad : Int = (buf.pixels[s5_3_quad_off + 3].to_int() << 24) |
     (buf.pixels[s5_3_quad_off + 2].to_int() << 16) |
     (buf.pixels[s5_3_quad_off + 1].to_int() << 8) |
@@ -388,7 +400,7 @@ test "draw_path_quad_to_fills_curve" {
   // Pixel (6,3) is OUTSIDE the curve apex (curve apex x=6 at
   // y=3, fill range at y=3.5 is [1, 5.94]) -> transparent.
   // Bypass pixel_at (OOB sentinel bug); use raw bytes.
-  let s6_3_quad_off : Int = 3*buf.width*4 + 6*4
+  let s6_3_quad_off : Int = 3 * buf.width * 4 + 6 * 4
   let s6_3_quad : Int = (buf.pixels[s6_3_quad_off + 3].to_int() << 24) |
     (buf.pixels[s6_3_quad_off + 2].to_int() << 16) |
     (buf.pixels[s6_3_quad_off + 1].to_int() << 8) |
@@ -428,13 +440,14 @@ test "draw_path_cubic_to_fills_curve" {
   )
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawPath(bezier_shape)],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Pixel (6,3) sits inside the cubic bulge (cubic crosses y=3.5
   // at x≈6.47, fill [1, 6] at y=3.5) -> filled cyan.
   // Use raw bytes to bypass pixel_at OOB sentinel bug.
-  let s6_3_cubic_off : Int = 3*buf.width*4 + 6*4
+  let s6_3_cubic_off : Int = 3 * buf.width * 4 + 6 * 4
   let s6_3_cubic : Int = (buf.pixels[s6_3_cubic_off + 3].to_int() << 24) |
     (buf.pixels[s6_3_cubic_off + 2].to_int() << 16) |
     (buf.pixels[s6_3_cubic_off + 1].to_int() << 8) |
@@ -442,20 +455,21 @@ test "draw_path_cubic_to_fills_curve" {
   assert_eq(s6_3_cubic, 0xFF00FFFF)
   // Pixel (7,3) is OUTSIDE the cubic apex (curve apex x=6.5)
   // -> transparent. Use raw bytes.
-  let s7_3_cubic_off : Int = 3*buf.width*4 + 7*4
+  let s7_3_cubic_off : Int = 3 * buf.width * 4 + 7 * 4
   let s7_3_cubic : Int = (buf.pixels[s7_3_cubic_off + 3].to_int() << 24) |
     (buf.pixels[s7_3_cubic_off + 2].to_int() << 16) |
     (buf.pixels[s7_3_cubic_off + 1].to_int() << 8) |
     buf.pixels[s7_3_cubic_off].to_int()
   assert_eq(s7_3_cubic, 0x00000000)
   // Pixel (1,3) is inside the U interior -> filled cyan.
-  let s1_3_cubic_off : Int = 3*buf.width*4 + 1*4
+  let s1_3_cubic_off : Int = 3 * buf.width * 4 + 1 * 4
   let s1_3_cubic : Int = (buf.pixels[s1_3_cubic_off + 3].to_int() << 24) |
     (buf.pixels[s1_3_cubic_off + 2].to_int() << 16) |
     (buf.pixels[s1_3_cubic_off + 1].to_int() << 8) |
     buf.pixels[s1_3_cubic_off].to_int()
   assert_eq(s1_3_cubic, 0xFF00FFFF)
 }
+
 ///|
 /// Sanity check: polygon fill works correctly for a triangle
 /// without curves. Triangle (1,1) (7,3) (1,5) — pixel (6,3)
@@ -478,13 +492,14 @@ test "polygon_fill_triangle_no_curve" {
   )
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawPath(tri)],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Pixel (5,3) is inside the right edge (fill range [1, 5.5]
   // at y=3.5) -> filled yellow. Use raw bytes to avoid pixel_at
   // OOB sentinel bug.
-  let s5_3_tri_off : Int = 3*buf.width*4 + 5*4
+  let s5_3_tri_off : Int = 3 * buf.width * 4 + 5 * 4
   let s5_3_tri : Int = (buf.pixels[s5_3_tri_off + 3].to_int() << 24) |
     (buf.pixels[s5_3_tri_off + 2].to_int() << 16) |
     (buf.pixels[s5_3_tri_off + 1].to_int() << 8) |
@@ -492,13 +507,14 @@ test "polygon_fill_triangle_no_curve" {
   assert_eq(s5_3_tri, 0xFFFFFF00)
   // Pixel (6,3) is OUTSIDE the right edge (x=6 > 5.5 apex)
   // -> transparent. Use raw bytes.
-  let s6_3_tri_off : Int = 3*buf.width*4 + 6*4
+  let s6_3_tri_off : Int = 3 * buf.width * 4 + 6 * 4
   let s6_3_tri : Int = (buf.pixels[s6_3_tri_off + 3].to_int() << 24) |
     (buf.pixels[s6_3_tri_off + 2].to_int() << 16) |
     (buf.pixels[s6_3_tri_off + 1].to_int() << 8) |
     buf.pixels[s6_3_tri_off].to_int()
   assert_eq(s6_3_tri, 0x00000000)
 }
+
 ///|
 /// DrawText now rasterizes real 5x7 glyphs (Phase 12) instead
 /// of a placeholder outline. Verified by drawing "hi" inside a
@@ -644,11 +660,11 @@ test "draw_text_tofu_fallback_renders_filled_box" {
   // (LSB) are lit, cols 1..3 are off.
   //
   // Probe 'X' col 0 row 0 → buf (6, 1) should be lit (255).
-  assert_eq(buf.pixels[(1 * stride + 6 * 4)].to_int(), 255)
+  assert_eq(buf.pixels[1 * stride + 6 * 4].to_int(), 255)
   // Probe 'X' col 4 row 0 → buf (10, 1) should be lit (255).
-  assert_eq(buf.pixels[(1 * stride + 10 * 4)].to_int(), 255)
+  assert_eq(buf.pixels[1 * stride + 10 * 4].to_int(), 255)
   // Probe 'X' col 2 row 0 → buf (8, 1) should be off (0).
-  assert_eq(buf.pixels[(1 * stride + 8 * 4)].to_int(), 0)
+  assert_eq(buf.pixels[1 * stride + 8 * 4].to_int(), 0)
 }
 
 ///|
@@ -705,7 +721,8 @@ test "push_clip_intersects_with_fill_rect" {
       ),
       @core.DrawCommand::PopClip,
     ],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Inside the clip (2,2)-(3,3): red.
@@ -737,7 +754,8 @@ test "push_opacity_half_halves_alpha_contribution" {
       ),
       @core.DrawCommand::PopOpacity,
     ],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // sa = 1.0 * 0.5 = 0.5; inv = 0.5; sa_premul = 0 (was transparent).
@@ -782,6 +800,7 @@ test "stroke_rounded_rect_paints_perimeter_only" {
   // the clear color (transparent).
   assert_eq(pixel_at(buf, 2, 2), 0x00000000)
 }
+
 ///|
 /// StrokeRoundedRect with fractional width=0.5 produces a
 /// 50% AA pixel where the inner rect's left edge cuts the
@@ -883,7 +902,8 @@ test "multiple_commands_apply_in_order" {
         green,
       ),
     ],
-    damage=@core.DamageRegion::empty(), clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Outer corners should be red (not covered by green rect).
@@ -951,14 +971,9 @@ test "draw_image_cache_hit_blits_rgba" {
   // 2×1 image: red pixel then green pixel.
   let img_bytes : Array[Byte] = [
     b'\xFF', b'\x00', b'\x00', b'\xFF', // red
-    b'\x00', b'\xFF', b'\x00', b'\xFF', // green
+     b'\x00', b'\xFF', b'\x00', b'\xFF', // green
   ]
-  let _ = cache.load_bytes(
-    "test.bmp",
-    2,
-    1,
-    Bytes::from_array(img_bytes),
-  )
+  let _ = cache.load_bytes("test.bmp", 2, 1, Bytes::from_array(img_bytes))
   let run : @core.ImageRun = {
     source: "test.bmp",
     frame: @core.Rect::new(x=0.0, y=0.0, width=4.0, height=2.0),
@@ -1005,15 +1020,21 @@ test "pixel_at_out_of_bounds_returns_minus_one" {
   assert_eq(pixel_at(buf, 0, 4), -1)
 }
 
-
-
 ///|
 /// blur_h averages 5 horizontal neighbors. Verify on a 1D
 /// pattern: col 5 has value 255, others 0; after blur_h each
 /// row should have a horizontal smear of value 51 (255/5).
 test "blur_h_averages_5_horizontal_neighbors" {
-  let buf : PixelBuffer = PixelBuffer::new(10, 10, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
-  let scratch : PixelBuffer = PixelBuffer::new(10, 10, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let buf : PixelBuffer = PixelBuffer::new(
+    10,
+    10,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let scratch : PixelBuffer = PixelBuffer::new(
+    10,
+    10,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
   let off : Int = 5 * buf.width * 4 + 5 * 4
   buf.pixels[off] = (0).to_byte()
   buf.pixels[off + 1] = (0).to_byte()
@@ -1033,8 +1054,16 @@ test "blur_h_averages_5_horizontal_neighbors" {
 ///|
 /// Full separable blur: a uniform field is unchanged.
 test "blur_separable_uniform_color_unchanged" {
-  let buf : PixelBuffer = PixelBuffer::new(8, 8, @core.Color::rgba(r=1.0, g=0.0, b=0.0, a=1.0))
-  let scratch : PixelBuffer = PixelBuffer::new(8, 8, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let buf : PixelBuffer = PixelBuffer::new(
+    8,
+    8,
+    @core.Color::rgba(r=1.0, g=0.0, b=0.0, a=1.0),
+  )
+  let scratch : PixelBuffer = PixelBuffer::new(
+    8,
+    8,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
   blur_h(buf, scratch, 0, 0, 8, 8)
   blur_v(scratch, buf, 0, 0, 8, 8)
   let off : Int = 4 * buf.width * 4 + 4 * 4
@@ -1046,8 +1075,16 @@ test "blur_separable_uniform_color_unchanged" {
 /// paint_shadow_rect with offset paints shadow at offset, leaving
 /// the original rect interior clear.
 test "paint_shadow_rect_offset_appears_below" {
-  let buf : PixelBuffer = PixelBuffer::new(16, 16, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
-  let scratch : PixelBuffer = PixelBuffer::new(16, 16, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let buf : PixelBuffer = PixelBuffer::new(
+    16,
+    16,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let scratch : PixelBuffer = PixelBuffer::new(
+    16,
+    16,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
   let clip : @core.Rect = @core.Rect::new(x=0.0, y=0.0, width=16.0, height=16.0)
   let rect : @core.Rect = @core.Rect::new(x=4.0, y=4.0, width=4.0, height=4.0)
   let offset : @core.Point = @core.Point::new(x=2.0, y=2.0)
@@ -1068,8 +1105,16 @@ test "paint_shadow_rect_offset_appears_below" {
 /// paint_shadow_rect with zero offset produces a glow around
 /// the rect. The rect interior stays clear.
 test "paint_shadow_rect_zero_offset_glow" {
-  let buf : PixelBuffer = PixelBuffer::new(12, 12, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
-  let scratch : PixelBuffer = PixelBuffer::new(12, 12, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let buf : PixelBuffer = PixelBuffer::new(
+    12,
+    12,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let scratch : PixelBuffer = PixelBuffer::new(
+    12,
+    12,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
   let clip : @core.Rect = @core.Rect::new(x=0.0, y=0.0, width=12.0, height=12.0)
   let rect : @core.Rect = @core.Rect::new(x=4.0, y=4.0, width=4.0, height=4.0)
   let offset : @core.Point = @core.Point::new(x=0.0, y=0.0)
@@ -1083,9 +1128,6 @@ test "paint_shadow_rect_zero_offset_glow" {
   let off11 : Int = 1 * buf.width * 4 + 1 * 4
   assert_eq(buf.pixels[off11 + 3].to_int(), 0)
 }
-
-
-
 
 ///|
 /// Phase 16.F — DrawShadow DrawCommand dispatched through
@@ -1135,7 +1177,7 @@ test "draw_shadow_command_zero_offset_glow_around_rect" {
     radius=0.0,
   )
   let spec : @core.ShadowSpec = @core.ShadowSpec::new(
-    rect=rect,
+    rect~,
     color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=1.0),
     offset=@core.Point::new(x=0.0, y=0.0),
     blur_radius=2.0,
@@ -1259,4 +1301,79 @@ test "bezier_round_rect_pixel_coverage_short_circuits" {
   assert_true((c_tl - c_tr).abs() < eps)
   assert_true((c_tl - c_bl).abs() < eps)
   assert_true((c_tl - c_br).abs() < eps)
+}
+
+///|
+/// Phase 18.E — FillRoundedRectBrush with a solid brush
+/// resolves to FillRoundedRect and paints the bitmap. The
+/// Moui `append_control_background` helper emits this exact
+/// shape for every button background; before Phase 18.E the
+/// rasterizer dropped it on the floor so button fills were
+/// invisible.
+test "fill_rounded_rect_brush_solid_paints_interior" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    6,
+    6,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let blue : @core.Brush = @core.Brush::solid(
+    @core.Color::rgba(r=0.0, g=0.0, b=1.0, a=1.0),
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[
+      @core.DrawCommand::FillRoundedRectBrush(
+        @core.RoundedRect::new(
+          rect=@core.Rect::new(x=1.0, y=1.0, width=4.0, height=4.0),
+          radius=1.0,
+        ),
+        blue,
+      ),
+    ],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // Interior (3, 3) should be opaque blue (0xAARRGGBB =
+  // 0xFF0000FF).
+  assert_eq(pixel_at(buf, 3, 3), 0xFF0000FF)
+  // Exterior corner (0, 0) stays clear (the buffer's
+  // transparent-black init).
+  assert_eq(pixel_at(buf, 0, 0), 0)
+}
+
+///|
+/// Phase 18.E — StrokeRoundedRectBrush with a solid brush
+/// resolves to StrokeRoundedRect and paints a perimeter
+/// (interior stays clear). Verified by checking that the
+/// perimeter pixel at (2, 1) has the brush color while the
+/// deep-interior (3, 3) stays at the buffer's clear color.
+test "stroke_rounded_rect_brush_solid_paints_perimeter_only" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    6,
+    6,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let green : @core.Brush = @core.Brush::solid(
+    @core.Color::rgba(r=0.0, g=1.0, b=0.0, a=1.0),
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[
+      @core.DrawCommand::StrokeRoundedRectBrush(
+        @core.RoundedRect::new(
+          rect=@core.Rect::new(x=1.0, y=1.0, width=4.0, height=4.0),
+          radius=1.0,
+        ),
+        green,
+        1.0,
+      ),
+    ],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // Top-edge perimeter pixel (2, 1) should be opaque green
+  // (0xAARRGGBB = 0xFF00FF00).
+  assert_eq(pixel_at(buf, 2, 1), 0xFF00FF00)
+  // Deep interior (3, 3) stays clear.
+  assert_eq(pixel_at(buf, 3, 3), 0)
 }

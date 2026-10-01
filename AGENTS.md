@@ -195,9 +195,9 @@ The CEF/JS frontend is being replaced by a native Moui 0.1.12 view tree driven t
   shows all regions of the UI: toolbar header, nav row, sidebar headers + 4 folder rows +
   5-6 class chips, canvas placeholder, status bar `Ready` text. All 217 tests pass.
 
-### Phase 18.C/D — `@views.button` rendering in this version is broken
+### Phase 18.C/D — `@views.button` rendering in this version is broken (FIXED in 18.E)
 
-**Important gotcha for future Phase 18 attempts**: every form of `@views.button` we tried
+**Phase 18.C/D investigation history**: every form of `@views.button` we tried
 became **completely invisible** in the smoke screenshot — no text, no background, even
 when the row's column reported the button's expected size. Two attempts both failed the same way:
 
@@ -215,23 +215,62 @@ when the row's column reported the button's expected size. Two attempts both fai
    button vanished from the smoke screenshot. The plain `@views.text` widgets next to the buttons
    (zoom %, section headers) still rendered correctly.
 
-The actual root cause (button's DrawText not reaching the rasterizer) is uninvestigated —
-needs either (a) `FillRoundedRectBrush` implemented in the rasterizer first so button backgrounds
-paint (and we can see whether the text reaches the bitmap at all), or (b) deeper debugging of
-`place_measured_with_text_system` in `moui/runtime/layout.mbt:148-157` which calls `view_node.layout`
-a SECOND time with `Constraints::tight(frame.size)` but uses `child.intrinsic_size(...)` from
-`self.children.map(...)` rather than the already-measured `child_sizes`. The intrinsic_size call
-re-measures each child with unbounded constraints, which is where the button's theme-driven 32 px
-height comes from. Even though FrameLayout clamps its own size to (120, 24), the button's
-re-measured intrinsic (120, 32) is fed into FrameLayout's `resolve_frame_size` as the `child` arg,
-which then gets clamped via `Size(120, 24).clamp({min:(0,0), max:(120,24)}) = (120, 24)` — so the
-layout result is correct, but the re-measurement path may also be invoking something else that
-messes up paint ordering.
+The diagnostic was: **`FillRoundedRectBrush` and `StrokeRoundedRectBrush` were silently
+no-op'd in the rasterizer** (`rasterizer.mbt:1500-1502`, the `_ => ()` catch-all under the
+Phase 11 "no-op commands" comment). Moui's `@style.append_control_background`
+(`.mooncakes/wzzc-dev/moui/views/style/control_primitives.mbt:31,50`) emits exactly these
+brush variants for every control background, so every button background vanished. The
+button's `DrawText` *was* reaching the bitmap — the issue was that the missing background
+made the button visually indistinguishable from the surrounding dark canvas, and in some
+contrast modes the foreground color also dropped out, so neither the background nor the
+label were visible.
 
-For now: **stay on Phase 18.B's text-placeholder design**. The button rendering issue blocks a
-return to real `@views.button` widgets. Track upstream Moui 0.1.12 patches and revisit after
-either the rasterizer gains `FillRoundedRectBrush` or the moui runtime's `place_measured_with_text_system`
-is refactored to skip the redundant re-measure.
+### Phase 18.E — wire the brush variants into the rasterizer
+
+Path (a) from the Phase 18.C/D "needs either (a) ... or (b) ..." note landed first because
+it's an actionable code-level fix that lives entirely in `app_moui/rasterizer.mbt`:
+
+1. Added two real `match` arms in `dispatch_command`:
+   - `FillRoundedRectBrush(rr, brush)` → `paint_rounded_rect(buf, rr, clip, brush.fallback_color(), opacity)`
+   - `StrokeRoundedRectBrush(rr, brush, w)` → `paint_stroke_rounded_rect(buf, rr, w, clip, brush.fallback_color(), opacity)`
+2. `Brush::fallback_color` (`.mooncakes/wzzc-dev/moui/core/paint.mbt:514`) handles every
+   brush variant — `Solid` returns the color, `LinearGradient` / `RadialGradient` return
+   `start_color` / `center_color` respectively. The gradients lose fidelity (become solid
+   blocks) but at least the control fills something, which is what Phase 18.B's
+   `phase18b_postrevert._window.png` already showed.
+3. Updated the no-op comment block (line 1497-1502) to remove the two brush variants from
+   the catch-all list.
+4. Added 2 new rasterizer tests (`fill_rounded_rect_brush_solid_paints_interior` and
+   `stroke_rounded_rect_brush_solid_paints_perimeter_only`) that exercise the new arms.
+   Test count: 217 → 219, all pass.
+
+**Layout wrapper pattern** (path b's idea, also kept): every button in
+`build_labeler_ui_view` / `sidebar_folder_rows` / `sidebar_class_rows` / toolbar nav row
+is wrapped in `@views.frame(width, height)`. The frame clamps the button's
+theme-driven intrinsic height back down to the row pitch we want (16 px for sidebar rows,
+24 px for toolbar nav). Without the frame the dark theme's 16-px control font + 2×8-px
+padding makes each button 32 px tall, inflating the column and clipping the status bar —
+the same inflation bug Phase 18.B documented.
+
+**Variant choice**: `ButtonVariant::Ghost` for sidebar + toolbar rows. Matches Moui's
+own `navigation_sidebar` (`.mooncakes/wzzc-dev/moui/views/navigation/navigation_sidebar.mbt:28`)
+and reads as "selectable list item" rather than "primary CTA". Primary would be too loud
+for 10 sidebar rows.
+
+**Smoke verification**:
+- `_build/phase18e_smoke._window.png` — first row only (`> CARS.Part.01`) shows white
+  Ghost-button background with rounded corners + label, while the 3 surrounding text rows
+  (`> CARS.Body.01`, `> BAGS.Xray.01`, `> TNT.Lab.01`) stay as plain text. This is the
+  A/B contrast that proved the rasterizer change was the actual fix.
+- `_build/phase18e_full_smoke._window.png` — full rollout: 5 toolbar nav Ghost buttons
+  (`[File] [Rect] [Polygon] [Keypoint] [Binding]`), 4 sidebar folder Ghost buttons, 6
+  sidebar class Ghost buttons, plus the zoom% readout and section headers as text. All
+  11 Ghost buttons render with their rounded-rect background + label visible.
+
+**What's still on the SPIKE list**: the canvas placeholder is still a `@views.text`
+widget — Phase 19 will swap it for `@views.canvas` + the Phase 16.C bezier decoration.
+The toolbar header row's "MoonBit Labeler" title and "Folder: …" path label are also
+still text widgets (correct, since they're not actionable controls).
 
 ## Stdio JSON-RPC bridge
 

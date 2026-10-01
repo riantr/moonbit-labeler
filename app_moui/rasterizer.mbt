@@ -1,4 +1,4 @@
-﻿// app_moui/rasterizer.mbt — Phase 11 CPU rasterizer.
+// app_moui/rasterizer.mbt — Phase 11 CPU rasterizer.
 //
 // Translates a Moui `@core.DrawFrame` (the composed view tree)
 // into a 32-bit BGRA pixel buffer suitable for
@@ -72,7 +72,7 @@ pub fn PixelBuffer::new(
 ) -> PixelBuffer {
   let total : Int = width * height * 4
   let pixels : Array[Byte] = Array::make(total, Byte::default())
-  let buf : PixelBuffer = { width, height, pixels }
+  let buf : PixelBuffer = { width, height, pixels, }
   clear_color(buf, clear)
   buf
 }
@@ -240,7 +240,11 @@ fn paint_rect(
     let y_cover : Double = {
       let lo : Double = if py_lo > y_lo { py_lo } else { y_lo }
       let hi : Double = if py_hi < y_hi { py_hi } else { y_hi }
-      if hi > lo { hi - lo } else { 0.0 }
+      if hi > lo {
+        hi - lo
+      } else {
+        0.0
+      }
     }
     if y_cover <= 0.0 {
       continue
@@ -251,7 +255,11 @@ fn paint_rect(
       let x_cover : Double = {
         let lo : Double = if px_lo > x_lo { px_lo } else { x_lo }
         let hi : Double = if px_hi < x_hi { px_hi } else { x_hi }
-        if hi > lo { hi - lo } else { 0.0 }
+        if hi > lo {
+          hi - lo
+        } else {
+          0.0
+        }
       }
       if x_cover <= 0.0 {
         continue
@@ -279,26 +287,10 @@ fn paint_line(
   color : @core.Color,
   opacity : Double,
 ) -> Unit {
-  let min_x : Double = if x0 < x1 {
-    x0
-  } else {
-    x1
-  }
-  let max_x : Double = if x0 > x1 {
-    x0
-  } else {
-    x1
-  }
-  let min_y : Double = if y0 < y1 {
-    y0
-  } else {
-    y1
-  }
-  let max_y : Double = if y0 > y1 {
-    y0
-  } else {
-    y1
-  }
+  let min_x : Double = if x0 < x1 { x0 } else { x1 }
+  let max_x : Double = if x0 > x1 { x0 } else { x1 }
+  let min_y : Double = if y0 < y1 { y0 } else { y1 }
+  let max_y : Double = if y0 > y1 { y0 } else { y1 }
   paint_rect(
     buf,
     @core.Rect::new(x=min_x, y=min_y, width=max_x - min_x, height=max_y - min_y),
@@ -494,28 +486,14 @@ fn paint_image_placeholder(
   clip : @core.Rect,
   opacity : Double,
 ) -> Unit {
-  let outline : @core.Color = @core.Color::rgba(
-    r=0.35,
-    g=0.35,
-    b=0.35,
-    a=1.0,
-  )
+  let outline : @core.Color = @core.Color::rgba(r=0.35, g=0.35, b=0.35, a=1.0)
   paint_stroke_rect(buf, run.frame, 1.0, clip, outline, opacity)
   let rx : Double = run.frame.origin.x
   let ry : Double = run.frame.origin.y
   let rw : Double = run.frame.size.width
   let rh : Double = run.frame.size.height
   paint_line(buf, rx, ry, rx + rw, ry + rh, clip, outline, opacity)
-  paint_line(
-    buf,
-    rx,
-    ry + rh,
-    rx + rw,
-    ry,
-    clip,
-    outline,
-    opacity,
-  )
+  paint_line(buf, rx, ry + rh, rx + rw, ry, clip, outline, opacity)
 }
 
 ///|
@@ -564,12 +542,7 @@ fn paint_stroke_rect(
   // Left edge (excluding top + bottom rows already painted)
   paint_rect_snap(
     buf,
-    @core.Rect::new(
-      x=rx - half_w,
-      y=ry + half_w,
-      width=width,
-      height=rh - width,
-    ),
+    @core.Rect::new(x=rx - half_w, y=ry + half_w, width~, height=rh - width),
     clip,
     color,
     opacity,
@@ -580,7 +553,7 @@ fn paint_stroke_rect(
     @core.Rect::new(
       x=rx + rw - half_w,
       y=ry + half_w,
-      width=width,
+      width~,
       height=rh - width,
     ),
     clip,
@@ -662,8 +635,7 @@ pub fn bezier_round_rect_pixel_coverage(
   let cx_right : Double = rx_hi - r
   let cy_top : Double = ry + r
   let cy_bot : Double = ry_hi - r
-  if px >= cx_left && px + 1.0 <= cx_right &&
-    py >= cy_top && py + 1.0 <= cy_bot {
+  if px >= cx_left && px + 1.0 <= cx_right && py >= cy_top && py + 1.0 <= cy_bot {
     return 1.0
   }
   // 16x16 sub-sample. Each sub-pixel center at
@@ -698,16 +670,8 @@ pub fn bezier_round_rect_pixel_coverage(
         // The bezier lies within 0.00027*r of the inscribed
         // circle, so we use the circle test (d^2 <= r^2) as
         // the implicit-form stand-in.
-        let ccx : Double = if in_tl || in_bl {
-          cx_left
-        } else {
-          cx_right
-        }
-        let ccy : Double = if in_tl || in_tr {
-          cy_top
-        } else {
-          cy_bot
-        }
+        let ccx : Double = if in_tl || in_bl { cx_left } else { cx_right }
+        let ccy : Double = if in_tl || in_tr { cy_top } else { cy_bot }
         let dx : Double = sx - ccx
         let dy : Double = sy - ccy
         if dx * dx + dy * dy <= r * r {
@@ -744,7 +708,10 @@ pub fn bezier_round_rect_pixel_coverage(
 /// rect by `inset` on each side and reduces the radius by
 /// `inset` (clamped to 0). Used to build the inner outline of
 /// a stroke ring.
-pub fn rounded_rect_path_spec(rr : @core.RoundedRect, inset~ : Double = 0.0) -> @core.PathSpec {
+pub fn rounded_rect_path_spec(
+  rr : @core.RoundedRect,
+  inset? : Double = 0.0,
+) -> @core.PathSpec {
   let rect : @core.Rect = rr.rect
   let rx : Double = rect.origin.x + inset
   let ry : Double = rect.origin.y + inset
@@ -762,22 +729,16 @@ pub fn rounded_rect_path_spec(rr : @core.RoundedRect, inset~ : Double = 0.0) -> 
   let bottom : Double = ry + rh
   let verbs : Array[@core.PathVerb] = [
     // Top edge: from (left+r, top) to (right-r, top).
-    @core.PathVerb::MoveTo(
-      @core.Point::new(x=rx + rc, y=ry),
-    ),
-    @core.PathVerb::LineTo(
-      @core.Point::new(x=right - rc, y=ry),
-    ),
+    @core.PathVerb::MoveTo(@core.Point::new(x=rx + rc, y=ry)),
+    @core.PathVerb::LineTo(@core.Point::new(x=right - rc, y=ry)),
     // Top-right corner: cubic from (right-r, top) to (right, top+r).
     @core.PathVerb::CubicTo(
-      @core.Point::new(x=right - rc + k, y=ry),       // tangent extension
-      @core.Point::new(x=right, y=ry + rc - k),       // tangent extension
+      @core.Point::new(x=right - rc + k, y=ry), // tangent extension
+      @core.Point::new(x=right, y=ry + rc - k), // tangent extension
       @core.Point::new(x=right, y=ry + rc),
     ),
     // Right edge: (right, top+r) to (right, bottom-r).
-    @core.PathVerb::LineTo(
-      @core.Point::new(x=right, y=bottom - rc),
-    ),
+    @core.PathVerb::LineTo(@core.Point::new(x=right, y=bottom - rc)),
     // Bottom-right corner: (right, bottom-r) to (right-r, bottom).
     @core.PathVerb::CubicTo(
       @core.Point::new(x=right, y=bottom - rc + k),
@@ -785,9 +746,7 @@ pub fn rounded_rect_path_spec(rr : @core.RoundedRect, inset~ : Double = 0.0) -> 
       @core.Point::new(x=right - rc, y=bottom),
     ),
     // Bottom edge: (right-r, bottom) to (left+r, bottom).
-    @core.PathVerb::LineTo(
-      @core.Point::new(x=rx + rc, y=bottom),
-    ),
+    @core.PathVerb::LineTo(@core.Point::new(x=rx + rc, y=bottom)),
     // Bottom-left corner: (left+r, bottom) to (left, bottom-r).
     @core.PathVerb::CubicTo(
       @core.Point::new(x=rx + rc - k, y=bottom),
@@ -795,9 +754,7 @@ pub fn rounded_rect_path_spec(rr : @core.RoundedRect, inset~ : Double = 0.0) -> 
       @core.Point::new(x=rx, y=bottom - rc),
     ),
     // Left edge: (left, bottom-r) to (left, top+r).
-    @core.PathVerb::LineTo(
-      @core.Point::new(x=rx, y=ry + rc),
-    ),
+    @core.PathVerb::LineTo(@core.Point::new(x=rx, y=ry + rc)),
     // Top-left corner: (left, top+r) to (left+r, top).
     @core.PathVerb::CubicTo(
       @core.Point::new(x=rx, y=ry + rc - k),
@@ -918,11 +875,7 @@ fn paint_stroke_rounded_rect(
   let inner_ry : Double = ry + width
   let inner_rw : Double = rw - 2.0 * width
   let inner_rh : Double = rh - 2.0 * width
-  let inner_r : Double = if r - width < 0.0 {
-    0.0
-  } else {
-    r - width
-  }
+  let inner_r : Double = if r - width < 0.0 { 0.0 } else { r - width }
   let clipped : @core.Rect? = rect.intersection(clip)
   guard clipped is Some(c) else { return }
   let x0 : Int = c.origin.x.floor().to_int()
@@ -1044,11 +997,7 @@ fn flatten_cubic(
   let cross2 : Double = (p2.x - p0.x) * dy - (p2.y - p0.y) * dx
   let d1_sq : Double = cross1 * cross1 / len_sq
   let d2_sq : Double = cross2 * cross2 / len_sq
-  let max_d_sq : Double = if d1_sq > d2_sq {
-    d1_sq
-  } else {
-    d2_sq
-  }
+  let max_d_sq : Double = if d1_sq > d2_sq { d1_sq } else { d2_sq }
   if max_d_sq <= tol_sq {
     out.push(p3)
     return
@@ -1129,12 +1078,11 @@ fn path_vertices(spec : @core.PathSpec) -> Array[@core.Point] {
         current = p
         has_current = true
       }
-      @core.PathVerb::Close => {
+      @core.PathVerb::Close =>
         if has_current && has_subpath {
           verts.push(subpath_start)
           current = subpath_start
         }
-      }
     }
   }
   verts
@@ -1272,7 +1220,12 @@ fn paint_polygon_stroke(
     )
     paint_rect(
       buf,
-      @core.Rect::new(x=x_min, y=y_min, width=x_max - x_min, height=y_max - y_min),
+      @core.Rect::new(
+        x=x_min,
+        y=y_min,
+        width=x_max - x_min,
+        height=y_max - y_min,
+      ),
       clip,
       color,
       opacity,
@@ -1432,6 +1385,27 @@ fn dispatch_command(
       paint_rounded_rect(buf, rr, clip, c, opacity)
     @core.DrawCommand::StrokeRoundedRect(rr, c, w) =>
       paint_stroke_rounded_rect(buf, rr, w, clip, c, opacity)
+    // Phase 18.E — Brush variants of FillRoundedRect /
+    // StrokeRoundedRect. Moui's button widget emits these
+    // (via `@style.append_control_background`) and the
+    // rasterizer had them as no-ops, so button backgrounds
+    // never reached the bitmap. Resolve the brush to its
+    // fallback color (which handles Solid/LinearGradient/
+    // RadialGradient uniformly — the gradient brushes lose
+    // fidelity here but at least the control fills a
+    // solid block, matching what Phase 18.B's
+    // text-placeholder UI looks like).
+    @core.DrawCommand::FillRoundedRectBrush(rr, brush) =>
+      paint_rounded_rect(buf, rr, clip, brush.fallback_color(), opacity)
+    @core.DrawCommand::StrokeRoundedRectBrush(rr, brush, w) =>
+      paint_stroke_rounded_rect(
+        buf,
+        rr,
+        w,
+        clip,
+        brush.fallback_color(),
+        opacity,
+      )
     @core.DrawCommand::DrawPath(spec) => paint_path(buf, spec, clip, opacity)
     @core.DrawCommand::DrawText(run) =>
       // Phase 12 — real glyph rasterization via the 5x7 ASCII
@@ -1469,7 +1443,12 @@ fn dispatch_command(
         spec.offset,
         spec.color,
         opacity,
-        @core.Rect::new(x=0.0, y=0.0, width=cw.to_double(), height=ch.to_double()),
+        @core.Rect::new(
+          x=0.0,
+          y=0.0,
+          width=cw.to_double(),
+          height=ch.to_double(),
+        ),
       )
     }
     @core.DrawCommand::PushClip(r) => {
@@ -1494,15 +1473,16 @@ fn dispatch_command(
       // level (child coords are pre-transformed by parent).
       ()
     @core.DrawCommand::PopTransform => ()
-    // Phase 11 no-ops: DrawShadow, PushLayer, PopLayer,
-    // BeginRetainedLayer, EndRetainedLayer, PushFilter,
-    // PopFilter, DrawShaderEffect, PushRoundedClip,
-    // PopRoundedClip, FillRoundedRectBrush,
-    // StrokeRoundedRectBrush.
+    // Phase 18.E — FillRoundedRectBrush and
+    // StrokeRoundedRectBrush moved to real cases above.
+    // Remaining Phase 11 no-ops: DrawShadow handled by
+    // the dedicated case (see earlier match arm), PushLayer,
+    // PopLayer, BeginRetainedLayer, EndRetainedLayer,
+    // PushFilter, PopFilter, DrawShaderEffect,
+    // PushRoundedClip, PopRoundedClip.
     _ => ()
   }
 }
-
 
 ///|
 /// Separable 5-tap box blur (radius 2): horizontal pass from
@@ -1532,8 +1512,12 @@ pub fn blur_h(
       let mut k : Int = -2
       while k <= 2 {
         let mut sx : Int = x + k
-        if sx < 0 { sx = 0 }
-        if sx >= buf.width { sx = buf.width - 1 }
+        if sx < 0 {
+          sx = 0
+        }
+        if sx >= buf.width {
+          sx = buf.width - 1
+        }
         let off : Int = y * b_stride + sx * 4
         sum_b = sum_b + bp[off].to_int()
         sum_g = sum_g + bp[off + 1].to_int()
@@ -1574,8 +1558,12 @@ pub fn blur_v(
       let mut k : Int = -2
       while k <= 2 {
         let mut sy : Int = y + k
-        if sy < 0 { sy = 0 }
-        if sy >= scratch.height { sy = scratch.height - 1 }
+        if sy < 0 {
+          sy = 0
+        }
+        if sy >= scratch.height {
+          sy = scratch.height - 1
+        }
         let off : Int = sy * s_stride + x * 4
         sum_b = sum_b + sp[off].to_int()
         sum_g = sum_g + sp[off + 1].to_int()
@@ -1644,7 +1632,9 @@ pub fn paint_shadow_rect(
   let y_lo : Int = c.origin.y.floor().to_int()
   let x_hi : Int = (c.origin.x + c.size.width).ceil().to_int() - 1
   let y_hi : Int = (c.origin.y + c.size.height).ceil().to_int() - 1
-  if x_lo > x_hi || y_lo > y_hi { return }
+  if x_lo > x_hi || y_lo > y_hi {
+    return
+  }
   let rw : Int = x_hi - x_lo + 1
   let rh : Int = y_hi - y_lo + 1
   // 2. Clear scratch region to transparent.
@@ -1665,9 +1655,7 @@ pub fn paint_shadow_rect(
   )
   let sh_clipped : @core.Rect? = sh_rect.intersection(c)
   match sh_clipped {
-    Some(sc) => {
-      paint_rect_into(scratch, sc, color)
-    }
+    Some(sc) => paint_rect_into(scratch, sc, color)
     None => ()
   }
   // 4. Apply separable 5x5 box blur.
@@ -1687,7 +1675,9 @@ pub fn paint_shadow_rect(
       let sa_premul : Int = sp[soff + 3].to_int()
       // Source alpha scaled by overall opacity.
       let sa : Double = sa_premul.to_double() / 255.0 * opacity
-      if sa <= 0.0 { continue }
+      if sa <= 0.0 {
+        continue
+      }
       let inv : Double = 1.0 - sa
       let boff : Int = y * b_stride + x * 4
       let bb : Int = bp[boff].to_int()
@@ -1700,10 +1690,34 @@ pub fn paint_shadow_rect(
       let dg : Double = color.g * 255.0 * sa + bg_g.to_double() * inv
       let db : Double = color.b * 255.0 * sa + bb.to_double() * inv
       let da : Double = sa * 255.0 + ba_premul.to_double() * inv
-      bp[boff] = (if db <= 0.0 { 0 } else if db >= 255.0 { 255 } else { db.to_int() }).to_byte()
-      bp[boff + 1] = (if dg <= 0.0 { 0 } else if dg >= 255.0 { 255 } else { dg.to_int() }).to_byte()
-      bp[boff + 2] = (if dr <= 0.0 { 0 } else if dr >= 255.0 { 255 } else { dr.to_int() }).to_byte()
-      bp[boff + 3] = (if da <= 0.0 { 0 } else if da >= 255.0 { 255 } else { da.to_int() }).to_byte()
+      bp[boff] = (if db <= 0.0 {
+        0
+      } else if db >= 255.0 {
+        255
+      } else {
+        db.to_int()
+      }).to_byte()
+      bp[boff + 1] = (if dg <= 0.0 {
+        0
+      } else if dg >= 255.0 {
+        255
+      } else {
+        dg.to_int()
+      }).to_byte()
+      bp[boff + 2] = (if dr <= 0.0 {
+        0
+      } else if dr >= 255.0 {
+        255
+      } else {
+        dr.to_int()
+      }).to_byte()
+      bp[boff + 3] = (if da <= 0.0 {
+        0
+      } else if da >= 255.0 {
+        255
+      } else {
+        da.to_int()
+      }).to_byte()
     }
   }
 }
@@ -1729,10 +1743,14 @@ pub fn paint_rect_into(
   let a : Int = (color.a * 255.0).to_int()
   let p = buf.pixels
   for y = y_lo; y <= y_hi; y = y + 1 {
-    if y < 0 || y >= buf.height { continue }
+    if y < 0 || y >= buf.height {
+      continue
+    }
     let off : Int = y * stride + x_lo * 4
     for x = x_lo; x <= x_hi; x = x + 1 {
-      if x < 0 || x >= buf.width { continue }
+      if x < 0 || x >= buf.width {
+        continue
+      }
       p[off + (x - x_lo) * 4] = b.to_byte()
       p[off + (x - x_lo) * 4 + 1] = g.to_byte()
       p[off + (x - x_lo) * 4 + 2] = r.to_byte()

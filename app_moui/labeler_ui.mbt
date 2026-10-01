@@ -126,29 +126,68 @@ pub fn build_labeler_ui_view(
         ],
         spacing=8.0,
       ),
-      // Nav row: mode labels (text only, Phase 18.C → buttons).
+      // Nav row: mode labels (Phase 18.E — real Ghost buttons,
+      // each wrapped in a fixed-height frame to clamp the
+      // theme-driven intrinsic height back down to 24 px).
       @views.row(
         [
-          @views.text(
-            "[File]", theme=dark_theme, role=@style.TextRole::Body,
-            width=64.0, height=24.0,
+          @views.frame(
+            @views.button(
+              "[File]",
+              theme=dark_theme,
+              variant=@style.ButtonVariant::Ghost,
+              width=64.0,
+              height=24.0,
+            ),
+            width=64.0,
+            height=24.0,
           ),
-          @views.text(
-            "[Rect]", theme=dark_theme, role=@style.TextRole::Body,
-            width=64.0, height=24.0,
+          @views.frame(
+            @views.button(
+              "[Rect]",
+              theme=dark_theme,
+              variant=@style.ButtonVariant::Ghost,
+              width=64.0,
+              height=24.0,
+            ),
+            width=64.0,
+            height=24.0,
           ),
-          @views.text(
-            "[Polygon]", theme=dark_theme, role=@style.TextRole::Body,
-            width=80.0, height=24.0,
+          @views.frame(
+            @views.button(
+              "[Polygon]",
+              theme=dark_theme,
+              variant=@style.ButtonVariant::Ghost,
+              width=80.0,
+              height=24.0,
+            ),
+            width=80.0,
+            height=24.0,
           ),
-          @views.text(
-            "[Keypoint]", theme=dark_theme, role=@style.TextRole::Body,
-            width=88.0, height=24.0,
+          @views.frame(
+            @views.button(
+              "[Keypoint]",
+              theme=dark_theme,
+              variant=@style.ButtonVariant::Ghost,
+              width=88.0,
+              height=24.0,
+            ),
+            width=88.0,
+            height=24.0,
           ),
-          @views.text(
-            "[Binding]", theme=dark_theme, role=@style.TextRole::Body,
-            width=80.0, height=24.0,
+          @views.frame(
+            @views.button(
+              "[Binding]",
+              theme=dark_theme,
+              variant=@style.ButtonVariant::Ghost,
+              width=80.0,
+              height=24.0,
+            ),
+            width=80.0,
+            height=24.0,
           ),
+          // Zoom % — kept as plain text. It's a read-out, not
+          // an actionable control. Phase 18.E leaves it as-is.
           @views.text(
             (model.zoom * 100.0).to_string() + "%",
             theme=dark_theme,
@@ -163,12 +202,14 @@ pub fn build_labeler_ui_view(
     spacing=4.0,
   )
   // ─── Sidebar (left column) ───
-  // Phase 18.B — folder rows + class chips are `@views.text`
-  // widgets, not `@views.button`, for the same reason as the
-  // toolbar (button's intrinsic height overflows). Each row is
-  // a `text` showing the folder/class name prefixed with `>`
-  // to evoke a selectable row. Real button widgets return in
-  // Phase 18.C.
+  // Phase 18.E — folder rows + class chips are real
+  // `@views.button` widgets (`ButtonVariant::Ghost`) inside
+  // `@views.frame` clamps so the row pitch stays at 16 px.
+  // Phase 18.B had these as plain text because the button
+  // widget's `FillRoundedRectBrush` was a no-op (Phase 11
+  // left it in the catch-all bucket). Phase 18.E wires the
+  // brush cases into `paint_rounded_rect` so the button
+  // background reaches the bitmap.
   let sidebar : @moui.View[Msg] = @views.column(
     [
       @views.text(
@@ -178,10 +219,7 @@ pub fn build_labeler_ui_view(
         width=180.0,
         height=24.0,
       ),
-      @views.column(
-        sidebar_folder_rows(model, dark_theme),
-        spacing=2.0,
-      ),
+      @views.column(sidebar_folder_rows(model, dark_theme), spacing=2.0),
       @views.text(
         "Classes",
         theme=dark_theme,
@@ -189,10 +227,7 @@ pub fn build_labeler_ui_view(
         width=180.0,
         height=24.0,
       ),
-      @views.column(
-        sidebar_class_rows(model, dark_theme),
-        spacing=1.0,
-      ),
+      @views.column(sidebar_class_rows(model, dark_theme), spacing=1.0),
     ],
     spacing=6.0,
   )
@@ -241,26 +276,27 @@ pub fn build_labeler_ui_view(
   // intrinsic sizes. If the window is taller than the sum, the
   // leftover space appears at the bottom of the column.
   @views.column(
-    [
-      toolbar,
-      @views.row([sidebar, canvas], spacing=0.0),
-      status_bar,
-    ],
+    [toolbar, @views.row([sidebar, canvas], spacing=0.0), status_bar],
     spacing=0.0,
   )
 }
 
 ///|
-/// Build folder-row text widgets for the sidebar. Uses model.images
+/// Build folder-row widgets for the sidebar. Uses model.images
 /// (populated by the ListImages op) when non-empty, else falls
 /// back to a 4-item demo set so the cold-start screenshot has
-/// content to render. Phase 18.B — switched from `@views.button`
-/// to `@views.text` because the button widget's intrinsic height
-/// is theme-driven (font_size + 2×sm_padding) and overflows the
-/// explicit `height=` we pass. Text widgets honor the height=24
-/// we pass and don't add theme padding. Each row is prefixed with
-/// "> " to evoke a selectable list item. Real button widgets
-/// return in Phase 18.C.
+/// content to render.
+///
+/// Phase 18.E — all four rows are real `@views.button` widgets
+/// with `ButtonVariant::Ghost` (matches Moui's
+/// `navigation_sidebar` pattern), each wrapped in a fixed
+/// `@views.frame(width=180, height=16)` that clamps the
+/// button's theme-driven intrinsic height back down to 16 px
+/// so the sidebar's row pitch stays at 16 px. Phase 18.E wired
+/// `FillRoundedRectBrush` + `StrokeRoundedRectBrush` into the
+/// rasterizer (they were no-ops in Phase 11 / 18.B), so the
+/// Ghost-variant background paints with the resolved brush
+/// color and the label text reads against it.
 fn sidebar_folder_rows(
   model : Model,
   theme : @core.Theme,
@@ -277,12 +313,16 @@ fn sidebar_folder_rows(
   let rows : Array[@moui.View[Msg]] = []
   for folder in folders {
     rows.push(
-      @views.text(
-        "> " + folder,
-        theme~,
-        role=@style.TextRole::Body,
+      @views.frame(
+        @views.button(
+          "> " + folder,
+          theme~,
+          variant=@style.ButtonVariant::Ghost,
+          width=180.0,
+          height=16.0,
+        ),
         width=180.0,
-        height=12.0,
+        height=16.0,
       ),
     )
   }
@@ -290,10 +330,12 @@ fn sidebar_folder_rows(
 }
 
 ///|
-/// Build class-row text widgets. Uses model.classes if populated,
-/// else a demo set. Phase 18.B — same text-widget rationale as
-/// sidebar_folder_rows (button widget's intrinsic height is
-/// theme-driven and overflows the height=24 we pass).
+/// Build class-row widgets. Uses model.classes if populated,
+/// else a demo set. Phase 18.E — same Ghost-button pattern as
+/// `sidebar_folder_rows` (real `@views.button` widgets inside
+/// `@views.frame` to clamp the intrinsic height back to 16 px).
+/// Phase 18.B had these as plain text because the button widget
+/// was invisible (its `FillRoundedRectBrush` was a no-op).
 fn sidebar_class_rows(
   model : Model,
   theme : @core.Theme,
@@ -310,12 +352,16 @@ fn sidebar_class_rows(
   let rows : Array[@moui.View[Msg]] = []
   for cls in classes {
     rows.push(
-      @views.text(
-        "# " + cls,
-        theme~,
-        role=@style.TextRole::Body,
+      @views.frame(
+        @views.button(
+          "# " + cls,
+          theme~,
+          variant=@style.ButtonVariant::Ghost,
+          width=180.0,
+          height=16.0,
+        ),
         width=180.0,
-        height=12.0,
+        height=16.0,
       ),
     )
   }
@@ -344,31 +390,21 @@ fn paint_canvas_decoration(
 ) -> Unit {
   // Phase 18.B debug — bright cyan so the canvas's footprint
   // is unmistakable in the smoke screenshot.
-  @common.fill_rect(
-    pctx,
-    frame,
-    @core.Color::rgba(r=0.0, g=1.0, b=1.0, a=1.0),
-  )
+  @common.fill_rect(pctx, frame, @core.Color::rgba(r=0.0, g=1.0, b=1.0, a=1.0))
   let right : Double = frame.origin.x + frame.size.width
   let top : Double = frame.origin.y
   let path : @core.PathSpec = @core.PathSpec::new(
     verbs=[
-      @core.PathVerb::MoveTo(
-        @core.Point::new(x=right - 60.0, y=top + 10.0),
-      ),
+      @core.PathVerb::MoveTo(@core.Point::new(x=right - 60.0, y=top + 10.0)),
       @core.PathVerb::CubicTo(
         @core.Point::new(x=right - 20.0, y=top + 5.0),
         @core.Point::new(x=right - 5.0, y=top + 30.0),
         @core.Point::new(x=right - 40.0, y=top + 40.0),
       ),
-      @core.PathVerb::LineTo(
-        @core.Point::new(x=right - 60.0, y=top + 40.0),
-      ),
+      @core.PathVerb::LineTo(@core.Point::new(x=right - 60.0, y=top + 40.0)),
       @core.PathVerb::Close,
     ],
-    fill=Some(
-      @core.Brush::solid(@core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)),
-    ),
+    fill=Some(@core.Brush::solid(@core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0))),
   )
   @common.draw_path(pctx, path)
 }
@@ -399,10 +435,25 @@ pub fn build_labeler_ui_demo_frame(
   let sidebar_w : Int = 200
   let toolbar_h : Int = 40
   let dark_bg : @core.Color = @core.Color::rgba(r=0.10, g=0.10, b=0.12, a=1.0)
-  let sidebar_bg : @core.Color = @core.Color::rgba(r=0.16, g=0.16, b=0.19, a=1.0)
-  let toolbar_bg : @core.Color = @core.Color::rgba(r=0.22, g=0.22, b=0.26, a=1.0)
+  let sidebar_bg : @core.Color = @core.Color::rgba(
+    r=0.16,
+    g=0.16,
+    b=0.19,
+    a=1.0,
+  )
+  let toolbar_bg : @core.Color = @core.Color::rgba(
+    r=0.22,
+    g=0.22,
+    b=0.26,
+    a=1.0,
+  )
   let divider : @core.Color = @core.Color::rgba(r=0.05, g=0.05, b=0.07, a=1.0)
-  let folder_row : @core.Color = @core.Color::rgba(r=0.20, g=0.20, b=0.24, a=1.0)
+  let folder_row : @core.Color = @core.Color::rgba(
+    r=0.20,
+    g=0.20,
+    b=0.24,
+    a=1.0,
+  )
   let chip_bg : @core.Color = @core.Color::rgba(r=0.40, g=0.40, b=0.85, a=1.0)
   let tool_bg : @core.Color = @core.Color::rgba(r=0.30, g=0.30, b=0.34, a=1.0)
   let text_fg : @core.Color = @core.Color::rgba(r=0.95, g=0.95, b=0.95, a=1.0)
@@ -412,14 +463,24 @@ pub fn build_labeler_ui_demo_frame(
   // 1. Canvas (full buffer) dark background.
   commands.push(
     @core.DrawCommand::FillRect(
-      @core.Rect::new(x=0.0, y=0.0, width=width.to_double(), height=height.to_double()),
+      @core.Rect::new(
+        x=0.0,
+        y=0.0,
+        width=width.to_double(),
+        height=height.to_double(),
+      ),
       dark_bg,
     ),
   )
   // 2. Toolbar background.
   commands.push(
     @core.DrawCommand::FillRect(
-      @core.Rect::new(x=0.0, y=0.0, width=width.to_double(), height=toolbar_h.to_double()),
+      @core.Rect::new(
+        x=0.0,
+        y=0.0,
+        width=width.to_double(),
+        height=toolbar_h.to_double(),
+      ),
       toolbar_bg,
     ),
   )
@@ -491,7 +552,9 @@ pub fn build_labeler_ui_demo_frame(
     i = i + 1
   }
   // 7. Folder rows.
-  let folder_names : Array[String] = ["CARS.Part", "CARS.Body", "BAGS.Xray", "TNT.Lab"]
+  let folder_names : Array[String] = [
+    "CARS.Part", "CARS.Body", "BAGS.Xray", "TNT.Lab",
+  ]
   let mut fi : Int = 0
   while fi < folder_names.length() {
     let fy : Int = toolbar_h + 30 + fi * 22
@@ -540,7 +603,9 @@ pub fn build_labeler_ui_demo_frame(
       ),
     ),
   )
-  let chip_names : Array[String] = ["knife", "gun", "batt", "liq", "botl", "bomb"]
+  let chip_names : Array[String] = [
+    "knife", "gun", "batt", "liq", "botl", "bomb",
+  ]
   let mut ci : Int = 0
   while ci < chip_names.length() {
     let cy : Int = chip_y_start + ci * 20
@@ -579,13 +644,17 @@ pub fn build_labeler_ui_demo_frame(
   let canvas_right : Double = width.to_double()
   let path : @core.PathSpec = @core.PathSpec::new(
     verbs=[
-      @core.PathVerb::MoveTo(@core.Point::new(x=canvas_right - 60.0, y=(toolbar_h + 10).to_double())),
+      @core.PathVerb::MoveTo(
+        @core.Point::new(x=canvas_right - 60.0, y=(toolbar_h + 10).to_double()),
+      ),
       @core.PathVerb::CubicTo(
         @core.Point::new(x=canvas_right - 20.0, y=(toolbar_h + 5).to_double()),
         @core.Point::new(x=canvas_right - 5.0, y=(toolbar_h + 30).to_double()),
         @core.Point::new(x=canvas_right - 40.0, y=(toolbar_h + 40).to_double()),
       ),
-      @core.PathVerb::LineTo(@core.Point::new(x=canvas_right - 60.0, y=(toolbar_h + 40).to_double())),
+      @core.PathVerb::LineTo(
+        @core.Point::new(x=canvas_right - 60.0, y=(toolbar_h + 40).to_double()),
+      ),
       @core.PathVerb::Close,
     ],
     fill=Some(@core.Brush::solid(tool_fg)),
