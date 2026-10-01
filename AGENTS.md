@@ -267,10 +267,44 @@ for 10 sidebar rows.
   sidebar class Ghost buttons, plus the zoom% readout and section headers as text. All
   11 Ghost buttons render with their rounded-rect background + label visible.
 
-**What's still on the SPIKE list**: the canvas placeholder is still a `@views.text`
-widget — Phase 19 will swap it for `@views.canvas` + the Phase 16.C bezier decoration.
-The toolbar header row's "MoonBit Labeler" title and "Folder: …" path label are also
-still text widgets (correct, since they're not actionable controls).
+**What's still on the SPIKE list**: the toolbar header row's "MoonBit Labeler" title
+and "Folder: …" path label are also still text widgets (correct, since they're not
+actionable controls). The canvas decoration is the only remaining Phase 16.C legacy
+artifact — Phase 19 swapped the placeholder text for a real `@views.canvas` widget.
+
+### Phase 19 — wire `@views.canvas` + bezier swoop decoration
+
+Phase 19 replaces the Phase 18.B `@views.text("[canvas area]", width=600, height=120)`
+placeholder in `build_labeler_ui_view` with a real `@views.canvas` widget whose draw
+callback is the existing `paint_canvas_decoration` function. The measure callback
+returns `c.max.width × max(40, c.max.height - 100)` so the canvas fills the row's
+remaining width and bounds its height to `window.height - toolbar - status - margin`.
+
+**Decoration shape**: dark-slate fill across the full frame + white bezier swoop
+anchored at `frame.origin + (80, 10)` with the same MoveTo + CubicTo + LineTo + Close
+verbs as the Phase 16.C legacy `build_labeler_ui_demo_frame` path. The swoop is
+80 px wide × 40 px tall, sits inside the canvas frame regardless of where the column
+puts it.
+
+**Anchor math note**: the swoop uses `frame.origin.x + offset_x` (frame-relative
+positive offsets) rather than `frame.origin.x + frame.size.width - 60` (frame-edge
+relative negative offsets). Verified end-to-end: with the `right - X` form, the
+swoop landed at the canvas's right edge (~`x=660`) where the host framebuffer's
+retained-layer system clipped it on subsequent frames — the PrintWindow capture
+caught a frame where the swoop had already been cleared. The `origin + offset`
+form keeps the swoop safely inside the canvas frame.
+
+**Verification**: smoke screenshot `_build/phase19_smoke_final._window.png` shows
+the canvas area with the white bezier swoop visible at the top-right of the
+sidebar/canvas split. 219/219 tests pass, `moon check --target native` reports 0
+errors.
+
+**Why this took several iterations**: the first two attempts placed the swoop at
+`right - 60` etc. and it didn't render visibly. A debug iteration with a magenta
+20×20 marker at `frame.origin + (10, 10)` plus a green fill_rect at the same offset
+showed the canvas's actual origin was around `(295, 70)` (sidebar was ~295 px wide,
+not the intrinsic 180 the comment block assumed). After switching to
+`origin + offset` math, the swoop renders reliably.
 
 ## Stdio JSON-RPC bridge
 

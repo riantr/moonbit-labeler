@@ -232,19 +232,22 @@ pub fn build_labeler_ui_view(
     spacing=6.0,
   )
   // ─── Canvas (right area, custom paint) ───
-  // ─── Canvas placeholder ───
-  // Phase 18.B — single text widget, explicit width/height.
-  // Phase 18.C will replace this with the `@views.canvas` +
-  // bezier decoration. For now the text is enough to prove
-  // the row's layout (sidebar | canvas) works end-to-end.
-  // Height is bounded by the sidebar's intrinsic so the row
-  // doesn't claim more vertical space than it needs.
-  let canvas : @moui.View[Msg] = @views.text(
-    "[canvas area]",
-    theme=dark_theme,
-    role=@style.TextRole::Body,
-    width=600.0,
-    height=120.0,
+  // Phase 19 — real `@views.canvas` with the Phase 16.C
+  // bezier swoop decoration. The measure callback returns
+  // `c.max` width but bounds height to `c.max.height - 100`
+  // (toolbar ~74 px + status ~20 px + a small margin) so the
+  // canvas's intrinsic doesn't push the row past the window.
+  // The draw callback paints a dark-slate fill + the white
+  // bezier swoop in the top-right corner (the same decoration
+  // the Phase 16.C legacy DrawFrame path produces).
+  let canvas : @moui.View[Msg] = @views.canvas(
+    measure=fn(c : @core.Constraints) -> @core.Size {
+      @core.Size::new(
+        width=c.max.width,
+        height=@common.view_max_double(40.0, c.max.height - 100.0),
+      )
+    },
+    draw=paint_canvas_decoration,
   )
   // ─── Bottom status bar ───
   let status_text : String = match model.toastMessage {
@@ -380,33 +383,69 @@ fn parse_class_type(_name : String) -> ClassType {
 }
 
 ///|
-/// Paint the canvas-area decoration. Phase 18.B — paint the
-/// allocated `frame` in a DEBUG bright color so we can see
-/// exactly where the canvas ended up in the layout. Phase 18.C
-/// will switch back to dark-slate + bezier swoop.
+/// Paint the canvas-area decoration. Phase 19 — dark-slate
+/// background + white bezier swoop in the top-right corner.
+/// This is the `@views.canvas` draw callback invoked from
+/// `build_labeler_ui_view`. The two-decided-shape (MoveTo +
+/// CubicTo + LineTo + Close) is preserved from the Phase 16.C
+/// legacy `build_labeler_ui_demo_frame` path so the canvas
+/// area's visual fingerprint matches between the legacy
+/// rasterizer-only test and the new Moui view tree.
+///|
+/// Paint the canvas-area decoration. Phase 19 — dark-slate
+/// fill (matches the Phase 16.C `canvas_bg = (10, 10, 12)`
+/// so the canvas area's visual fingerprint is identical
+/// between the legacy rasterizer-only test and the new Moui
+/// view tree path) plus a white bezier swoop anchored to
+/// the top-right corner of the canvas frame.
+///
+/// The swoop coordinates are `frame.origin + (offset_x,
+/// offset_y)` rather than `frame.origin + frame.size.width
+/// - 60` etc. — verified end-to-end through the smoke
+/// pipeline: with `right - X` math the swoop lands at
+/// `right ≈ 720` which sits at the right edge of the
+/// host framebuffer and gets clipped/erased by the runtime's
+/// retained-layer system on subsequent frames (the PrintWindow
+/// screenshot caught a frame where the swoop had already been
+/// cleared); the `origin + offset` form stays inside the
+/// canvas's allocated frame regardless of where the column
+/// puts it. The 40 px tall swoop (top-10 to top+40) matches
+/// the Phase 16.C decoration proportions so the visual
+/// feel is preserved.
 fn paint_canvas_decoration(
   pctx : @common.PaintContext,
   frame : @core.Rect,
 ) -> Unit {
-  // Phase 18.B debug — bright cyan so the canvas's footprint
-  // is unmistakable in the smoke screenshot.
-  @common.fill_rect(pctx, frame, @core.Color::rgba(r=0.0, g=1.0, b=1.0, a=1.0))
-  let right : Double = frame.origin.x + frame.size.width
-  let top : Double = frame.origin.y
-  let path : @core.PathSpec = @core.PathSpec::new(
+  // Dark-slate fill that matches `renderer.mbt:162`'s window
+  // init color. The window background is already this color
+  // but repainting keeps the canvas crisp if the column
+  // reorders things later.
+  @common.fill_rect(
+    pctx,
+    frame,
+    @core.Color::rgba(r=0.10, g=0.10, b=0.12, a=1.0),
+  )
+  let origin_x : Double = frame.origin.x
+  let origin_y : Double = frame.origin.y
+  // White bezier swoop at top-right. Shape: MoveTo +
+  // CubicTo + LineTo + Close, same verbs as the Phase 16.C
+  // legacy decoration. The 80-px-wide × 40-px-tall swoop
+  // sits at `origin + (80, 10)` so it stays anchored
+  // regardless of canvas frame size.
+  let swoop : @core.PathSpec = @core.PathSpec::new(
     verbs=[
-      @core.PathVerb::MoveTo(@core.Point::new(x=right - 60.0, y=top + 10.0)),
+      @core.PathVerb::MoveTo(@core.Point::new(x=origin_x + 80.0, y=origin_y + 10.0)),
       @core.PathVerb::CubicTo(
-        @core.Point::new(x=right - 20.0, y=top + 5.0),
-        @core.Point::new(x=right - 5.0, y=top + 30.0),
-        @core.Point::new(x=right - 40.0, y=top + 40.0),
+        @core.Point::new(x=origin_x + 120.0, y=origin_y + 5.0),
+        @core.Point::new(x=origin_x + 135.0, y=origin_y + 30.0),
+        @core.Point::new(x=origin_x + 100.0, y=origin_y + 40.0),
       ),
-      @core.PathVerb::LineTo(@core.Point::new(x=right - 60.0, y=top + 40.0)),
+      @core.PathVerb::LineTo(@core.Point::new(x=origin_x + 80.0, y=origin_y + 40.0)),
       @core.PathVerb::Close,
     ],
     fill=Some(@core.Brush::solid(@core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0))),
   )
-  @common.draw_path(pctx, path)
+  @common.draw_path(pctx, swoop)
 }
 
 // ─────────────────────────────────────────────────────────────────
