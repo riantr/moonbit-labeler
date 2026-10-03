@@ -245,3 +245,100 @@ test "apply_handle_move — rect L edge-mid drag (handle 7) moves TL.x only" {
     None => fail("expected Some for handle_idx=7")
   }
 }
+
+///|
+/// Phase 5.7 — pins the rect corner-order invariant. The Phase
+/// 5.4-5.6 notes carried a worry that a rect written BR→TL would
+/// have "inverted handle labels" because `handle_points`,
+/// `apply_handle_move` and `draw_annotation` all read `points[0]` /
+/// `points[1]` directly.
+///
+/// Testing it empirically shows that worry was **unfounded**, and the
+/// reason is worth recording: the code is order-agnostic by
+/// construction. `handle_points` derives all 8 handles from whatever
+/// the two points are, and `apply_handle_move` moves the same point
+/// the matching handle sits on. For a BR→TL rect the *indices*
+/// rotate (index 0 lands on the visually bottom-right instead of
+/// top-left), but the set of 8 handle positions is identical and each
+/// drag still moves the corner the user grabbed. No handle is
+/// visually distinguishable from its neighbours, so the index
+/// rotation is invisible.
+///
+/// This test locks that in, so a future refactor that starts
+/// assuming `p1 = TL` in a *new* place gets caught.
+test "rect corner order — BR-first rect keeps all 8 handles and drags the grabbed corner (5.7)" {
+  // BR→TL: points[0] is the bottom-right, points[1] the top-left.
+  let ann : Annotation = {
+    id: "flipped",
+    shape: Rect,
+    points: [{ x: 110.0, y: 120.0, }, { x: 10.0, y: 20.0, }],
+    class_id: "",
+  }
+  let hs : Array[Point] = handle_points(ann)
+  assert_eq(hs.length(), 8)
+  // The 8 handles must be the 4 corners + 4 edge midpoints of the
+  // axis-aligned box spanning (10,20)..(110,120) — identical as a
+  // SET to the TL-first rect's handles, just at different indices.
+  let upright : Annotation = {
+    id: "flipped",
+    shape: Rect,
+    points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
+    class_id: "",
+  }
+  let uh : Array[Point] = handle_points(upright)
+  // Every handle position from the flipped rect must exist
+  // somewhere in the upright rect's handle list.
+  for h in hs {
+    let mut found = false
+    for u in uh {
+      if u.x == h.x && u.y == h.y {
+        found = true
+      }
+    }
+    assert_true(found)
+  }
+  // Index 0 is the visually-bottom-right for the flipped rect. This
+  // is the "inverted label" — invisible to the user, but documented
+  // so nobody later 'fixes' it by reordering the handles.
+  assert_eq(hs[0].x, 110.0)
+  assert_eq(hs[0].y, 120.0)
+  // Dragging handle 0 must move the corner it actually sits on:
+  // points[0], the visually bottom-right one.
+  let moved = apply_handle_move(ann, 0, { x: 150.0, y: 160.0 })
+  match moved {
+    Some(m) => {
+      assert_eq(m.points[0].x, 150.0)
+      assert_eq(m.points[0].y, 160.0)
+      // The other corner is untouched.
+      assert_eq(m.points[1].x, 10.0)
+      assert_eq(m.points[1].y, 20.0)
+    }
+    None => fail("expected Some for handle_idx=0")
+  }
+}
+
+///|
+/// Phase 5.7 — same invariant for hit-testing: a BR→TL rect is
+/// still hit-testable by its body, because `hit_test_body` already
+/// normalises with min/max rather than assuming corner order.
+test "rect corner order — BR-first rect is still hit-testable by body (5.7)" {
+  let ann : Annotation = {
+    id: "flipped",
+    shape: Rect,
+    points: [{ x: 110.0, y: 120.0, }, { x: 10.0, y: 20.0, }],
+    class_id: "",
+  }
+  // Interior point.
+  assert_eq(hit_test_body({ x: 60.0, y: 70.0 }, [ann], 4.0), Some("flipped"))
+  // Well outside.
+  assert_true(hit_test_body({ x: 200.0, y: 200.0 }, [ann], 4.0) is None)
+}
+
+///|
+/// Phase 5.7 — the hoisted hit-radius constants. Pin the values so a
+/// future change to either radius is a deliberate, visible edit
+/// rather than a silent drift between call sites.
+test "hit radii constants — 12 px handle / 4 px body (5.7)" {
+  assert_eq(handle_hit_radius, 12.0)
+  assert_eq(body_hit_radius, 4.0)
+}

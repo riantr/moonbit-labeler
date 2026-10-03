@@ -3965,11 +3965,41 @@ test "CanvasPressed arm → CursorMoved actually resizes the rect (5.6)" {
 }
 
 ///|
-/// Phase 5.6 — `handle_hit_radius` / `body_hit_radius` are the
-/// hoisted, shared constants (previously bare `12.0` / `4.0`
-/// literals at each call site). Pin the values so a future change is
-/// a deliberate edit.
-test "hit radii constants — 12 px handle / 4 px body (5.6)" {
-  assert_eq(handle_hit_radius, 12.0)
-  assert_eq(body_hit_radius, 4.0)
+/// Phase 5.7 — the zoom-drag press guard. Moui 0.1.12's
+/// `DragGestureEvent` carries no button ID, so every pointer-down
+/// reaches `CanvasPressed`, including the right-drag that enables
+/// zoom-drag mode. While `zoomDragMode` is on, `CanvasPressed` must
+/// NOT arm a handle drag — otherwise the arm survives into the next
+/// `Changed` frame, where the movement is reinterpreted as a zoom
+/// delta, and the annotation jumps by one frame of cursor travel.
+///
+/// Selection is still recorded (a click is a click); only the drag
+/// arming is suppressed.
+test "CanvasPressed — zoomDragMode suppresses the handle-drag arm (5.7)" {
+  let model : Model = { ..Model::new(), zoomDragMode: true, }
+  // Press exactly where the 5.6 test arms a drag (rect-1's BR
+  // handle at (140, 140)).
+  let (next, _) = update(
+    model,
+    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+  )
+  // No drag armed...
+  assert_true(next.dragState is None)
+  // ...but the selection still resolved.
+  assert_eq(next.selectedId, Some("rect-1"))
+}
+
+///|
+/// Phase 5.7 — the A/B of the guard: the *same* press with
+/// `zoomDragMode` off (the default) still arms the drag. Without
+/// this, a bug that disabled arming unconditionally would pass the
+/// guard test above.
+test "CanvasPressed — zoomDragMode off still arms the drag (5.7 control)" {
+  let model : Model = { ..Model::new(), zoomDragMode: false, }
+  let (next, _) = update(
+    model,
+    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+  )
+  assert_true(next.dragState is Some(_))
+  assert_eq(next.selectedId, Some("rect-1"))
 }

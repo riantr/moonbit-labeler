@@ -198,53 +198,34 @@ fn build_demo_drag_model() -> Model {
 /// the source name `_phase5_2_synthetic`. The 200×200 size was
 /// chosen to fit comfortably inside the canvas viewport at
 /// any reasonable window size (the canvas's fit-contain math
-/// will scale it down if the window is smaller). The
-/// 4-quadrant pattern + 8 px border makes the rendered image
-/// visually distinct from the Phase 19 bezier swoop
-/// (and from the Phase 5.2 placeholder StrokeRect).
+/// will scale it down if the window is smaller).
+///
+/// Phase 5.7 — the fixture body moved out to
+/// `banded_rgba8_fixture` in image_cache.mbt and is now a 4-band
+/// pattern (red / green / blue / white) instead of solid magenta.
+/// Rationale: solid magenta was a *degenerate* check — a uniform
+/// source produces identical pixels under any source-sampling
+/// mapping, so it could not (and did not) catch the mapping bugs
+/// the Phase 5.2 note suspected. Banding makes the smoke
+/// screenshot self-validating: a dropped, repeated, or shifted
+/// band is visible at a glance, and `phase5_7_blit_test.mbt` pins
+/// the same builder through the real rasterizer.
+///
+/// The Phase 5.2 "4-stripe only rendered 2 of 4 stripes" known bug
+/// is resolved: the blit path is correct (`src_y = dy * src_h /
+/// dst_h`, no clamp), proven by the Phase 5.7 tests at 2x upscale
+/// and 0.5x downscale. The failure was in throwaway fixture code
+/// that no longer exists, not in `paint_image`.
 ///
 /// Returns `true` if the cache accepted the bytes (cache hit
 /// path works on the next paint), `false` otherwise.
 fn register_synthetic_test_image() -> Bool {
   let w : Int = 200
   let h : Int = 200
-  let rgba : Array[Byte] = []
-  let mut y : Int = 0
-  while y < h {
-    let mut x : Int = 0
-    while x < w {
-      // Final-form fixture: solid magenta (255, 0, 255) for
-      // every pixel regardless of branch. If we see magenta
-      // in the canvas, the cache+blit pipeline is solid; if
-      // we see branch-dependent colors, the conditional is
-      // being executed. This isolates whether the bug is in
-      // data construction or in paint_image itself.
-      if y < 50 {
-        rgba.push((255).to_byte())
-        rgba.push((0).to_byte())
-        rgba.push((255).to_byte())
-      } else if y < 100 {
-        rgba.push((255).to_byte())
-        rgba.push((0).to_byte())
-        rgba.push((255).to_byte())
-      } else if y < 150 {
-        rgba.push((255).to_byte())
-        rgba.push((0).to_byte())
-        rgba.push((255).to_byte())
-      } else {
-        rgba.push((255).to_byte())
-        rgba.push((0).to_byte())
-        rgba.push((255).to_byte())
-      }
-      rgba.push((255).to_byte())
-      x = x + 1
-    }
-    y = y + 1
-  }
   register_test_image_in_renderer(
     "_phase5_2_synthetic",
     w,
     h,
-    Bytes::from_array(rgba),
+    banded_rgba8_fixture(w, h),
   )
 }

@@ -869,6 +869,162 @@ release/build/app_moui.exe` (1.2 MB) launches + renders in 8 s.
 - 4-stripe multi-colour fixture bug (Phase 5.2) and
   `paint_canvas_decoration` now-unused warning both still open.
 
+> **CORRECTION (added in Phase 5.7).** Two claims in the section
+> above are wrong, and the screenshot claim is wrong outright.
+>
+> 1. **The Phase 5.6 smoke screenshot was stale.** It was captured
+>    from a *pre-5.6* debug binary — see the Phase 5.7
+>    stale-binary section below. The 5.6 screenshot showed an
+>    **unselected** rect, but the 5.6 source (`CanvasPressed`
+>    setting `selectedId` and never clearing it) must render a
+>    **selected** rect. The selected appearance only appeared once
+>    the debug exe was genuinely rebuilt in Phase 5.7. So
+>    `phase5_6_smoke._window._window.png` is **not** evidence for
+>    Phase 5.6. The 241/241 unit tests, including the cold-start
+>    `CanvasPressed` A/B test, remain valid evidence.
+> 2. **The 4-stripe fixture bug and the rect corner-order worry
+>    were both unfounded**, and are closed in Phase 5.7 with
+>    regression tests.
+
+### Phase 5.7 — disprove two deferred "bugs", harden the smoke harness
+
+Phase 5.7 spent its effort converting three deferred *unknowns* into
+settled facts, because two of them turned out not to be bugs at all
+and one was a harness problem that had been silently corrupting
+evidence.
+
+#### 1. The Phase 5.2 "4-stripe" bug was never a blit bug
+
+The Phase 5.2 note recorded: the 4-band fixture "only rendered 2 of
+the 4 stripes (top half red, bottom half green)", and hypothesised
+that `paint_image` "appears to clamp src_h to ~100 instead of 200".
+
+**That hypothesis is wrong.** `paint_image` computes
+`src_y = dy * src_h / dst_h` — a correct nearest-neighbour mapping
+with no clamp — and `ImageCache::load_bytes` rejects any buffer whose
+length isn't exactly `w * h * 4`, so a malformed fixture could never
+reach the blit as a half-height image.
+
+The reason the bug was never caught is a **coverage gap**: the
+pre-existing blit test (`phase14_image_test.mbt`) uses a 4x4 image at
+1:1 scale, where every source pixel is visited exactly once — a
+correct mapping and a broken one produce identical output. The
+reported failure needs a *banded* image at a *different* scale, which
+is exactly what the real canvas does (200x200 source into a
+several-hundred-px fit-contain viewport).
+
+New `app_moui/phase5_7_blit_test.mbt` closes that gap, driving the
+**shipped** fixture through the real rasterizer:
+- 200x200 4-band fixture → 400x400 destination (2x upscale): all 4
+  bands present and correctly placed.
+- Same fixture → 100x100 destination (0.5x downscale): all 4 bands
+  present.
+- Vertical bands across the full width: guards the `src_x` axis,
+  which the row-banded cases never touch.
+- `banded_rgba8_fixture(200, 200).length() == 200 * 200 * 4`: pins
+  the byte count, since a bad count is silently refused by
+  `load_bytes` and would show up on screen as a placeholder rather
+  than an error.
+
+All four passed on their first run, confirming the blit path was
+never broken. The original failure was in throwaway fixture code that
+no longer exists.
+
+#### 2. Ship the banded fixture, because solid magenta was a degenerate check
+
+`image_cache.mbt` gains `pub fn banded_rgba8_fixture(w, h) -> Bytes`
+plus `pub fn band_colour(band)`, and
+`main_native.mbt::register_synthetic_test_image` now uses it.
+
+The reason this matters beyond aesthetics: **a uniform source cannot
+distinguish a correct source-sampling mapping from a wrong one**,
+because every mapping yields the same pixels. That is precisely why
+Phase 5.2's magenta fixture was able to look like a passing smoke
+while an adjacent mapping concern was untested. Banding makes the
+fixture self-validating — a dropped, repeated, or shifted band is
+visible at a glance — and the tests above pin the same builder the
+app actually ships (not a copy that could drift).
+
+Note: `_build/phase5_7_smoke._window._window.png` shows the red and
+green bands, but blue and white fall **below the captured window
+edge** — the 200x200 fixture is scaled taller than the 960x540
+capture. So the screenshot proves the fixture is live and the bands
+are in the right order and proportion, but the unit tests, not the
+screenshot, are the authoritative all-4-bands evidence.
+
+#### 3. The rect corner-order worry was unfounded
+
+Phase 5.4-5.6 carried: "`apply_handle_move` assumes `p1 = TL,
+p2 = BR`; a rect written BR→TL would have inverted handle labels."
+
+Tested empirically, the code is **order-agnostic by construction**:
+`handle_points` derives all 8 handles from whatever the two points
+are, and `apply_handle_move` moves the same point the matching handle
+sits on. For a BR→TL rect the *indices* rotate (index 0 lands on the
+visually bottom-right) but the set of 8 handle positions is
+identical, and each drag still moves the corner the user grabbed. No
+handle is visually distinguishable from its neighbours, so the index
+rotation is invisible. `draw_annotation` already normalised with
+min/max, and `hit_test_body` did too.
+
+Pinned by 3 tests in `hittest_test.mbt`: the flipped rect's 8 handles
+are set-equal to the upright rect's; handle 0 sits on the visually
+bottom-right and dragging it moves that corner; and a BR-first rect
+is still body-hit-testable.
+
+#### 4. zoom-drag press guard
+
+Deferred from Phase 5.5: Moui 0.1.12's `DragGestureEvent` carries no
+button ID, so *every* pointer-down reaches `CanvasPressed` — including
+the right-drag that enables zoom-drag mode. A right-drag starting on a
+handle would arm a handle drag, and that arm would survive into the
+next `Changed` frame, where the movement is reinterpreted as a zoom
+delta — so the annotation jumped by one frame of cursor travel.
+
+`CanvasPressed` now skips the arming step entirely when
+`model.zoomDragMode` is true. Selection is still recorded (a click is
+a click); only the drag arm is suppressed. Two tests cover it, with
+an explicit `zoomDragMode: false` control so a bug that disabled
+arming unconditionally would fail.
+
+#### 5. Stale-binary trap in `_build/run_smoke.ps1` (found the hard way)
+
+`run_smoke.ps1` line 68 hardcodes the **debug** exe. The project habit
+is `moon build --target native --release --strip` before a smoke —
+and `--release` does **not** refresh the debug artifact. So a
+`-SkipBuild` smoke run after a release build screenshots a stale
+binary, and because a stale binary still renders a plausible UI, the
+mistake is invisible unless you already know to look.
+
+This actually happened: `phase5_6_smoke._window._window.png` shows
+an **unselected** rect (salmon stroke, round white handles), but the
+5.6 source sets `selectedId` via `CanvasPressed` and never clears it,
+so it must render a **selected** rect (gold stroke, square cyan
+handles). The selected appearance appeared only after rebuilding the
+debug exe in Phase 5.7 — at which point it was obvious the 5.6
+screenshot had been captured from pre-5.6 code.
+
+`run_smoke.ps1` now compares the exe's mtime against the newest
+`app_moui/*.mbt` and refuses to run with a clear diagnostic (exit 5)
+when `-SkipBuild` was passed on a stale artifact. Verified in both
+directions: fresh exe passes, deliberately-backdated exe is refused.
+
+**Apply when:** before trusting *any* smoke screenshot in this repo.
+If `-SkipBuild` was used, confirm the debug exe is newer than the
+newest `.mbt`, or just drop `-SkipBuild` and let the script rebuild.
+This is the same class of trap as the `moon build` exit-0 bug in
+`pof_service`: a build gate that silently doesn't gate.
+
+#### Test count
+
+249 total (was 241): +4 in `phase5_7_blit_test.mbt`, +3 rect
+corner-order + 1 radius-constant pin in `hittest_test.mbt`, +2
+zoom-drag guard (one with a control) in `canvas_view_test.mbt`.
+
+**Still open:** `paint_canvas_decoration` is unused since Phase 5.2
+and produces a warning. `DragGestureEvent` still has no button ID —
+Phase 5.7's guard is a local mitigation, not a real fix.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

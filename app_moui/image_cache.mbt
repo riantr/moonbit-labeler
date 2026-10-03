@@ -113,3 +113,77 @@ pub fn ImageCache::get_or_inject(
     None => self.load_bytes(source, width, height, data)
   }
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Synthetic fixtures
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// The colour of horizontal band `band` (0-based) of the banded
+/// fixture: red, green, blue, white. One definition shared by the
+/// fixture builder and the Phase 5.7 regression test, so the
+/// "which colour is which band" mapping can't drift between the
+/// shipped fixture and the test that pins it.
+pub fn band_colour(band : Int) -> (Int, Int, Int) {
+  match band {
+    0 => (255, 0, 0)
+    1 => (0, 255, 0)
+    2 => (0, 0, 255)
+    _ => (255, 255, 255)
+  }
+}
+
+///|
+/// Phase 5.7 — build a `w` x `h` RGBA8 image split into 4 equal
+/// horizontal bands, colour `i` from `band_colour(i)`. Fully opaque
+/// (alpha 255) on every pixel.
+///
+/// This replaced the Phase 5.2 solid-magenta demo fixture. Solid
+/// magenta proved the cache + blit + presenter chain worked, but it
+/// was a *degenerate* check: a uniformly-coloured source cannot
+/// distinguish a correct nearest-neighbour mapping from a wrong one,
+/// because every mapping produces the same pixels. Banding makes the
+/// fixture self-validating — if fit-contain, the pan/zoom transform,
+/// or `paint_image`'s source-row mapping drops or repeats a band, it
+/// is immediately visible in the smoke screenshot *and* pinned by
+/// `phase5_7_blit_test.mbt`, which drives this exact builder through
+/// the real rasterizer at 2x upscale, 0.5x downscale, and with
+/// vertical banding.
+///
+/// The Phase 5.2 note claimed a 4-stripe fixture "only rendered 2 of
+/// the 4 stripes" and hypothesised that `paint_image` "clamps src_h
+/// to ~100". That hypothesis is disproven — see the tests in
+/// `phase5_7_blit_test.mbt`; `src_y = dy * src_h / dst_h` has no
+/// clamp and all four bands land correctly at every tested scale.
+pub fn banded_rgba8_fixture(w : Int, h : Int) -> Bytes {
+  let rgba : Array[Byte] = []
+  // 4 bands, so the per-band row count is h / 4 with any remainder
+  // folded into the last band. For h = 200 this is exactly 50 rows
+  // each.
+  let band_h : Int = h / 4
+  let mut y : Int = 0
+  while y < h {
+    let band : Int = if band_h <= 0 {
+      0
+    } else if y < band_h {
+      0
+    } else if y < band_h * 2 {
+      1
+    } else if y < band_h * 3 {
+      2
+    } else {
+      3
+    }
+    let (r, g, b) = band_colour(band)
+    let mut x : Int = 0
+    while x < w {
+      rgba.push(r.to_byte())
+      rgba.push(g.to_byte())
+      rgba.push(b.to_byte())
+      rgba.push((255).to_byte())
+      x = x + 1
+    }
+    y = y + 1
+  }
+  Bytes::from_array(rgba)
+}

@@ -1266,20 +1266,36 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
     // part (error 3002: "Using let statement in the action part
     // of a matching case directly is not allowed. Consider
     // moving the let binding into a curly braces block").
+    //
+    // Phase 5.7 — step 3 is skipped entirely while `zoomDragMode`
+    // is on. Moui 0.1.12's `DragGestureEvent` carries no button
+    // ID, so the runtime routes *every* pointer-down through this
+    // handler, including the right-drag that toggled zoom-drag
+    // mode. Without the guard, a right-drag starting on a handle
+    // would arm a handle drag, and the arming would then survive
+    // until the next `Changed` frame reinterpreted the movement
+    // as a zoom delta — so the annotation jumped by one frame of
+    // cursor travel. Skipping the arm removes that whole class of
+    // "zoom-drag also moved my annotation" bug. Selection is
+    // still recorded (a click is a click), just never a drag.
     CanvasPressed(img_pt, canvas_pt) => {
       let sel : String? = hit_test_select(
         img_pt,
         model.annotations,
         model.selectedId,
       )
-      let armed : (String, Int)? = match sel {
-        Some(sel_id) => hit_test_handle(
-          img_pt,
-          model.annotations,
-          sel_id,
-          handle_hit_radius,
-        )
-        None => None
+      let armed : (String, Int)? = if model.zoomDragMode {
+        None
+      } else {
+        match sel {
+          Some(sel_id) => hit_test_handle(
+            img_pt,
+            model.annotations,
+            sel_id,
+            handle_hit_radius,
+          )
+          None => None
+        }
       }
       let drag : DragState? = match armed {
         Some((ann_id, handle_idx)) => Some({

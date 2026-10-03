@@ -72,6 +72,38 @@ if (-not (Test-Path -LiteralPath $Exe)) {
 }
 Write-Host "[smoke] exe: $Exe"
 
+# 2b. Staleness guard (Phase 5.7).
+#
+# This script always runs the *debug* exe, but the project habit is to
+# build `--release --strip` before a smoke. `moon build --target
+# native --release` does NOT refresh the debug artifact, so a
+# `-SkipBuild` run after a release build silently screenshots a stale
+# binary — and a stale binary produces a perfectly plausible
+# screenshot, so the mistake is invisible unless you know to look.
+#
+# That actually happened: the Phase 5.6 smoke screenshot was captured
+# from a pre-5.6 debug exe, which is why it showed an *unselected*
+# rect even though the 5.6 source selects it. Compare the exe's
+# mtime against the newest app_moui source file and refuse to run on
+# a stale artifact.
+if ($SkipBuild) {
+  $exeTime = (Get-Item -LiteralPath $Exe).LastWriteTime
+  $newest = Get-ChildItem -Path "$ProjectRoot\app_moui" -Filter *.mbt |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+  if ($newest -and $newest.LastWriteTime -gt $exeTime) {
+    Write-Host "[smoke][error] STALE BINARY" -ForegroundColor Red
+    Write-Host "[smoke][error]   exe    : $Exe ($($exeTime))" -ForegroundColor Red
+    Write-Host "[smoke][error]   source : $($newest.Name) ($($newest.LastWriteTime))" -ForegroundColor Red
+    Write-Host "[smoke][error]   -SkipBuild was passed but the debug exe is older than the" -ForegroundColor Red
+    Write-Host "[smoke][error]   newest source. Note: 'moon build --release' does NOT update" -ForegroundColor Red
+    Write-Host "[smoke][error]   the debug exe this script runs. Run either" -ForegroundColor Red
+    Write-Host "[smoke][error]     -build\run_smoke.ps1            (rebuilds debug), or" -ForegroundColor Red
+    Write-Host "[smoke][error]     cd app_moui; moon build --target native" -ForegroundColor Red
+    exit 5
+  }
+}
+
 # 3. Best-effort cleanup of stale processes from prior runs. Other
 #    sessions' processes may resist kill ("Access is denied"); we
 #    log and continue — the new launch will use a different window
