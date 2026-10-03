@@ -190,6 +190,14 @@ fn sqrt_double(x : Double) -> Double {
 /// when the handle matches the shape's handle layout, None otherwise
 /// (caller preserves the original). Rect: 8 handles (4 corners +
 /// 4 midpoints). Polygon: per-vertex. Keypoint: single handle.
+///
+/// Phase 5.4 — corrected the Rect handle logic. Pre-5.4 the
+/// handle_idx=4/5/6/7 arms set BOTH new_p1 and new_p2 from
+/// new_pt, which collapsed the rect to a single point when
+/// dragging the BR/B/BL/L handles. Now each handle moves only
+/// the corners it geometrically affects: corner handles (0, 2,
+/// 4, 6) change 2 coords; edge-midpoint handles (1, 3, 5, 7)
+/// change 1 coord.
 pub fn apply_handle_move(
   ann : Annotation,
   handle_idx : Int,
@@ -202,29 +210,46 @@ pub fn apply_handle_move(
       } else {
         let p1 = ann.points[0]
         let p2 = ann.points[1]
-        // Mirror of handle_points order: 0 TL, 1 T, 2 TR, 3 R, 4 BR,
-        // 5 B, 6 BL, 7 L.
+        // Handle layout (mirror of handle_points): 0 TL, 1 T,
+        // 2 TR, 3 R, 4 BR, 5 B, 6 BL, 7 L. Convention: p1 = TL,
+        // p2 = BR. Only the corners geometrically affected by
+        // the dragged handle change.
         let new_p1 = match handle_idx {
+          // 0 TL: p1 = new_pt (both coords), p2 unchanged.
           0 => new_pt
-          1 => { x: new_pt.x, y: p1.y, }
-          2 => { x: new_pt.x, y: p1.y, }
-          3 => { x: p2.x, y: new_pt.y, }
-          4 => new_pt
-          5 => { x: new_pt.x, y: p2.y, }
-          6 => { x: new_pt.x, y: p2.y, }
-          7 => { x: p1.x, y: new_pt.y, }
-          _ => { x: p1.x, y: p1.y, }
+          // 1 T (top edge mid): only TL.y moves.
+          1 => { x: p1.x, y: new_pt.y }
+          // 2 TR: TL.x moves to new_pt.x, BR.x moves to new_pt.x.
+          2 => { x: new_pt.x, y: p1.y }
+          // 3 R (right edge mid): only BR.x moves.
+          3 => { x: p1.x, y: p1.y }
+          // 4 BR: p1 unchanged, p2 = new_pt.
+          4 => p1
+          // 5 B (bottom edge mid): only BR.y moves.
+          5 => { x: p1.x, y: p1.y }
+          // 6 BL: TL.x moves to new_pt.x.
+          6 => { x: new_pt.x, y: p1.y }
+          // 7 L (left edge mid): only TL.x moves.
+          7 => { x: new_pt.x, y: p1.y }
+          _ => { x: p1.x, y: p1.y }
         }
         let new_p2 = match handle_idx {
-          0 => { x: p2.x, y: p2.y, }
-          1 => { x: p2.x, y: new_pt.y, }
-          2 => new_pt
-          3 => new_pt
+          0 => p2
+          // 1 T: only TL.y moves, BR.y unchanged.
+          1 => p2
+          // 2 TR: BR.x moves to new_pt.x.
+          2 => { x: new_pt.x, y: p2.y }
+          // 3 R (right edge mid): BR.x moves to new_pt.x.
+          3 => { x: new_pt.x, y: p2.y }
+          // 4 BR: p2 = new_pt.
           4 => new_pt
-          5 => { x: p2.x, y: new_pt.y, }
-          6 => { x: p1.x, y: p2.y, }
-          7 => { x: p1.x, y: new_pt.y, }
-          _ => { x: p2.x, y: p2.y, }
+          // 5 B: BR.y moves to new_pt.y.
+          5 => { x: p2.x, y: new_pt.y }
+          // 6 BL: BR.y moves to new_pt.y.
+          6 => { x: p2.x, y: new_pt.y }
+          // 7 L: BR unchanged.
+          7 => p2
+          _ => { x: p2.x, y: p2.y }
         }
         let new_points : Array[Point] = [new_p1, new_p2]
         Some({ ..ann, points: new_points, })

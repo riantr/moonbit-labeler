@@ -92,7 +92,19 @@ fn main {
   // phase14_image_test.mbt::make_quadrant_rgba8 so the
   // smoke and the unit test cover the same shape.
   ignore(register_synthetic_test_image())
-  let program : @moui.Program[Model, Msg] = program()
+  // Phase 5.4 — programmatically apply one BeginDragHandle +
+  // CursorMoved + ModifyHandle + EndDragHandle sequence at
+  // startup so the smoke screenshot demonstrates the live
+  // drag wiring (rect-1 BR corner resized from (140,140) to
+  // (175,175)). The dispatched state lands in `init_model`,
+  // which `program_with_init` then hands to the runtime as
+  // the cold-start Model. Production callers can keep using
+  // the default `program()` (Model::new with no initial
+  // drag).
+  let init_model : Model = build_demo_drag_model()
+  let program : @moui.Program[Model, Msg] = program_with_init(
+    init_model,
+  )
   let runtime : @runtime.AppRuntime = @runtime.new_program(
     program~,
     size~,
@@ -130,6 +142,42 @@ fn main {
     @windows.entry(options=@windows.WindowsHostAppOptions::new(), smoke_options~),
   )
   .run()
+}
+
+///|
+/// Phase 5.4 — simulate a single handle drag on `Model::new()`
+/// before the first frame, so the smoke screenshot demonstrates
+/// the drag wiring visually. Specifically: dispatch
+/// `BeginDragHandle("rect-1", 4)` (BR corner of the default
+/// Rect) + a `CursorMoved` to a new image-natural position +
+/// `ModifyHandle` to land the drag + `EndDragHandle`. The
+/// resulting Model has rect-1 resized from
+/// `(40, 40) → (140, 140)` to `(40, 40) → (175, 175)`, proving
+/// the full `update` chain (CursorMoved with dragState Some →
+/// Effect::send ModifyHandle → mutate_annotation →
+/// apply_handle_move → points[1] = new_pt) wired correctly.
+/// Used only by the smoke harness; production callers can
+/// keep using `program()` which starts from `Model::new()`.
+fn build_demo_drag_model() -> Model {
+  // Pre-set cursorImgPt so BeginDragHandle's `Some` branch
+  // captures it (BeginDragHandle snapshots cursorImgPt as the
+  // drag origin; we want it to be the original BR (140, 140)).
+  let base : Model = {
+    ..Model::new(),
+    cursorImgPt: Some({ x: 140.0, y: 140.0, }),
+    cursorCanvasPt: Some({ x: 140.0, y: 140.0, }),
+  }
+  let (m1, _) = update(base, BeginDragHandle("rect-1", 4))
+  let (m2, _) = update(
+    m1,
+    CursorMoved({ x: 175.0, y: 175.0 }, { x: 175.0, y: 175.0 }),
+  )
+  let (m3, _) = update(
+    m2,
+    ModifyHandle("rect-1", 4, { x: 175.0, y: 175.0 }),
+  )
+  let (m4, _) = update(m3, EndDragHandle)
+  m4
 }
 
 ///|

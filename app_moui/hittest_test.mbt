@@ -148,3 +148,100 @@ test "apply_handle_move — polygon vertex drag" {
     None => fail("expected Some for vertex handle")
   }
 }
+
+///|
+/// Phase 5.4 — pinning the corrected Rect BR corner move.
+test "apply_handle_move — rect BR corner drag (handle 4) keeps TL fixed" {
+  let ann : Annotation = {
+    id: "r",
+    shape: Rect,
+    points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
+    class_id: "",
+  }
+  let moved = apply_handle_move(ann, 4, { x: 200.0, y: 250.0 })
+  match moved {
+    Some(new_ann) => {
+      // TL (p1) is unchanged.
+      assert_eq(new_ann.points[0].x, 10.0)
+      assert_eq(new_ann.points[0].y, 20.0)
+      // BR (p2) becomes new_pt.
+      assert_eq(new_ann.points[1].x, 200.0)
+      assert_eq(new_ann.points[1].y, 250.0)
+    }
+    None => fail("expected Some for handle_idx=4")
+  }
+}
+
+///|
+/// Phase 5.4 — pinning the corrected Rect BL corner move
+/// (handle 6). Pre-5.4 the BL move set both p1 and p2 from
+/// new_pt (collapsed the rect). Now: TL.x = new_pt.x, BR.y =
+/// new_pt.y; the other coords stay.
+test "apply_handle_move — rect BL corner drag (handle 6) updates both axes" {
+  let ann : Annotation = {
+    id: "r",
+    shape: Rect,
+    points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
+    class_id: "",
+  }
+  let moved = apply_handle_move(ann, 6, { x: 5.0, y: 130.0 })
+  match moved {
+    Some(new_ann) => {
+      // TL (p1): x = new_pt.x, y unchanged.
+      assert_eq(new_ann.points[0].x, 5.0)
+      assert_eq(new_ann.points[0].y, 20.0)
+      // BR (p2): x unchanged, y = new_pt.y.
+      assert_eq(new_ann.points[1].x, 110.0)
+      assert_eq(new_ann.points[1].y, 130.0)
+    }
+    None => fail("expected Some for handle_idx=6")
+  }
+}
+
+///|
+/// Phase 5.4 — pinning the corrected Rect T (top edge mid)
+/// move (handle 1). Only TL.y moves; BR.y stays.
+test "apply_handle_move — rect T edge-mid drag (handle 1) moves TL.y only" {
+  let ann : Annotation = {
+    id: "r",
+    shape: Rect,
+    points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
+    class_id: "",
+  }
+  let moved = apply_handle_move(ann, 1, { x: 60.0, y: 5.0 })
+  match moved {
+    Some(new_ann) => {
+      // TL.x unchanged, TL.y = new_pt.y.
+      assert_eq(new_ann.points[0].x, 10.0)
+      assert_eq(new_ann.points[0].y, 5.0)
+      // BR unchanged.
+      assert_eq(new_ann.points[1].x, 110.0)
+      assert_eq(new_ann.points[1].y, 120.0)
+    }
+    None => fail("expected Some for handle_idx=1")
+  }
+}
+
+///|
+/// Phase 5.4 — pinning the corrected Rect L (left edge mid)
+/// move (handle 7). Only TL.x moves; BR.x stays.
+test "apply_handle_move — rect L edge-mid drag (handle 7) moves TL.x only" {
+  let ann : Annotation = {
+    id: "r",
+    shape: Rect,
+    points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
+    class_id: "",
+  }
+  let moved = apply_handle_move(ann, 7, { x: 5.0, y: 70.0 })
+  match moved {
+    Some(new_ann) => {
+      // TL.x = new_pt.x, TL.y unchanged.
+      assert_eq(new_ann.points[0].x, 5.0)
+      assert_eq(new_ann.points[0].y, 20.0)
+      // BR unchanged.
+      assert_eq(new_ann.points[1].x, 110.0)
+      assert_eq(new_ann.points[1].y, 120.0)
+    }
+    None => fail("expected Some for handle_idx=7")
+  }
+}

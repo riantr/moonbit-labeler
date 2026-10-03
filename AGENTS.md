@@ -547,6 +547,113 @@ under `_build/run_smoke.ps1 -OutFile _build/phase5_3_smoke_v2._window.png
 - Phase 5.3 still uses the synthetic fixture path — production
   `LoadImage(path)` needs the sync→async file-read bridge (blocked).
 
+### Phase 5.4 — wire handle drag end-to-end (ModifyHandle + CursorMoved routing)
+
+Phase 5.4 connects the existing `apply_handle_move` (hittest.mbt)
+and `DragState` (app.mbt) into the actual `update` chain so
+dragging a handle on the selected annotation actually mutates
+the annotation's points array. Pre-5.4 the `ModifyHandle` Msg
+handler was a no-op placeholder; the drag infrastructure
+existed but the points array was never written.
+
+**What landed:**
+
+1. **`app.mbt::mutate_annotation`** — pure helper that runs a
+   caller-supplied transform `f : (Annotation) -> Annotation?`
+   against the annotation with matching `ann_id`, replaces it
+   when `f` returns `Some(new_ann)`, and otherwise leaves the
+   model unchanged (no match, or `f` rejected). The new model
+   always has `staticLayerDirty = true` + `label.dirty = true`
+   so the cache invalidates and the next save picks up the
+   change. Reusable by future handlers (delete vertex, insert
+   vertex, change shape).
+
+2. **`app.mbt::ModifyHandle(ann_id, handle_idx, new_pt)` handler**
+   — wires through `mutate_annotation` with `apply_handle_move`
+   as `f`. The handler is now a one-liner that replaces the
+   Phase 5.3 no-op placeholder. When the annotation's
+   `handle_idx` doesn't match its shape (e.g. polygon vertex
+   index out of range), `apply_handle_move` returns `None`
+   and `mutate_annotation` preserves the original — no
+   half-applied drags.
+
+3. **`app.mbt::CursorMoved(img_pt, canvas_pt)` handler** —
+   when `dragState` is `Some(drag)`, routes the cursor move
+   through to `ModifyHandle(drag.ann_id, drag.handle_idx,
+   img_pt)` via `Effect::send`, keeping the per-frame handler
+   chain single-step (`CursorMoved → Effect::send(ModifyHandle)
+   → mutate → redraw`). When `dragState` is `None`, falls back
+   to the Phase 5.3 hit-test path (12 px handle radius for the
+   selected annotation, 4 px body radius for selection).
+
+4. **`app.mbt::program_with_init(initial : Model)`** — alternate
+   program factory that lets the caller supply a custom
+   initial Model. Used by the smoke harness to demonstrate
+   the drag visually (see point 6).
+
+5. **`hittest.mbt::apply_handle_move` — corrected Rect handle
+   math.** Pre-5.4 the handle_idx=4/5/6/7 arms set BOTH
+   `new_p1` and `new_p2` from `new_pt`, collapsing the rect to
+   a single point when dragging BR/B/BL/L handles. The new
+   logic restricts each handle to moving only the corners it
+   geometrically affects: corner handles (0, 2, 4, 6) change
+   2 coords; edge-midpoint handles (1, 3, 5, 7) change 1 coord.
+   Existing tests only covered handle_idx=0 + Polygon vertex,
+   which is why the bug went unnoticed until Phase 5.4 wired
+   the handler end-to-end.
+
+6. **`main_native.mbt::build_demo_drag_model`** — at startup,
+   dispatches `BeginDragHandle("rect-1", 4)` → `CursorMoved` →
+   `ModifyHandle` → `EndDragHandle` against `Model::new()`,
+   then passes the post-drag model to `program_with_init`. The
+   default Rect's BR corner starts at `(140, 140)` and the demo
+   drag resizes it to `(175, 175)`. The smoke screenshot
+   (`_build/phase5_4_smoke._window._window.png`) shows the
+   resized rect outline + the binding arrow's origin centroid
+   shifted accordingly, visually demonstrating that the cache
+   invalidation + mutation pipeline works end-to-end.
+
+7. **10 new tests** (229 total, was 219):
+   - `ModifyHandle — Rect BR corner resize mutates points + invalidates cache (5.4)`
+   - `ModifyHandle — Polygon vertex move preserves other vertices (5.4)`
+   - `ModifyHandle — unknown id is a no-op (5.4)`
+   - `drag sequence — BeginDragHandle + CursorMoved + EndDragHandle (5.4)`
+   - `CursorMoved — no dragState: hit-test path (5.4)`
+   - `CursorMoved — with dragState: preserves dragState (5.4)`
+   - `apply_handle_move — rect BR corner drag (handle 4) keeps TL fixed`
+   - `apply_handle_move — rect BL corner drag (handle 6) updates both axes`
+   - `apply_handle_move — rect T edge-mid drag (handle 1) moves TL.y only`
+   - `apply_handle_move — rect L edge-mid drag (handle 7) moves TL.x only`
+
+**Verification:** `_build/phase5_4_smoke._window._window.png`
+shows the post-drag state: rect-1 outline extends to ~(175, 175)
+in image-natural coords (vs. the original (140, 140)), 4 corner
+handles visible at the rect corners, poly-1 triangle + kp-1
+keypoint at original positions, yellow dashed binding arrow now
+connects the rect's new centroid (post-drag) to kp-1's centroid.
+229/229 tests pass; `moon check --target native` 0 errors;
+`app_moui/_build/native/release/build/app_moui.exe` (1.2 MB)
+launches + renders in 8 s.
+
+**Known issues deferred:**
+- The actual mouse-drag UX (cursor over a handle → press → drag
+  → release) is still wired through `BeginDragHandle` only
+  via a manual Msg dispatch; the canvas_view's `on_drag` and
+  `on_press` handlers don't yet emit `BeginDragHandle` based
+  on hit-test state. Phase 5.5 picks that up.
+- `Effect::send` from `CursorMoved` enqueues a follow-up Msg
+  in the same frame; Moui 0.1.12's runtime processes the queue
+  before the next paint, so the user perceives a single
+  end-to-end drag. Verified by the smoke screenshot but not
+  pinned by an explicit unit test (Effect values aren't
+  inspectable from MoonBit test code without an in-package
+  observer).
+- `apply_handle_move` assumes `p1 = TL, p2 = BR` ordering.
+  Rects drawn from BR→TL by the user (rare in practice — the
+  default rect tool normalizes to TL→BR) would have inverted
+  handle labels. Tracked as a follow-up: normalize `p1`/`p2`
+  to `(min, max)` at write time.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

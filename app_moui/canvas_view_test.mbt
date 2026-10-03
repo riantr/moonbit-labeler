@@ -3473,3 +3473,207 @@ test "Pan — zoom-drag mode: marks both layers dirty (5.19)" {
   assert_true(next.staticLayerDirty)
   assert_true(next.dynamicLayerDirty)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.4 — handle drag end-to-end
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.4 — ModifyHandle actually mutates the annotation's
+/// points array via `apply_handle_move`. Pre-5.4 the handler was
+/// a no-op placeholder; this test pins the new contract: after
+/// dispatching `ModifyHandle("rect-1", 4, new_pt)` (handle 4 =
+/// the rect's BR corner), the annotation's `points[1]` (BR) is
+/// `new_pt` and the static layer is dirty + the label is dirty.
+test "ModifyHandle — Rect BR corner resize mutates points + invalidates cache (5.4)" {
+  let model : Model = Model::new()
+  let new_pt : Point = { x: 175.0, y: 175.0 }
+  let (next, _) = update(
+    model,
+    ModifyHandle("rect-1", 4, new_pt),
+  )
+  // Locate the rect-1 annotation in the next model.
+  let mut found : Annotation? = None
+  for ann in next.annotations {
+    if ann.id == "rect-1" {
+      found = Some(ann)
+    }
+  }
+  match found {
+    Some(ann) => {
+      assert_eq(ann.points.length(), 2)
+      assert_eq(ann.points[1].x, 175.0)
+      assert_eq(ann.points[1].y, 175.0)
+      // The TL corner (p1) should be unchanged — handle 4 is
+      // the BR corner only.
+      assert_eq(ann.points[0].x, 40.0)
+      assert_eq(ann.points[0].y, 40.0)
+    }
+    None => fail("rect-1 missing after ModifyHandle")
+  }
+  assert_true(next.staticLayerDirty)
+  assert_true(next.label.dirty)
+}
+
+///|
+/// Phase 5.4 — ModifyHandle with a polygon handle moves only
+/// the targeted vertex (other vertices unchanged).
+test "ModifyHandle — Polygon vertex move preserves other vertices (5.4)" {
+  let model : Model = Model::new()
+  let new_pt : Point = { x: 200.0, y: 250.0 }
+  let (next, _) = update(
+    model,
+    ModifyHandle("poly-1", 1, new_pt),
+  )
+  let mut found : Annotation? = None
+  for ann in next.annotations {
+    if ann.id == "poly-1" {
+      found = Some(ann)
+    }
+  }
+  match found {
+    Some(ann) => {
+      assert_eq(ann.points.length(), 3)
+      assert_eq(ann.points[1].x, 200.0)
+      assert_eq(ann.points[1].y, 250.0)
+      // Vertex 0 and 2 are unchanged.
+      assert_eq(ann.points[0].x, 110.0)
+      assert_eq(ann.points[0].y, 30.0)
+      assert_eq(ann.points[2].x, 145.0)
+      assert_eq(ann.points[2].y, 130.0)
+    }
+    None => fail("poly-1 missing after ModifyHandle")
+  }
+  assert_true(next.staticLayerDirty)
+  assert_true(next.label.dirty)
+}
+
+///|
+/// Phase 5.4 — ModifyHandle with an unknown id is a no-op
+/// (model preserved, no dirty flags).
+test "ModifyHandle — unknown id is a no-op (5.4)" {
+  let model : Model = {
+    ..Model::new(),
+    staticLayerDirty: false,
+    label: { raw_json: "{}", dirty: false, },
+  }
+  let (next, _) = update(
+    model,
+    ModifyHandle("does-not-exist", 0, { x: 0.0, y: 0.0 }),
+  )
+  assert_false(next.staticLayerDirty)
+  assert_false(next.label.dirty)
+  // Annotations unchanged.
+  assert_eq(next.annotations.length(), model.annotations.length())
+}
+
+///|
+/// Phase 5.4 — full drag sequence: BeginDragHandle snapshots
+/// dragState; CursorMoved while dragState is Some dispatches a
+/// follow-up ModifyHandle via Effect::send; EndDragHandle
+/// clears dragState. This is the end-to-end flow that
+/// canvas_view's on_drag + on_secondary_tap handlers will
+/// drive when a handle drag is in progress.
+test "drag sequence — BeginDragHandle + CursorMoved + EndDragHandle (5.4)" {
+  let model : Model = {
+    ..Model::new(),
+    cursorImgPt: Some({ x: 90.0, y: 90.0, }),
+    cursorCanvasPt: Some({ x: 90.0, y: 90.0, }),
+  }
+  // Step 1: BeginDragHandle for rect-1's BR corner (handle 4).
+  let (m1, _) = update(model, BeginDragHandle("rect-1", 4))
+  assert_true(m1.dragState is Some(_))
+  // Step 2: CursorMoved while dragging should dispatch a
+  // follow-up ModifyHandle via Effect::send and update the
+  // cursor positions in the model.
+  let (m2, _eff) = update(
+    m1,
+    CursorMoved({ x: 170.0, y: 170.0 }, { x: 170.0, y: 170.0 }),
+  )
+  match m2.cursorImgPt {
+    Some(p) => {
+      assert_eq(p.x, 170.0)
+      assert_eq(p.y, 170.0)
+    }
+    None => fail("cursorImgPt should be Some after CursorMoved")
+  }
+  // The Effect::send carries the ModifyHandle — we verify by
+  // feeding it back through update (no inspection of the
+  // Effect payload — Effect values aren't easily testable).
+  let (m3, _) = update(
+    m2,
+    ModifyHandle("rect-1", 4, { x: 170.0, y: 170.0 }),
+  )
+  // Step 3: annotation now reflects the drag end position.
+  let mut found : Annotation? = None
+  for ann in m3.annotations {
+    if ann.id == "rect-1" {
+      found = Some(ann)
+    }
+  }
+  match found {
+    Some(ann) => {
+      assert_eq(ann.points[1].x, 170.0)
+      assert_eq(ann.points[1].y, 170.0)
+    }
+    None => fail("rect-1 missing after drag sequence")
+  }
+  // Step 4: EndDragHandle clears dragState.
+  let (m4, _) = update(m3, EndDragHandle)
+  assert_true(m4.dragState is None)
+}
+
+///|
+/// Phase 5.4 — CursorMoved with no dragState falls back to the
+/// Phase 5.3 hit-test path: `selectedId` gets updated based on
+/// `hit_test_select`. When the cursor is far from any
+/// annotation body + no selection, selectedId stays None.
+test "CursorMoved — no dragState: hit-test path (5.4)" {
+  let model : Model = Model::new()
+  let (next, _) = update(
+    model,
+    CursorMoved({ x: 1000.0, y: 1000.0 }, { x: 1000.0, y: 1000.0 }),
+  )
+  assert_eq(next.selectedId, None)
+  match next.cursorImgPt {
+    Some(p) => {
+      assert_eq(p.x, 1000.0)
+      assert_eq(p.y, 1000.0)
+    }
+    None => fail("cursorImgPt should be Some after CursorMoved")
+  }
+  assert_true(next.dynamicLayerDirty)
+}
+
+///|
+/// Phase 5.4 — CursorMoved while dragState is Some preserves
+/// dragState (the follow-up ModifyHandle is what mutates; the
+/// CursorMoved handler itself doesn't clear dragState).
+test "CursorMoved — with dragState: preserves dragState (5.4)" {
+  let model : Model = {
+    ..Model::new(),
+    dragState: Some({
+      ann_id: "rect-1",
+      handle_idx: 4,
+      start_img_pt: { x: 90.0, y: 90.0, },
+    }),
+  }
+  let (next, _) = update(
+    model,
+    CursorMoved({ x: 170.0, y: 170.0 }, { x: 170.0, y: 170.0 }),
+  )
+  match next.dragState {
+    Some(d) => {
+      assert_eq(d.ann_id, "rect-1")
+      assert_eq(d.handle_idx, 4)
+    }
+    None => fail("dragState was cleared by CursorMoved")
+  }
+  match next.cursorImgPt {
+    Some(p) => {
+      assert_eq(p.x, 170.0)
+      assert_eq(p.y, 170.0)
+    }
+    None => fail("cursorImgPt should be Some after CursorMoved")
+  }
+}

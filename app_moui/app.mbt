@@ -676,35 +676,64 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         }
         None => (model, @moui.Effect::none())
       }
-    ModifyHandle(_id, _handle_idx, _new_pt) =>
-      (
-        {
-          ..model,
-          label: { raw_json: model.label.raw_json, dirty: true, },
-          staticLayerDirty: true,
-        },
-        @moui.Effect::none(),
-      )
+    ModifyHandle(ann_id, handle_idx, new_pt) =>
+      // Phase 5.4 — actually mutate the annotation via
+      // `apply_handle_move` from hittest.mbt. Pre-5.4 this was
+      // a no-op placeholder that just bumped the dirty flag; the
+      // points array was left unchanged so dragging a handle had
+      // no visible effect. Now: iterate `model.annotations`, find
+      // the matching id, call `apply_handle_move(ann, handle_idx,
+      // new_pt)`, replace with the new annotation when Some, and
+      // mark static + label dirty. Returns the same model when no
+      // matching id is found or `apply_handle_move` rejects the
+      // handle_idx (e.g. polygon with fewer vertices than the
+      // requested index).
+      mutate_annotation(model, ann_id, fn(ann) {
+        apply_handle_move(ann, handle_idx, new_pt)
+      })
     CursorMoved(img_pt, canvas_pt) =>
-      // Phase 5.3 — handle drags emit ModifyHandle; otherwise
-      // hit-test: prefer handles of the selected annotation, fall
-      // back to body hit for selection. 12 px handle radius
-      // (matches frontend canvas.js v0.2.9); 4 px body radius.
-      (
-        {
-          ..model,
-          cursorImgPt: Some(img_pt),
-          cursorCanvasPt: Some(canvas_pt),
-          selectedId: hit_test_select(
-            img_pt,
-            model.annotations,
-            model.selectedId,
-          ),
-          staticLayerDirty: true,
-          dynamicLayerDirty: true,
-        },
-        @moui.Effect::none(),
-      )
+      // Phase 5.4 — when dragState is Some, route the cursor move
+      // through to ModifyHandle(ann_id, handle_idx, img_pt) by
+      // dispatching it via Effect::send, so the per-frame handler
+      // chain stays single-step (CursorMoved → ModifyHandle →
+      // mutate). This avoids duplicating the mutate_annotation
+      // logic between the two Msg variants.
+      //
+      // When dragState is None, fall back to the Phase 5.3
+      // hit-test path: prefer handles of the selected annotation
+      // (radius 12 px), fall back to body hit (radius 4 px). Both
+      // radii are in image-natural pixel space, matching the
+      // frontend canvas.js v0.2.9 conventions.
+      match model.dragState {
+        Some(drag) =>
+          (
+            {
+              ..model,
+              cursorImgPt: Some(img_pt),
+              cursorCanvasPt: Some(canvas_pt),
+              dynamicLayerDirty: true,
+            },
+            @moui.Effect::send(
+              ModifyHandle(drag.ann_id, drag.handle_idx, img_pt),
+            ),
+          )
+        None =>
+          (
+            {
+              ..model,
+              cursorImgPt: Some(img_pt),
+              cursorCanvasPt: Some(canvas_pt),
+              selectedId: hit_test_select(
+                img_pt,
+                model.annotations,
+                model.selectedId,
+              ),
+              staticLayerDirty: true,
+              dynamicLayerDirty: true,
+            },
+            @moui.Effect::none(),
+          )
+      }
     CursorLeft =>
       (
         {
@@ -1197,6 +1226,63 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Helpers — annotation mutation
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.4 — pure helper that runs `f` against the annotation
+/// with matching `ann_id` in `model.annotations`, replacing it
+/// when `f` returns `Some(new_ann)` and leaving the model
+/// unchanged otherwise (no match, or `f` rejected the
+/// transformation). The new model always has `staticLayerDirty =
+/// true` + `label.dirty = true` so the cache invalidates and
+/// the next save picks up the change. Used by `ModifyHandle`
+/// (with `apply_handle_move` as `f`); future Msg handlers
+/// (delete vertex, insert vertex, change shape) can reuse it.
+fn mutate_annotation(
+  model : Model,
+  ann_id : String,
+  f : (Annotation) -> Annotation?,
+) -> (Model, @moui.Effect[Msg]) {
+  let n = model.annotations.length()
+  let mut found_idx : Int = -1
+  let mut replacement : Annotation? = None
+  let mut i = 0
+  while i < n {
+    if model.annotations[i].id == ann_id {
+      found_idx = i
+      replacement = f(model.annotations[i])
+      break
+    }
+    i = i + 1
+  }
+  match replacement {
+    Some(updated) => {
+      let new_anns : Array[Annotation] = []
+      let mut j = 0
+      while j < n {
+        if j == found_idx {
+          new_anns.push(updated)
+        } else {
+          new_anns.push(model.annotations[j])
+        }
+        j = j + 1
+      }
+      (
+        {
+          ..model,
+          annotations: new_anns,
+          label: { raw_json: model.label.raw_json, dirty: true, },
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    }
+    None => (model, @moui.Effect::none())
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
 // View — placeholder shell using @views
 // ─────────────────────────────────────────────────────────────────
 
@@ -1225,6 +1311,26 @@ pub fn view(model : Model) -> @moui.View[Msg] {
 pub fn program() -> @moui.Program[Model, Msg] {
   @moui.Program::new(
     init=() => (Model::new(), @moui.Effect::none()),
+    update~,
+    view~,
+  )
+}
+
+///|
+/// Phase 5.4 — alternate program factory that lets the caller
+/// supply a custom initial `Model`. Used by `main_native.mbt`'s
+/// smoke harness to demonstrate that `ModifyHandle` actually
+/// mutates the annotation set: the harness builds a Model via
+/// `Model::new()`, dispatches a BeginDragHandle + CursorMoved +
+/// ModifyHandle + EndDragHandle sequence, and passes the
+/// post-drag model to `program_with_init` so the smoke
+/// screenshot shows the rect-1 BR corner at its
+/// drag-end position instead of the original `(140, 140)`.
+pub fn program_with_init(
+  initial : Model,
+) -> @moui.Program[Model, Msg] {
+  @moui.Program::new(
+    init=() => (initial, @moui.Effect::none()),
     update~,
     view~,
   )
