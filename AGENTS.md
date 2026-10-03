@@ -743,6 +743,132 @@ app_moui.exe` (1.2 MB) launches + renders in 8 s.
   handle hover state but doesn't actually drag it. Tracked
   as a follow-up.
 
+### Phase 5.6 — CanvasPressed: select-then-arm in one press (fixes the Phase 5.5 deferred)
+
+Phase 5.6 fixes the first-click bug that Phase 5.5 explicitly
+deferred: "if the user clicks on a handle BEFORE any prior
+`CursorMoved` has selected anything, `selectedId` is None and
+the handle drag doesn't arm."
+
+**Root cause.** The Phase 5.5 press logic lived in
+`canvas_view.mbt`'s `on_drag` closure, which closes over a
+**stale `model` snapshot** captured when the view tree was
+built. Two consequences:
+
+1. `model.selectedId` read in the closure was always one frame
+   behind. On a cold start (`selectedId == None`) the closure
+   took the `None` branch and could never arm a handle drag.
+2. The closure cannot mutate the model, so any hit-test result
+   had to be smuggled back through a second `Msg` round-trip.
+
+The user-visible symptom: to drag a handle you had to **click
+once to select the annotation, then click again on the handle**
+— two presses for one drag.
+
+**What landed:**
+
+1. **`Msg::CanvasPressed(Point, Point)`** — new variant
+   carrying `(img_pt, canvas_pt)`, the same shape as
+   `CursorMoved`.
+
+2. **`app.mbt::CanvasPressed` update handler** — runs the whole
+   press decision against the **live** model:
+   - record `cursorImgPt` / `cursorCanvasPt`;
+   - `hit_test_select` resolves the selection (prefer handles
+     of the current selection, else topmost body hit);
+   - `hit_test_handle` against the *freshly resolved* selection
+     with `handle_hit_radius`; if it hits, arm `dragState` in
+     the same frame;
+   - marks only `dynamicLayerDirty` (a press never mutates
+     geometry, so the static layer cache doesn't need to
+     invalidate — this matters because the static layer holds
+     the background + image blit).
+
+3. **`canvas_view.mbt` Started branch** — reduced from a
+   9-line nested `match` to a single `CanvasPressed(img_pt,
+   canvas_pt)`. All hit-test logic now lives in `update`, where
+   it's both live and unit-testable.
+
+4. **`hittest.mbt` — hoisted the hit radii to named constants**
+   `pub let handle_hit_radius : Double = 12.0` and
+   `pub let body_hit_radius : Double = 4.0`. These were bare
+   literals at 3 call sites (`hit_test_select` ×2 plus the
+   now-removed canvas_view literal), which is exactly the shape
+   of a value that drifts. `hit_test_select` now uses the
+   constants.
+
+5. **`main_native.mbt::build_demo_drag_model`** — the smoke
+   harness now dispatches the real `CanvasPressed` Msg from a
+   genuine cold start (`selectedId == None`, `dragState ==
+   None`) instead of a hand-constructed `BeginDragHandle`. So the
+   smoke screenshot is now evidence for the 5.6 path specifically,
+   not just for 5.4's hand-built sequence.
+
+**Toolchain gotcha (cost ~6 iterations to find).** MoonBit
+**rejects `let` bindings written directly in a match arm's action
+part**:
+
+```
+Error: [3002] Using let statement in `the action part of a
+matching case` directly is not allowed. Consider moving the let
+binding into a curly braces block.
+```
+
+The failure mode is badly misleading: instead of a single clean
+diagnostic, `moon test` emitted a cascade of **`Error: [4139]`
+"this expression has type (Model, Effect[Msg]), its value cannot
+be implicitly ignored"** on *every other arm of the same `match`*
+(including arms ~700 lines earlier, e.g. `PickFolder`). The
+parser bails and the type checker then demotes the enclosing
+`match msg` to a statement position, so every non-Unit arm
+becomes an "ignored value".
+
+- **Rule:** any match arm needing intermediate bindings must be
+  written `Pattern => { let x = ...; ... }` with the braces.
+- **Symptom to recognise:** many `[4139]` errors clustered on
+  arms you did *not* touch → look for a *single* `[3002]`
+  earlier in the same file, and check whether the arm that
+  actually changed has a `let` in it.
+- **Also note:** `moon check` reported **0 errors** on this exact
+  source while `moon test` reported the cascade. Don't trust
+  `moon check` alone for match-arm syntax — always run
+  `moon test`.
+- A second red herring on the way: hoisting a `match` expression
+  out of a record-literal field value (`dragState: match x {…}`)
+  was tried as a fix and was **not** the cause — a bare `match`
+  as a struct field value is fine; the `let`-in-arm rule is the
+  real constraint.
+
+**7 new tests** (241 total, was 234):
+- `CanvasPressed — first click on a handle selects AND arms drag in one press (5.6)` — the A/B proof of the fix; the same press that left `dragState == None` pre-5.6 now sets both `selectedId` and `dragState`.
+- `CanvasPressed — press on body selects without arming drag (5.6)` — guards the inverse property (an interior click must not nudge a rect).
+- `CanvasPressed — press on empty canvas clears selection (5.6)`
+- `CanvasPressed — re-select across annotations arms the new one (5.6)` — pressing poly-1's handle while rect-1 is selected must switch, not keep the stale selection.
+- `CanvasPressed — does not dirty the static layer (5.6)`
+- `CanvasPressed arm → CursorMoved actually resizes the rect (5.6)` — end-to-end from a cold-start press.
+- `hit radii constants — 12 px handle / 4 px body (5.6)`
+
+**Verification:** `_build/phase5_6_smoke._window._window.png` shows
+the same post-drag state as 5.4/5.5 (rect-1 BR corner resized
+`(140, 140)` → `(175, 175)`), but now produced from a genuine
+`CanvasPressed` cold-start press. 241/241 tests pass;
+`moon check --target native` 0 errors; `app_moui/_build/native/
+release/build/app_moui.exe` (1.2 MB) launches + renders in 8 s.
+
+**Known issues deferred (carried from 5.5):**
+- `on_drag` still can't distinguish left/right/middle button
+  because Moui 0.1.12's `DragGestureEvent` carries no button ID.
+  In `zoomDragMode`, a right-drag still briefly arms a handle
+  drag before no-oping. Needs either a Moui-side button field or
+  a local "suppress press while zoomDragMode" guard.
+- `apply_handle_move` assumes `p1 = TL, p2 = BR` ordering. A rect
+  written BR→TL would have inverted handle labels. Tracked:
+  normalise corners in `handle_points` + `apply_handle_move` +
+  the Rect branch of `draw_annotation` together (all three read
+  `points[0]` / `points[1]` directly today).
+- 4-stripe multi-colour fixture bug (Phase 5.2) and
+  `paint_canvas_decoration` now-unused warning both still open.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

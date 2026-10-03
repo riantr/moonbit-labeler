@@ -465,6 +465,27 @@ pub(all) enum Msg {
   // first drag frame, before any CursorMoved has fired).
   BeginDragHandle(String, Int, Point)
   EndDragHandle
+  // Phase 5.6 — pointer went down on the canvas. Carries
+  // (img_pt, canvas_pt) in the same shape as CursorMoved.
+  //
+  // Pre-5.6 the Started-phase logic lived in canvas_view.mbt's
+  // on_drag closure, which reads a *stale* `model` snapshot
+  // captured when the view was built. Two consequences:
+  //   1. `model.selectedId` was always one frame stale, so the
+  //      very first click of a session (selectedId == None)
+  //      could never arm a handle drag — the handle belongs
+  //      to an annotation that hasn't been selected yet.
+  //   2. The closure couldn't update the model, so any hit
+  //      result had to be smuggled back through a second Msg
+  //      round-trip.
+  //
+  // Phase 5.6 moves the whole press decision into `update`,
+  // where the model is live. The handler runs
+  // `hit_test_select` (select-then-drag) and then, if the newly
+  // selected annotation has a handle under the cursor,
+  // `hit_test_handle` to arm dragState — all in one Msg, one
+  // frame, no stale reads.
+  CanvasPressed(Point, Point)
   // Phase 5.10 — full image decode result. Carries the decoded
   // pixel width, height, byte length, and pixel format name
   // (Gray8 / GrayA8 / RGB8 / RGBA8) so the model can expose
@@ -1218,6 +1239,73 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         { ..model, dragState: None, staticLayerDirty: true, },
         @moui.Effect::none(),
       )
+    // Phase 5.6 — the full press decision, run against the live
+    // model (no stale view-closure snapshot):
+    //
+    //   1. Always record the cursor positions.
+    //   2. `hit_test_select` resolves the selection: prefer
+    //      handles of the current selection (so clicking a
+    //      handle of an already-selected annotation keeps it
+    //      selected), else fall back to a body hit on the
+    //      topmost annotation (reverse z-order).
+    //   3. If we landed on an annotation, check whether the
+    //      cursor is within `handle_hit_radius` px of one of
+    //      ITS handles. If yes, arm `dragState` in the same
+    //      frame.
+    //
+    // Step 3 is the bug Phase 5.5 deferred: pre-5.6 the
+    // Started-phase closure only tried `hit_test_handle`
+    // against `model.selectedId` from the *previous* frame. On
+    // a cold start (selectedId == None), or when clicking a
+    // handle of a not-yet-selected annotation, no drag ever
+    // armed — the user had to click once to select, then click
+    // again to drag. Now both happen in one press.
+    //
+    // NOTE: the arm body is wrapped in `{ }` because MoonBit
+    // rejects `let` bindings directly in a match arm's action
+    // part (error 3002: "Using let statement in the action part
+    // of a matching case directly is not allowed. Consider
+    // moving the let binding into a curly braces block").
+    CanvasPressed(img_pt, canvas_pt) => {
+      let sel : String? = hit_test_select(
+        img_pt,
+        model.annotations,
+        model.selectedId,
+      )
+      let armed : (String, Int)? = match sel {
+        Some(sel_id) => hit_test_handle(
+          img_pt,
+          model.annotations,
+          sel_id,
+          handle_hit_radius,
+        )
+        None => None
+      }
+      let drag : DragState? = match armed {
+        Some((ann_id, handle_idx)) => Some({
+          ann_id,
+          handle_idx,
+          start_img_pt: img_pt,
+        })
+        None => None
+      }
+      (
+        {
+          ..model,
+          cursorImgPt: Some(img_pt),
+          cursorCanvasPt: Some(canvas_pt),
+          selectedId: sel,
+          dragState: drag,
+          // Pressing may change selection (visible highlight)
+          // and may arm a drag (visible handles), but never
+          // mutates geometry — so only the dynamic layer needs
+          // to repaint here. The armed drag's first
+          // ModifyHandle is what marks the static layer dirty.
+          dynamicLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    }
   }
 }
 

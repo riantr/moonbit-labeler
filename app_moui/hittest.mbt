@@ -18,6 +18,25 @@
 // helpers, so callers pass the image-natural cursor position directly.
 
 ///|
+/// Phase 5.6 — handle hit radius in image-natural pixels. Matches
+/// the 12 px enlarged handle size in `frontend/src/canvas.js`
+/// v0.2.9 (handles are drawn 12×12 and stay grabbable across
+/// zoom levels because the radius is in natural, not screen,
+/// space). Was previously a bare `12.0` literal at each call
+/// site; hoisted here so `hit_test_select`, `canvas_view`'s
+/// `CanvasPressed` dispatch, and tests all agree.
+pub let handle_hit_radius : Double = 12.0
+
+///|
+/// Phase 5.6 — annotation-body hit radius in image-natural
+/// pixels. Tighter than `handle_hit_radius` because clicking
+/// anywhere inside a rect / near a polygon vertex should
+/// select, but only an explicit handle grab should start a
+/// resize — otherwise it'd be impossible to select a rect
+/// without accidentally starting a drag.
+pub let body_hit_radius : Double = 4.0
+
+///|
 /// Compute the world-space handle positions for a single annotation.
 /// Rect → 4 corners + 4 edge-midpoints (8 handles). Polygon → N
 /// vertex handles (one per point). Keypoint → 1 handle at the
@@ -144,6 +163,9 @@ pub fn hit_test_body(
 /// Combined hit-test for CursorMoved: prefer handles of the selected
 /// annotation (keep selection), fall back to body hit for selection.
 /// Returns the new selectedId (Some unchanged or new, None cleared).
+///
+/// Phase 5.6 — the bare `12.0` / `4.0` literals are now
+/// `handle_hit_radius` / `body_hit_radius`.
 pub fn hit_test_select(
   img_pt : Point,
   annotations : Array[Annotation],
@@ -151,11 +173,16 @@ pub fn hit_test_select(
 ) -> String? {
   match current_sel {
     Some(sel_id) =>
-      match hit_test_handle(img_pt, annotations, sel_id, 12.0) {
+      match hit_test_handle(
+        img_pt,
+        annotations,
+        sel_id,
+        handle_hit_radius,
+      ) {
         Some(_) => Some(sel_id)
-        None => hit_test_body(img_pt, annotations, 4.0)
+        None => hit_test_body(img_pt, annotations, body_hit_radius)
       }
-    None => hit_test_body(img_pt, annotations, 4.0)
+    None => hit_test_body(img_pt, annotations, body_hit_radius)
   }
 }
 

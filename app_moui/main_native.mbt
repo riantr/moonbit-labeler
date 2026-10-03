@@ -147,27 +147,38 @@ fn main {
 ///|
 /// Phase 5.4 — simulate a single handle drag on `Model::new()`
 /// before the first frame, so the smoke screenshot demonstrates
-/// the drag wiring visually. Phase 5.5 — `BeginDragHandle` now
-/// takes the start image-space position explicitly, so the
-/// dispatched sequence is:
-/// `BeginDragHandle("rect-1", 4, (140,140))` (BR corner of the
-/// default Rect) + a `CursorMoved` to a new image-natural
-/// position + `ModifyHandle` to land the drag + `EndDragHandle`.
-/// The resulting Model has rect-1 resized from
+/// the drag wiring visually.
+///
+/// Phase 5.6 — the sequence now goes through `CanvasPressed`,
+/// i.e. exactly what a real mouse press dispatches. Note the
+/// cold start has `selectedId == None` and `dragState == None`,
+/// so this also exercises the select-then-arm-in-one-press path
+/// that was broken before 5.6 (pre-5.6 the Started-phase closure
+/// read the *previous* frame's `selectedId`, so the first press of
+/// a session could never arm a drag).
+///
+/// Dispatched sequence:
+///   `CanvasPressed((140, 140))` — presses rect-1's BR handle
+///   while nothing is selected; selects rect-1 AND arms handle 4
+///   + `CursorMoved` to (175, 175) → routed to `ModifyHandle`
+///   + `ModifyHandle` to land the drag
+///   + `EndDragHandle` to release
+///
+/// Resulting Model has rect-1 resized from
 /// `(40, 40) → (140, 140)` to `(40, 40) → (175, 175)`, proving
-/// the full `update` chain (CursorMoved with dragState Some →
+/// the full `update` chain (CanvasPressed → hit_test_select +
+/// hit_test_handle → dragState Some → CursorMoved →
 /// Effect::send ModifyHandle → mutate_annotation →
 /// apply_handle_move → points[1] = new_pt) wired correctly.
 /// Used only by the smoke harness; production callers can
 /// keep using `program()` which starts from `Model::new()`.
 fn build_demo_drag_model() -> Model {
-  // Phase 5.5 — BeginDragHandle now takes the start image-space
-  // position explicitly, so we don't need to pre-set
-  // cursorImgPt. The drag origin is the original BR (140, 140).
+  // Cold start — nothing selected, no drag armed. The press
+  // below must do select + arm in one step.
   let base : Model = Model::new()
   let (m1, _) = update(
     base,
-    BeginDragHandle("rect-1", 4, { x: 140.0, y: 140.0 }),
+    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
   )
   let (m2, _) = update(
     m1,

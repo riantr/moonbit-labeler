@@ -127,14 +127,11 @@ pub fn canvas_view(model : Model) -> @moui.View[Msg] {
   // Phase 5.5 — replace the Phase 5.11 always-fire CursorMoved
   // with a phase-routed dispatch. DragGestureEvent.phase lets
   // us distinguish:
-  //   - Started: pointer just went down. Hit-test handles of
-  //     the selected annotation (12 px radius, image-natural);
-  //     if a handle is under the cursor, dispatch
-  //     BeginDragHandle(ann_id, handle_idx, img_pt) so the
-  //     subsequent CursorMoved → ModifyHandle chain is armed.
-  //     If no handle is hit, fall through to CursorMoved for
-  //     cursor-position tracking (the existing Pan callback
-  //     above still handles image pan separately).
+  //   - Started: pointer just went down. Phase 5.6 moved the
+  //     whole press decision (select-then-arm-drag) into the
+  //     `CanvasPressed` update handler, so this closure only
+  //     needs to forward the cursor position — no hit-test
+  //     logic, no stale `model.selectedId` read.
   //   - Changed: pointer is moving with the button down. The
   //     CursorMoved handler in app.mbt reads model.dragState
   //     and routes through ModifyHandle when Some — no extra
@@ -149,23 +146,11 @@ pub fn canvas_view(model : Model) -> @moui.View[Msg] {
     }
     let canvas_pt : Point = { x: ev.position.x, y: ev.position.y }
     match ev.phase {
-      // Phase 5.5 — drag just began. Try to start a handle
-      // drag if the cursor is over a handle of the selected
-      // annotation; otherwise this is a plain image pan (the
-      // first on_drag callback already dispatched Pan(0) on
-      // Started, but Changed will dispatch Pan(delta) per
-      // step). We emit CursorMoved here too so cursorImgPt
-      // is set for hit-test state.
-      Started =>
-        match model.selectedId {
-          Some(sel_id) =>
-            match hit_test_handle(img_pt, model.annotations, sel_id, 12.0) {
-              Some((ann_id, handle_idx)) =>
-                BeginDragHandle(ann_id, handle_idx, img_pt)
-              None => CursorMoved(img_pt, canvas_pt)
-            }
-          None => CursorMoved(img_pt, canvas_pt)
-        }
+      // Phase 5.6 — the press itself. `update`'s CanvasPressed
+      // handler runs hit_test_select + hit_test_handle against
+      // the live model, so a first-click on a handle selects
+      // the annotation AND arms the drag in the same frame.
+      Started => CanvasPressed(img_pt, canvas_pt)
       Changed => CursorMoved(img_pt, canvas_pt)
       Ended => EndDragHandle
       _ => CursorMoved(img_pt, canvas_pt)

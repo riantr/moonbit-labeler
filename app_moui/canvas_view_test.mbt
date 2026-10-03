@@ -3802,3 +3802,174 @@ test "EndDragHandle — clears dragState (already None) (5.5)" {
   // documented in EndDragHandle handler in app.mbt.
   assert_true(next.staticLayerDirty)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.6 — CanvasPressed: select-then-arm in one press
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.6 — THE core fix. On a cold start `selectedId` is None,
+/// so the Phase 5.5 Started-phase closure (which read the
+/// *previous* frame's `model.selectedId`) could never arm a handle
+/// drag: the user had to click once to select the annotation, then
+/// click again on the handle to drag it.
+///
+/// `CanvasPressed` runs `hit_test_select` FIRST, then
+/// `hit_test_handle` against the freshly-resolved selection — all in
+/// `update`, against the live model. So a single press directly on
+/// a handle of an unselected annotation both selects it and arms
+/// the drag. This is the A/B contrast that proves the fix: the
+/// exact same press against the old code path would have left
+/// `dragState == None`.
+test "CanvasPressed — first click on a handle selects AND arms drag in one press (5.6)" {
+  // Cold start: nothing selected.
+  let model : Model = Model::new()
+  assert_true(model.selectedId is None)
+  assert_true(model.dragState is None)
+  // rect-1's BR handle sits at image-natural (140, 140).
+  // Press directly on it — no prior selection, no prior cursor move.
+  let (next, _) = update(
+    model,
+    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+  )
+  // Selected the owning annotation...
+  assert_eq(next.selectedId, Some("rect-1"))
+  // ...AND armed the handle drag, in the same press.
+  match next.dragState {
+    Some(d) => {
+      assert_eq(d.ann_id, "rect-1")
+      assert_eq(d.handle_idx, 4)
+      assert_eq(d.start_img_pt.x, 140.0)
+      assert_eq(d.start_img_pt.y, 140.0)
+    }
+    None => fail("CanvasPressed should arm dragState on a handle press")
+  }
+}
+
+///|
+/// Phase 5.6 — pressing on an annotation's *body* (not a handle)
+/// selects it but does NOT arm a drag. This is the property that
+/// makes click-to-select usable: an interior click must not
+/// immediately start a resize, otherwise you could never select a
+/// rect without nudging it.
+test "CanvasPressed — press on body selects without arming drag (5.6)" {
+  let model : Model = Model::new()
+  // (90, 90) is the rect-1 centroid: well inside the bbox, but
+  // >12 px from every handle.
+  let (next, _) = update(
+    model,
+    CanvasPressed({ x: 90.0, y: 90.0 }, { x: 90.0, y: 90.0 }),
+  )
+  assert_eq(next.selectedId, Some("rect-1"))
+  assert_true(next.dragState is None)
+}
+
+///|
+/// Phase 5.6 — pressing on empty canvas clears the selection and
+/// leaves no drag armed.
+test "CanvasPressed — press on empty canvas clears selection (5.6)" {
+  let model : Model = { ..Model::new(), selectedId: Some("rect-1"), }
+  let (next, _) = update(
+    model,
+    CanvasPressed({ x: 199.0, y: 199.0 }, { x: 199.0, y: 199.0 }),
+  )
+  assert_true(next.selectedId is None)
+  assert_true(next.dragState is None)
+}
+
+///|
+/// Phase 5.6 — switching selection across annotations: pressing a
+/// handle of poly-1 (not currently selected) re-selects poly-1 and
+/// arms ITS handle, rather than keeping the stale rect-1 selection.
+test "CanvasPressed — re-select across annotations arms the new one (5.6)" {
+  let model : Model = { ..Model::new(), selectedId: Some("rect-1"), }
+  // poly-1's first vertex is at (110, 30) — handle 0 of poly-1.
+  // Cursor is >12 px from every rect-1 handle, so the rect
+  // selection must be dropped in favour of poly-1.
+  let (next, _) = update(
+    model,
+    CanvasPressed({ x: 110.0, y: 30.0 }, { x: 110.0, y: 30.0 }),
+  )
+  assert_eq(next.selectedId, Some("poly-1"))
+  match next.dragState {
+    Some(d) => {
+      assert_eq(d.ann_id, "poly-1")
+      assert_eq(d.handle_idx, 0)
+    }
+    None => fail("expected poly-1 handle drag to arm")
+  }
+}
+
+///|
+/// Phase 5.6 — a press never mutates annotation geometry, so it
+/// must NOT dirty the static layer (that would force a full
+/// background+image repaint on every mousedown for no visual
+/// change). Only the dynamic layer repaints.
+test "CanvasPressed — does not dirty the static layer (5.6)" {
+  let model : Model = {
+    ..Model::new(),
+    staticLayerDirty: false,
+    dynamicLayerDirty: false,
+  }
+  let (next, _) = update(
+    model,
+    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+  )
+  assert_false(next.staticLayerDirty)
+  assert_true(next.dynamicLayerDirty)
+  assert_false(next.label.dirty)
+}
+
+///|
+/// Phase 5.6 — the armed drag immediately drives the annotation on
+/// the next cursor frame. This is the end-to-end proof that
+/// CanvasPressed's arming is real: press on the BR handle → move →
+/// the rect's BR corner actually moves.
+test "CanvasPressed arm → CursorMoved actually resizes the rect (5.6)" {
+  let model : Model = Model::new()
+  // Press on rect-1's BR handle at (140, 140).
+  let (m1, _) = update(
+    model,
+    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+  )
+  // Drag to (175, 175): CursorMoved with dragState Some routes to
+  // ModifyHandle; feed the resulting Msg back explicitly (Effect
+  // values aren't inspectable from test code).
+  let (m2, _) = update(
+    m1,
+    CursorMoved({ x: 175.0, y: 175.0 }, { x: 175.0, y: 175.0 }),
+  )
+  let (m3, _) = update(
+    m2,
+    ModifyHandle("rect-1", 4, { x: 175.0, y: 175.0 }),
+  )
+  let mut found : Annotation? = None
+  for ann in m3.annotations {
+    if ann.id == "rect-1" {
+      found = Some(ann)
+    }
+  }
+  match found {
+    Some(ann) => {
+      assert_eq(ann.points[1].x, 175.0)
+      assert_eq(ann.points[1].y, 175.0)
+      // TL untouched.
+      assert_eq(ann.points[0].x, 40.0)
+      assert_eq(ann.points[0].y, 40.0)
+    }
+    None => fail("rect-1 missing")
+  }
+  // Release clears the drag.
+  let (m4, _) = update(m3, EndDragHandle)
+  assert_true(m4.dragState is None)
+}
+
+///|
+/// Phase 5.6 — `handle_hit_radius` / `body_hit_radius` are the
+/// hoisted, shared constants (previously bare `12.0` / `4.0`
+/// literals at each call site). Pin the values so a future change is
+/// a deliberate edit.
+test "hit radii constants — 12 px handle / 4 px body (5.6)" {
+  assert_eq(handle_hit_radius, 12.0)
+  assert_eq(body_hit_radius, 4.0)
+}
