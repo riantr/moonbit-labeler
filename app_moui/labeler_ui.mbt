@@ -107,6 +107,12 @@ pub fn build_labeler_ui_view(
   let toolbar : @moui.View[Msg] = @views.column(
     [
       // Header row: title + folder label.
+      // Phase 20 — header text heights bumped from 24 to 32 to
+      // give the `Title`-role font (21 px) enough vertical room
+      // for ascender + descender without clipping. Without the
+      // bump the title rendered with the bottom 1-2 px of the
+      // glyphs cut off (visible as a slightly-squashed "MoonBit
+      // Labeler" in Phase 19's `phase19_smoke_final._window.png`).
       @views.row(
         [
           @views.text(
@@ -114,14 +120,14 @@ pub fn build_labeler_ui_view(
             theme=dark_theme,
             role=@style.TextRole::Title,
             width=200.0,
-            height=24.0,
+            height=32.0,
           ),
           @views.text(
             "Folder: " + model.folder,
             theme=dark_theme,
             role=@style.TextRole::Body,
             width=320.0,
-            height=24.0,
+            height=32.0,
           ),
         ],
         spacing=8.0,
@@ -212,12 +218,18 @@ pub fn build_labeler_ui_view(
   // background reaches the bitmap.
   let sidebar : @moui.View[Msg] = @views.column(
     [
+      // Phase 20 — section header heights bumped from 24 to 32
+      // for the same `Title`-font reason as the toolbar header
+      // (21 px font needs ≥28 px box; 32 px gives ~10 px breathing
+      // room for ascender + descender). Visible Phase 19 fix in
+      // `phase19_smoke_final._window.png` had "Folders" / "Classes"
+      // headers with the bottom of the glyphs clipped.
       @views.text(
         "Folders",
         theme=dark_theme,
         role=@style.TextRole::Title,
         width=180.0,
-        height=24.0,
+        height=32.0,
       ),
       @views.column(sidebar_folder_rows(model, dark_theme), spacing=2.0),
       @views.text(
@@ -225,7 +237,7 @@ pub fn build_labeler_ui_view(
         theme=dark_theme,
         role=@style.TextRole::Title,
         width=180.0,
-        height=24.0,
+        height=32.0,
       ),
       @views.column(sidebar_class_rows(model, dark_theme), spacing=1.0),
     ],
@@ -254,6 +266,14 @@ pub fn build_labeler_ui_view(
     Some(msg) => msg
     None => model.statusMessage
   }
+  // Phase 20 — bump status bar text height from 16 to 24 so the
+  // glyphs have breathing room (16 px Body font + descender ≈
+  // 19 px line-height needs ≥20 px box; 24 px gives ~5 px
+  // breathing room). 16 px clips the descenders of "g", "p",
+  // "y" which were visible in the Phase 19 smoke as flat-topped
+  // letters. Status bar row's intrinsic height = max of children
+  // = 24 px (was 16). This eats 8 more px from the outer
+  // column, leaving less for the spacer to absorb.
   let status_bar : @moui.View[Msg] = @views.row(
     [
       @views.text(
@@ -261,25 +281,33 @@ pub fn build_labeler_ui_view(
         theme=dark_theme,
         role=@style.TextRole::Body,
         width=400.0,
-        height=16.0,
+        height=24.0,
       ),
     ],
     spacing=8.0,
   )
   // ─── Compose ───
   // Outer column:
-  //   1. toolbar (fixed height ~74)
-  //   2. main row: sidebar (192 wide) + canvas (fills the rest)
-  //      The row's intrinsic height = max(sidebar_h, canvas_h)
-  //      = sidebar_h ≈ 304 px (Phase 18.B sees ~304 px because
-  //      sidebar has Folders header + 4 buttons + Classes header
-  //      + 6 chip wrap rows).
-  //   3. status bar (~20 tall)
-  // No spacer, no flex_weight — the children stack at their
-  // intrinsic sizes. If the window is taller than the sum, the
-  // leftover space appears at the bottom of the column.
+  //   1. toolbar (fixed height ~72 — header 32 + nav 24 + spacing)
+  //   2. SPACER with flex_weight=1 (Phase 20) — claims all leftover
+  //      vertical space so the status bar always sits flush at the
+  //      window bottom regardless of sidebar/canvas intrinsic sizes.
+  //      Phase 18.B had no spacer; when toolbar + main_row + status_bar
+  //      summed past window_h the status bar got clipped off-screen.
+  //   3. main row: sidebar (192 wide) + canvas (fills the rest)
+  //      The row's intrinsic height = max(sidebar_h, canvas_h).
+  //      Sidebar drives it (~248 px: header 32 + 4×16 + spacing +
+  //      header 32 + 6×16 + spacing).
+  //   4. status bar (~16 tall)
+  // The spacer pushes the row to the top and the status bar to the
+  // bottom — a classic 3-region fixed-bottom layout.
   @views.column(
-    [toolbar, @views.row([sidebar, canvas], spacing=0.0), status_bar],
+    [
+      toolbar,
+      @views.spacer(weight=1.0),
+      @views.row([sidebar, canvas], spacing=0.0),
+      status_bar,
+    ],
     spacing=0.0,
   )
 }

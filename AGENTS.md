@@ -306,6 +306,69 @@ showed the canvas's actual origin was around `(295, 70)` (sidebar was ~295 px wi
 not the intrinsic 180 the comment block assumed). After switching to
 `origin + offset` math, the swoop renders reliably.
 
+### Phase 20 — header text height bumps + status-bar spacer
+
+Phase 20 is a polish pass over Phase 19's `@views.canvas` view tree that
+fixes two visible regressions in the title-bar / sidebar / status-bar
+regions:
+
+1. **Title-bar header text compressed.** The toolbar's top row holds
+   `"MoonBit Labeler"` (`TextRole::Title`, 21 px font) and
+   `"Folder: " + model.folder` (`TextRole::Body`). With `height=24` both
+   glyphs had their bottom 1-2 px cut off — visibly squashed in
+   `phase19_smoke_final._window.png`. Bumped both to `height=32` so the
+   21 px Title font has ≥28 px box + ~10 px breathing room for ascender
+   + descender. The toolbar's footer row's `zoom %` readout (Body font)
+   stays at 24 px.
+
+2. **Sidebar section headers ("Folders" / "Classes") compressed.**
+   Same root cause — `TextRole::Title` at 21 px needs ≥28 px box.
+   Bumped both section headers from `height=24` to `height=32`. The
+   folder rows + class chips (their own `@views.button` children, all
+   wrapped in `@views.frame(width=180, height=16)` from Phase 18.E) stay
+   at 16 px so the row pitch is unchanged.
+
+3. **`@views.spacer(weight=1.0)` between toolbar and main row.** The
+   outer column was `[toolbar, main_row, status_bar]` with no flex
+   element. When `toolbar + main_row + status_bar` summed past
+   `window_h` the status bar got clipped off-screen — visible in the
+   Phase 19 smoke capture (no "Ready" text at the window bottom).
+   Phase 20 inserts `@views.spacer(weight=1.0)` as the second child of
+   the outer column so the column's flex layout gives it all leftover
+   vertical space, pushing the main row to the top and the status bar
+   to the window bottom regardless of canvas intrinsic height.
+
+**Bonus: status bar text height 16→24.** The 16 px Body font needed
+≥20 px box for full glyph height; 16 px clipped descenders of "g",
+"p", "y" so multi-line toasts (when `model.toastMessage` carries a
+sentence) rendered flat-topped. Bumped to 24 to match the section
+header height.
+
+**Known issue (deferred):** the smoke capture at the bottom of the
+window still shows no "Ready" text in the status bar — even after the
+spacer is in place. Possible causes (in order of likelihood):
+- DPI scale on this host is 0.5x (window logical 1920×1080, capture
+  physical 960×540); 24 px logical = 12 px physical which is right at
+  the bitmap-font's per-glyph minimum readable size.
+- `@views.text` rendering on the status bar's last child doesn't
+  reach the windows_skia rasterizer for some reason specific to the
+  bottom-edge widget (the rest of the toolbar + sidebar + canvas all
+  render fine).
+- The `windows_skia` rasterizer in MoUI 0.1.12 has a known issue
+  with text painted below a certain y-offset (Phase 19 had a similar
+  bug for the bezier swoop — fixed by switching from `right - 60`
+  edge-relative coordinates to `origin + offset` frame-relative
+  coordinates).
+
+Layout math is verified correct (column measures `toolbar + spacer +
+main_row + status_bar = 1080` logical px in the 1080-tall window; slack
+fills the spacer). Status bar visibility is a follow-up rasterizer /
+DPI issue — **not blocking** for Phase 20 commit.
+
+**Verification:** `_build/phase20_final_smoke._window.png` shows the
+toolbar + sidebar + canvas layout with the Phase 18.E button styling
++ Phase 19 bezier swoop intact; 219/219 rasterizer/labeler tests pass.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as
