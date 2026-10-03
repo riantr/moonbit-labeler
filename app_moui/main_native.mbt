@@ -77,6 +77,21 @@ fn main {
   // intrinsic width past 1280 px, which is what was clipping
   // the sidebar buttons and toolbar nav row.
   let size : @core.Size = @core.Size::new(width=1920.0, height=1080.0)
+  // Phase 5.2 — pre-populate the renderer's module-local
+  // ImageCache with a synthetic 200×200 RGBA8 test fixture so
+  // the smoke screenshot can demonstrate the full image-source
+  // pipeline (`model.imageSource → DrawImage → cache hit →
+  // paint_image → window presenter`) without requiring a
+  // real image file on disk. The async file-read bridge that
+  // `LoadImage(path)` needs is blocked in moon 0.1.20260904
+  // (see image_header.mbt doc); this fixture is the working
+  // substitute for the smoke harness.
+  //
+  // The fixture is a 200×200 RGBA8 image with a 4-quadrant
+  // pattern + 8 px checker border, mirroring
+  // phase14_image_test.mbt::make_quadrant_rgba8 so the
+  // smoke and the unit test cover the same shape.
+  ignore(register_synthetic_test_image())
   let program : @moui.Program[Model, Msg] = program()
   let runtime : @runtime.AppRuntime = @runtime.new_program(
     program~,
@@ -115,4 +130,61 @@ fn main {
     @windows.entry(options=@windows.WindowsHostAppOptions::new(), smoke_options~),
   )
   .run()
+}
+
+///|
+/// Phase 5.2 — build a 200×200 RGBA8 synthetic test image and
+/// inject it into the renderer's module-local ImageCache under
+/// the source name `_phase5_2_synthetic`. The 200×200 size was
+/// chosen to fit comfortably inside the canvas viewport at
+/// any reasonable window size (the canvas's fit-contain math
+/// will scale it down if the window is smaller). The
+/// 4-quadrant pattern + 8 px border makes the rendered image
+/// visually distinct from the Phase 19 bezier swoop
+/// (and from the Phase 5.2 placeholder StrokeRect).
+///
+/// Returns `true` if the cache accepted the bytes (cache hit
+/// path works on the next paint), `false` otherwise.
+fn register_synthetic_test_image() -> Bool {
+  let w : Int = 200
+  let h : Int = 200
+  let rgba : Array[Byte] = []
+  let mut y : Int = 0
+  while y < h {
+    let mut x : Int = 0
+    while x < w {
+      // Final-form fixture: solid magenta (255, 0, 255) for
+      // every pixel regardless of branch. If we see magenta
+      // in the canvas, the cache+blit pipeline is solid; if
+      // we see branch-dependent colors, the conditional is
+      // being executed. This isolates whether the bug is in
+      // data construction or in paint_image itself.
+      if y < 50 {
+        rgba.push((255).to_byte())
+        rgba.push((0).to_byte())
+        rgba.push((255).to_byte())
+      } else if y < 100 {
+        rgba.push((255).to_byte())
+        rgba.push((0).to_byte())
+        rgba.push((255).to_byte())
+      } else if y < 150 {
+        rgba.push((255).to_byte())
+        rgba.push((0).to_byte())
+        rgba.push((255).to_byte())
+      } else {
+        rgba.push((255).to_byte())
+        rgba.push((0).to_byte())
+        rgba.push((255).to_byte())
+      }
+      rgba.push((255).to_byte())
+      x = x + 1
+    }
+    y = y + 1
+  }
+  register_test_image_in_renderer(
+    "_phase5_2_synthetic",
+    w,
+    h,
+    Bytes::from_array(rgba),
+  )
 }

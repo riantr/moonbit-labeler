@@ -244,23 +244,31 @@ pub fn build_labeler_ui_view(
     spacing=6.0,
   )
   // ─── Canvas (right area, custom paint) ───
-  // Phase 19 — real `@views.canvas` with the Phase 16.C
-  // bezier swoop decoration. The measure callback returns
-  // `c.max` width but bounds height to `c.max.height - 100`
-  // (toolbar ~74 px + status ~20 px + a small margin) so the
-  // canvas's intrinsic doesn't push the row past the window.
-  // The draw callback paints a dark-slate fill + the white
-  // bezier swoop in the top-right corner (the same decoration
-  // the Phase 16.C legacy DrawFrame path produces).
-  let canvas : @moui.View[Msg] = @views.canvas(
-    measure=fn(c : @core.Constraints) -> @core.Size {
-      @core.Size::new(
-        width=c.max.width,
-        height=@common.view_max_double(40.0, c.max.height - 100.0),
-      )
-    },
-    draw=paint_canvas_decoration,
-  )
+  // Phase 5.2 — swap the bezier-swoop placeholder (Phase 19)
+  // for the model-aware `canvas_view(model)`. The new canvas
+  // renders:
+  //   - Static layer (cached via ViewPaintLayer cache_key):
+  //     neutral background + placeholder StrokeRect (when
+  //     model.imageSource == "") OR a real DrawImage (when
+  //     imageSource != "" + image_cache hit), plus the model's
+  //     annotation set drawn in iteration order.
+  //   - Dynamic layer: selected annotation handles + cursor
+  //     crosshair + draft polygon/rect preview.
+  //   - on_drag → Pan (image pan), CursorMoved (hit-test).
+  //   - on_secondary_tap / on_double_tap → ToggleZoomDragMode.
+  //
+  // The static layer's `ViewPaintLayer::cache_key` is derived
+  // from imageSource + annotations + pan + zoom + naturalSize +
+  // fitMode (see `canvas_view::static_cache_key`), so when
+  // LoadTestImage / LoadImage succeeds the cached bitmap
+  // invalidates automatically and the new image paints on the
+  // next frame.
+  //
+  // Sizing: `canvas_view` returns a `@layout.stack` of two
+  // canvas layers whose `layout` impls both return
+  // `ctx.constraints.max`, so the canvas fills whatever space
+  // the outer row gives it. No custom measure needed.
+  let canvas : @moui.View[Msg] = canvas_view(model)
   // ─── Bottom status bar ───
   let status_text : String = match model.toastMessage {
     Some(msg) => msg

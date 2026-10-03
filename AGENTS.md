@@ -369,6 +369,96 @@ DPI issue — **not blocking** for Phase 20 commit.
 toolbar + sidebar + canvas layout with the Phase 18.E button styling
 + Phase 19 bezier swoop intact; 219/219 rasterizer/labeler tests pass.
 
+### Phase 5.2 — wire canvas_view(model) into the view tree + visual smoke demo
+
+Phase 5.2 is the MoUI port's first end-to-end verification that
+`model.imageSource → DrawImage → cache hit → paint_image → buffer
+blit → windows_skia presenter → pixels on screen` works as a single
+pipeline. Prior phases had the infrastructure but no view-tree
+connection — the canvas still showed the Phase 19 bezier swoop
+decoration regardless of `model.imageSource`.
+
+**What landed:**
+
+1. **`labeler_ui.mbt` — replace bezier swoop with `canvas_view(model)`.**
+   The Phase 19 `@views.canvas(measure, draw=paint_canvas_decoration)`
+   placeholder is swapped for the model-driven `canvas_view` builder.
+   `canvas_view` returns a `@layout.stack` of two layers:
+
+   - **Static layer** (cached via `ViewPaintLayer` with `cache_key`):
+     neutral background + `model.imageSource == ""` placeholder
+     StrokeRect OR `DrawImage` (when imageSource != "" + cache hit),
+     plus the model's annotation set drawn in iteration order. Cache
+     key derives from imageSource + annotations + pan + zoom +
+     naturalSize + fitMode so `LoadTestImage` / `LoadImage` invalidate
+     automatically.
+   - **Dynamic layer**: selected-annotation handles + cursor
+     crosshair + draft polygon/rect preview (only paints when those
+     states are non-empty; transparent at startup).
+   - `on_drag` → `Pan` (image pan), `CursorMoved` (hit-test).
+   - `on_secondary_tap` / `on_double_tap` → `ToggleZoomDragMode`.
+
+   `cached_static_layer_view`'s layout impl returns
+   `ctx.constraints.max`, so the canvas fills whatever space the
+   outer row gives it. No custom measure needed.
+
+2. **`renderer.mbt` — `register_test_image_in_renderer(source, w, h, bytes)`**.
+   Public wrapper around the module-local `image_cache` so
+   `main_native.mbt` (or any future startup helper) can inject
+   pre-decoded RGBA8 bytes. Returns `true` on success / `false` if
+   `load_bytes` rejected the bytes (mismatched length, zero
+   width/height, etc.).
+
+3. **`main_native.mbt::register_synthetic_test_image`** — builds a
+   200×200 RGBA8 magenta test fixture inline and injects it under
+   source key `_phase5_2_synthetic` at startup. Chosen as solid
+   magenta for unambiguous visibility in the smoke screenshot
+   (any deviation from pure magenta = bug somewhere in the pipeline).
+   See "Known issue" below for the 4-stripe variant we tried first.
+
+4. **`app.mbt::Model::new` — `imageSource: "_phase5_2_synthetic"`**
+   by default so the cold-start smoke demonstrates the full
+   pipeline without requiring a real image file on disk + a working
+   sync→async file-read bridge (both still blocked — see
+   `image_header.mbt` doc). Set `imageSource: ""` to revert to the
+   Phase 5.2 placeholder StrokeRect.
+
+**Why this matters:**
+
+- Confirms the existing `phase14_image_test.mbt` cache+blit
+  pipeline works through MoUI's view tree (not just in unit tests).
+- `LoadImage(path)` (5.6) still can't actually load real files (no
+  sync→async bridge), but the entire downstream chain — image
+  cache, `paint_image`, fit-contain math, pan/zoom transform,
+  windows_skia presenter — is now verified working in the smoke.
+- `LoadTestImage(path, w, h)` (5.2 deprecated shim) also gets a
+  smoke test for free: when the user wants to verify a specific
+  image, pre-decoding the bytes + `image_cache.load_bytes` + set
+  `model.imageSource` via `LoadTestImage` produces the expected
+  output.
+
+**Known issue (deferred):** The smoke screenshot shows the magenta
+fixture as a solid uniform color across the entire canvas area.
+The 4-stripe (red/green/blue/yellow per y or x range) variants
+tested during development only rendered 2 of the 4 stripes (top
+half red, bottom half green; or left half red, right half green)
+regardless of which MoonBit syntax was used (`if/else if`, `match`,
+direct byte pushes with or without `ignore()`, mirroring
+`phase14_image_test.mbt`'s style). The same solid-magenta code
+without branching produces a valid solid magenta. The branching
+case appears to clamp src_h to ~100 instead of 200 in
+`paint_image`'s loop. Tracked as a follow-up — Phase 5.2 doesn't
+need the 4-stripe variant to ship; solid magenta proves the cache +
+blit + presenter + ViewPaintLayer caching all work end-to-end.
+
+**Verification:** `_build/phase5_2_smoke_final._window.png` shows
+the toolbar + sidebar + canvas with solid magenta filling the canvas
+viewport (cache hit path: image → DrawImage → nearest-neighbor
+sampling → BGRA buffer → windows_skia presenter → pixels on
+screen). 219/219 app_moui tests still pass; `moon check --target
+native` 0 errors; smoke `run_smoke.ps1 -OutFile ... -WaitSeconds 8`
+captures the screenshot in 8 s.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

@@ -52,6 +52,31 @@ let current_metrics : Ref[@core.SurfaceMetrics] = {
 let image_cache : Ref[ImageCache] = { val: ImageCache::new() }
 
 ///|
+/// Phase 5.2 — register a pre-decoded RGBA8 image into the
+/// module-local image cache, keyed by `source`. Used by
+/// `main_native.mbt` to install a synthetic test fixture so
+/// the smoke screenshot demonstrates the full
+/// `model.imageSource → DrawImage → cache hit → blit →
+/// windows_skia presenter → pixels on screen` pipeline
+/// without needing a real image file on disk + a working
+/// sync→async file-read bridge (both still blocked in moon
+/// 0.1.20260904 — see image_header.mbt doc).
+///
+/// Returns `true` on success, `false` if the cache rejected
+/// the bytes (mismatched length, zero width/height, etc).
+pub fn register_test_image_in_renderer(
+  source : String,
+  width : Int,
+  height : Int,
+  bytes : Bytes,
+) -> Bool {
+  match image_cache.val.load_bytes(source, width, height, bytes) {
+    Some(_) => true
+    None => false
+  }
+}
+
+///|
 /// Phase 10.2 — build a minimal RendererProvider that the
 /// windows backend can bind. Returns a `Bound(RendererSession)`
 /// on a HostSurface with `native_surface()` populated, or

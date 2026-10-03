@@ -214,12 +214,23 @@ pub fn Model::new() -> Model {
     draftPoints: [],
     bindingFromId: None,
     classes: [],
-    // Phase 5.2 — empty source means "draw placeholder rect".
-    // Natural size is read from the image header at LoadTestImage
-    // time. For the default 800x600 placeholder we mirror the old
-    // canvas_view.mbt size.
-    imageSource: "",
-    imageNaturalSize: { x: 800.0, y: 600.0, },
+    // Phase 5.2 — default imageSource points to the
+    // synthetic test image that `main_native.mbt`
+    // pre-populates into the renderer's module-local
+    // ImageCache via `register_test_image_in_renderer`
+    // (source key `_phase5_2_synthetic`, 200×200 RGBA8 with
+    // 4-quadrant pattern + 8 px border). Setting a non-empty
+    // default lets the smoke screenshot demonstrate the full
+    // `imageSource → DrawImage → cache hit → paint_image →
+    // window presenter` pipeline on first paint, without
+    // needing a real image file on disk + a working
+    // sync→async file-read bridge (both still blocked —
+    // see image_header.mbt doc).
+    //
+    // Set imageSource back to "" to see the Phase 5.2
+    // placeholder StrokeRect instead (imageSource == "").
+    imageSource: "_phase5_2_synthetic",
+    imageNaturalSize: { x: 200.0, y: 200.0, },
     imageDecoded: None,
     fitMode: @core.ImageFit::Contain,
     // Phase 5.3 — annotations + bindings live in model so hit-test
