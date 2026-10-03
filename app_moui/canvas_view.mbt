@@ -449,19 +449,42 @@ fn issue_static_commands(
     })
   }
   // 3. Annotations (drawn in iteration order; later wins z-order).
+  // Phase 5.3 — `dst_origin` is the top-left of the image's
+  // fit-contain destination rect inside the canvas; every
+  // annotation draw helper adds this offset so the primitives
+  // land on the visible image area instead of the canvas's
+  // (0, 0) origin.
+  let dst_origin : Point = if model.imageSource == "" {
+    { x: 0.0, y: 0.0, }
+  } else {
+    let dst : @core.Rect = fit_contain_rect(
+      frame,
+      model.imageNaturalSize.x,
+      model.imageNaturalSize.y,
+    )
+    { x: dst.origin.x, y: dst.origin.y, }
+  }
   for ann in model.annotations {
     let is_sel = match model.selectedId {
       Some(id) => id == ann.id
       None => false
     }
-    draw_annotation(pctx, ann, is_sel, model.pan, model.zoom, model.classes)
+    draw_annotation(
+      pctx,
+      ann,
+      is_sel,
+      model.pan,
+      model.zoom,
+      dst_origin,
+      model.classes,
+    )
   }
   // 4. Bindings (from → to arrows). Phase 5.9. Drawn after the
   // annotations so the arrow heads sit on top of the connected
   // shapes; canvas.js does the same. Each binding is a
   // dashed-centroid-to-centroid line + a small filled triangle
   // arrow head pointing at the `to` annotation.
-  draw_bindings(pctx, model, model.pan, model.zoom)
+  draw_bindings(pctx, model, model.pan, model.zoom, dst_origin)
 }
 
 ///|
@@ -488,12 +511,25 @@ pub fn draw_dynamic_layer(
   model : Model,
   frame : @core.Rect,
 ) -> Unit {
+  // Phase 5.3 — precompute the fit-contain dst_origin so
+  // handles / drafts / cursor crosshair line up with the
+  // image's visible area, same as issue_static_commands.
+  let dst_origin : Point = if model.imageSource == "" {
+    { x: 0.0, y: 0.0, }
+  } else {
+    let dst : @core.Rect = fit_contain_rect(
+      frame,
+      model.imageNaturalSize.x,
+      model.imageNaturalSize.y,
+    )
+    { x: dst.origin.x, y: dst.origin.y, }
+  }
   // 1. Selected-annotation handles.
   match model.selectedId {
     Some(sel_id) =>
       for ann in model.annotations {
         if ann.id == sel_id {
-          draw_handles(pctx, ann, model.pan, model.zoom)
+          draw_handles(pctx, ann, model.pan, model.zoom, dst_origin)
         }
       }
     None => ()
@@ -509,11 +545,23 @@ pub fn draw_dynamic_layer(
   match model.mode {
     Polygon =>
       if model.draftPoints.length() > 0 {
-        draw_draft_polygon(pctx, model.draftPoints, model.pan, model.zoom)
+        draw_draft_polygon(
+          pctx,
+          model.draftPoints,
+          model.pan,
+          model.zoom,
+          dst_origin,
+        )
       }
     Rect =>
       if model.draftPoints.length() == 2 {
-        draw_draft_rect(pctx, model.draftPoints, model.pan, model.zoom)
+        draw_draft_rect(
+          pctx,
+          model.draftPoints,
+          model.pan,
+          model.zoom,
+          dst_origin,
+        )
       }
     _ => ()
   }
@@ -521,10 +569,11 @@ pub fn draw_dynamic_layer(
   // the source centroid while the user is in EditBinding mode
   // and has picked the source). Drawn after draft so the ring
   // overlays any draft state cleanly.
-  draw_binding_from_marker(pctx, model, model.pan, model.zoom)
+  draw_binding_from_marker(pctx, model, model.pan, model.zoom, dst_origin)
   // 4. Cursor crosshair.
   match model.cursorImgPt {
-    Some(img_pt) => draw_cursor_crosshair(pctx, img_pt, model.pan, model.zoom)
+    Some(img_pt) =>
+      draw_cursor_crosshair(pctx, img_pt, model.pan, model.zoom, dst_origin)
     None => ()
   }
   // Reference `frame` so the param shape matches the canvas
@@ -572,8 +621,32 @@ pub fn fit_contain_rect(
 /// `pub` because 5.12.A's view_math round-trip test wants to call it
 /// directly from a separate test file; `fn`-level visibility doesn't
 /// carry across `_test.mbt` blackbox boundaries.
-pub fn img_to_screen(p : Point, pan : Point, zoom : Double) -> Point {
-  { x: pan.x + p.x * zoom, y: pan.y + p.y * zoom, }
+///
+/// Phase 5.3 — added the `dst_origin : Point` parameter so the
+/// function applies the same fit-contain offset that
+/// `fit_contain_rect` applies to the `DrawImage(ImageRun)` frame.
+/// Without this offset, annotations + handles + cursor crosshair
+/// + binding arrows drew at image-natural × zoom + pan (correct
+/// for a 1:1 zoomed-to-fit canvas, but wrong when the canvas was
+/// bigger than the image — annotations landed at the canvas's
+/// top-left corner instead of on the visible image area). The
+/// 5.3 fix returns the position in the same canvas-local coord
+/// system as the rest of the static-layer commands, so the
+/// rasterizer + windows_skia presenter place every primitive
+/// correctly regardless of canvas vs image size.
+///
+/// `dst_origin` is precomputed by the caller (via
+/// `fit_contain_rect(canvas_frame, natural_w, natural_h).origin`)
+/// so each helper function doesn't need to thread the full canvas
+/// frame + image natural dimensions through its signature.
+pub fn img_to_screen(
+  p : Point,
+  dst_origin : Point,
+  pan : Point,
+  zoom : Double,
+) -> Point {
+  let zoomed : Point = { x: pan.x + p.x * zoom, y: pan.y + p.y * zoom, }
+  { x: dst_origin.x + zoomed.x, y: dst_origin.y + zoomed.y, }
 }
 
 ///|
@@ -597,6 +670,7 @@ fn draw_annotation(
   selected : Bool,
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
   classes : Array[ClassEntry],
 ) -> Unit {
   let color = if selected {
@@ -608,8 +682,8 @@ fn draw_annotation(
   match ann.shape {
     Rect =>
       if ann.points.length() >= 2 {
-        let p1 = img_to_screen(ann.points[0], pan, zoom)
-        let p2 = img_to_screen(ann.points[1], pan, zoom)
+        let p1 = img_to_screen(ann.points[0], dst_origin, pan, zoom)
+        let p2 = img_to_screen(ann.points[1], dst_origin, pan, zoom)
         // Normalise to top-left + bottom-right.
         let xmin = if p1.x < p2.x { p1.x } else { p2.x }
         let ymin = if p1.y < p2.y { p1.y } else { p2.y }
@@ -639,7 +713,7 @@ fn draw_annotation(
         // with fill=Some(...) and stroke=None — the renderer
         // composites fill under stroke so the result is identical
         // to canvas.js's `fill()` then `stroke()` sequence.
-        draw_polygon_fill(pctx, ann, color, pan, zoom)
+        draw_polygon_fill(pctx, ann, color, pan, zoom, dst_origin)
         // Phase 5.7: replace the 5.3 fill_rect-segment
         // approximation with a single `DrawPath(PathSpec)`
         // command that describes the polyline as one
@@ -650,14 +724,14 @@ fn draw_annotation(
         // expects visually (the 5.3 approximation rendered
         // each segment as a discrete 1-px square which
         // looked chunky at zoom > 2× and on dpr > 1).
-        draw_polygon_path(pctx, ann, color, stroke_width, pan, zoom)
+        draw_polygon_path(pctx, ann, color, stroke_width, pan, zoom, dst_origin)
         // Phase 5.12.B: small white-stroked vertex dots at each
         // polygon vertex (skip for high-vertex-count polygons to
         // keep the static layer cheap — same threshold as canvas.js
         // line 309). Drawn in screen space so the dot radius
         // stays constant under pan/zoom.
         if ann.points.length() <= 30 {
-          draw_polygon_vertex_dots(pctx, ann, color, pan, zoom)
+          draw_polygon_vertex_dots(pctx, ann, color, pan, zoom, dst_origin)
         }
       }
     Keypoint =>
@@ -668,7 +742,7 @@ fn draw_annotation(
         // 5.8's radius=4 was already a circle (FillRoundedRect with
         // radius = half-side), so this is just a size bump plus a
         // white outline to match canvas.js's `strokeStyle="#ffffff"`.
-        let p : Point = img_to_screen(ann.points[0], pan, zoom)
+        let p : Point = img_to_screen(ann.points[0], dst_origin, pan, zoom)
         let r : @core.Rect = @core.Rect::new(
           x=p.x - 6.0,
           y=p.y - 6.0,
@@ -702,6 +776,7 @@ fn draw_annotation(
     let label : String = class_lookup_name(ann, classes)
     let centroid_screen : Point = img_to_screen(
       binding_centroid(ann),
+      dst_origin,
       pan,
       zoom,
     )
@@ -716,11 +791,12 @@ fn draw_handles(
   ann : Annotation,
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
 ) -> Unit {
   let color = @core.Color::rgba(r=0.2, g=0.85, b=1.0, a=1.0) // cyan
   let hs = handle_points(ann)
   for h in hs {
-    let s = img_to_screen(h, pan, zoom)
+    let s = img_to_screen(h, dst_origin, pan, zoom)
     @common.fill_rect(pctx, handle_marker(s), color)
   }
   // Close-polygon handle: a small ring at the first vertex for
@@ -745,6 +821,7 @@ fn draw_bindings(
   model : Model,
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
 ) -> Unit {
   // Build an id → annotation lookup once (O(N) build, then
   // O(1) per binding lookup).
@@ -756,7 +833,8 @@ fn draw_bindings(
     let from_opt : Annotation? = by_id.get(b.from)
     let to_opt : Annotation? = by_id.get(b.to)
     match (from_opt, to_opt) {
-      (Some(from), Some(to)) => draw_binding_arrow(pctx, from, to, pan, zoom)
+      (Some(from), Some(to)) =>
+        draw_binding_arrow(pctx, from, to, pan, zoom, dst_origin)
       _ => ()
     }
   }
@@ -782,9 +860,20 @@ fn draw_binding_arrow(
   to : Annotation,
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
 ) -> Unit {
-  let from_pt : Point = img_to_screen(binding_centroid(from), pan, zoom)
-  let to_pt : Point = img_to_screen(binding_centroid(to), pan, zoom)
+  let from_pt : Point = img_to_screen(
+    binding_centroid(from),
+    dst_origin,
+    pan,
+    zoom,
+  )
+  let to_pt : Point = img_to_screen(
+    binding_centroid(to),
+    dst_origin,
+    pan,
+    zoom,
+  )
   // Same yellow as canvas.js's "#fbbf24" (a 3-bit web color).
   let color : @core.Color = @core.Color::rgba(r=0.984, g=0.749, b=0.141, a=1.0)
   let head_len : Double = 8.0
@@ -928,8 +1017,9 @@ fn draw_cursor_crosshair(
   img_pt : Point,
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
 ) -> Unit {
-  let s = img_to_screen(img_pt, pan, zoom)
+  let s = img_to_screen(img_pt, dst_origin, pan, zoom)
   let v_bar : @core.Rect = @core.Rect::new(
     x=s.x - 8.0,
     y=s.y,
@@ -1107,6 +1197,7 @@ fn draw_draft_polygon(
   points : Array[Point],
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
 ) -> Unit {
   if points.length() == 0 {
     return
@@ -1117,10 +1208,10 @@ fn draw_draft_polygon(
   // Build the verb sequence once for both fill (when N >= 3)
   // and stroke (always when N >= 2).
   let verbs : Array[@core.PathVerb] = []
-  let p0 : Point = img_to_screen(points[0], pan, zoom)
+  let p0 : Point = img_to_screen(points[0], dst_origin, pan, zoom)
   verbs.push(@core.PathVerb::MoveTo({ x: p0.x, y: p0.y, }))
   for i = 1; i < points.length(); i = i + 1 {
-    let p : Point = img_to_screen(points[i], pan, zoom)
+    let p : Point = img_to_screen(points[i], dst_origin, pan, zoom)
     verbs.push(@core.PathVerb::LineTo({ x: p.x, y: p.y, }))
   }
   // Close the polyline so fill() reaches back to vertex 0.
@@ -1159,7 +1250,7 @@ fn draw_draft_polygon(
   // any zoom). Matches canvas.js drawDraftPolygon lines
   // 379-387.
   for nat_pt in points {
-    let p : Point = img_to_screen(nat_pt, pan, zoom)
+    let p : Point = img_to_screen(nat_pt, dst_origin, pan, zoom)
     let r : @core.Rect = @core.Rect::new(
       x=p.x - 4.0,
       y=p.y - 4.0,
@@ -1187,13 +1278,14 @@ fn draw_draft_rect(
   points : Array[Point],
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
 ) -> Unit {
   if points.length() != 2 {
     return
   }
   let color : @core.Color = @core.Color::rgba(r=0.984, g=0.749, b=0.141, a=1.0)
-  let p1 : Point = img_to_screen(points[0], pan, zoom)
-  let p2 : Point = img_to_screen(points[1], pan, zoom)
+  let p1 : Point = img_to_screen(points[0], dst_origin, pan, zoom)
+  let p2 : Point = img_to_screen(points[1], dst_origin, pan, zoom)
   let xmin = if p1.x < p2.x { p1.x } else { p2.x }
   let ymin = if p1.y < p2.y { p1.y } else { p2.y }
   let w = if p1.x > p2.x { p1.x - p2.x } else { p2.x - p1.x }
@@ -1229,6 +1321,7 @@ fn draw_binding_from_marker(
   model : Model,
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
 ) -> Unit {
   let color : @core.Color = @core.Color::rgba(r=0.984, g=0.749, b=0.141, a=1.0)
   // Early-return pattern: assign the id with `let id = match`
@@ -1244,7 +1337,12 @@ fn draw_binding_from_marker(
           // 10). RoundedRect with radius = half-side renders as a
           // circle via the same FillRoundedRect trick 5.8 uses
           // for keypoints.
-          let c : Point = img_to_screen(binding_centroid(ann), pan, zoom)
+          let c : Point = img_to_screen(
+            binding_centroid(ann),
+            dst_origin,
+            pan,
+            zoom,
+          )
           let r : @core.Rect = @core.Rect::new(
             x=c.x - 10.0,
             y=c.y - 10.0,
@@ -1281,6 +1379,7 @@ fn draw_polygon_path(
   stroke_width : Double,
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
 ) -> Unit {
   // Convert the app's local `Point` to the `@core.Point` that
   // PathVerb's enum variants take. Both structs have identical
@@ -1290,11 +1389,11 @@ fn draw_polygon_path(
   // MoveTo(vertex 0). The transform converts image-natural to
   // screen-space once, here, so the renderer doesn't need a
   // per-vertex matrix push.
-  let p0 : Point = img_to_screen(ann.points[0], pan, zoom)
+  let p0 : Point = img_to_screen(ann.points[0], dst_origin, pan, zoom)
   verbs.push(@core.PathVerb::MoveTo({ x: p0.x, y: p0.y, }))
   // LineTo(vertex 1..N).
   for i = 1; i < ann.points.length(); i = i + 1 {
-    let p : Point = img_to_screen(ann.points[i], pan, zoom)
+    let p : Point = img_to_screen(ann.points[i], dst_origin, pan, zoom)
     verbs.push(@core.PathVerb::LineTo({ x: p.x, y: p.y, }))
   }
   // Close the polygon (back to vertex 0). The Close verb is
@@ -1328,12 +1427,13 @@ fn draw_polygon_fill(
   color : @core.Color,
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
 ) -> Unit {
   let verbs : Array[@core.PathVerb] = []
-  let p0 : Point = img_to_screen(ann.points[0], pan, zoom)
+  let p0 : Point = img_to_screen(ann.points[0], dst_origin, pan, zoom)
   verbs.push(@core.PathVerb::MoveTo({ x: p0.x, y: p0.y, }))
   for i = 1; i < ann.points.length(); i = i + 1 {
-    let p : Point = img_to_screen(ann.points[i], pan, zoom)
+    let p : Point = img_to_screen(ann.points[i], dst_origin, pan, zoom)
     verbs.push(@core.PathVerb::LineTo({ x: p.x, y: p.y, }))
   }
   verbs.push(@core.PathVerb::Close)
@@ -1363,10 +1463,11 @@ fn draw_polygon_vertex_dots(
   color : @core.Color,
   pan : Point,
   zoom : Double,
+  dst_origin : Point,
 ) -> Unit {
   let white : @core.Color = @core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0)
   for nat_pt in ann.points {
-    let p : Point = img_to_screen(nat_pt, pan, zoom)
+    let p : Point = img_to_screen(nat_pt, dst_origin, pan, zoom)
     // 6 × 6 square (radius 3) at each vertex — Skia renders
     // FillRoundedRect with radius = half-side as a true circle.
     let r : @core.Rect = @core.Rect::new(

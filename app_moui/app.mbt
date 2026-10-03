@@ -214,6 +214,17 @@ pub fn Model::new() -> Model {
     draftPoints: [],
     bindingFromId: None,
     classes: [],
+    // Phase 5.3 — default annotation set + binding. The smoke
+    // screenshot demonstrates the full annotation rendering
+    // pipeline (image + annotation bodies + binding arrows +
+    // label text) without requiring a real .json label file
+    // + a working sync→async file-read bridge. The synthetic
+    // annotations cover all 3 shapes (Rect, Polygon, Keypoint)
+    // + 1 binding between the Rect and Keypoint so the binding
+    // arrow + dashed-centroid-line render is exercised too.
+    // Annotation IDs match the binding `from` / `to` references.
+    annotations: default_demo_annotations(),
+    bindings: default_demo_bindings(),
     // Phase 5.2 — default imageSource points to the
     // synthetic test image that `main_native.mbt`
     // pre-populates into the renderer's module-local
@@ -235,9 +246,10 @@ pub fn Model::new() -> Model {
     fitMode: @core.ImageFit::Contain,
     // Phase 5.3 — annotations + bindings live in model so hit-test
     // can run without re-parsing the raw label JSON on every mouse
-    // move. SetAnnotations syncs them from the parsed JSON.
-    annotations: [],
-    bindings: [],
+    // move. SetAnnotations syncs them from the parsed JSON. The
+    // default values are set by the `default_demo_*` helpers above
+    // (inserted after `classes: []`) so the smoke screenshot shows
+    // the full annotation rendering pipeline.
     dragState: None,
     zoomDragMode: false,
     cursorImgPt: None,
@@ -250,6 +262,68 @@ pub fn Model::new() -> Model {
     toastKind: Info,
     statusMessage: "Ready",
   }
+}
+
+///|
+/// Phase 5.3 — synthetic annotation set used by
+/// `Model::new` to demonstrate the static-layer annotation
+/// rendering pipeline (Rect fill+stroke, Polygon fill+stroke+vertex
+/// dots, Keypoint fill+stroke, label text at centroid) in the
+/// smoke screenshot without needing a real .json label file on
+/// disk + a working sync→async file-read bridge (both still
+/// blocked in moon 0.1.20260904 — see image_header.mbt doc).
+///
+/// Coordinates are in image-natural space (the synthetic
+/// 200×200 magenta test image from Phase 5.2). IDs match
+/// `default_demo_bindings` so the binding arrow draws.
+/// class_id is empty so the label text falls back to `id`
+/// per `class_lookup_name`'s fallback path.
+fn default_demo_annotations() -> Array[Annotation] {
+  // Rect spanning the upper-left quadrant of the image.
+  let rect : Annotation = {
+    id: "rect-1",
+    shape: Rect,
+    points: [
+      { x: 40.0, y: 40.0, },
+      { x: 140.0, y: 140.0, },
+    ],
+    class_id: "",
+  }
+  // Triangle in the upper-right quadrant (3 points).
+  let poly : Annotation = {
+    id: "poly-1",
+    shape: Polygon,
+    points: [
+      { x: 110.0, y: 30.0, },
+      { x: 180.0, y: 70.0, },
+      { x: 145.0, y: 130.0, },
+    ],
+    class_id: "",
+  }
+  // Single-point keypoint in the lower-left quadrant.
+  let kp : Annotation = {
+    id: "kp-1",
+    shape: Keypoint,
+    points: [{ x: 60.0, y: 170.0, }],
+    class_id: "",
+  }
+  [rect, poly, kp]
+}
+
+///|
+/// Phase 5.3 — synthetic binding between the demo Rect and
+/// the demo Keypoint. `draw_bindings` paints a dashed line
+/// from the Rect's centroid to the Keypoint's centroid +
+/// a small arrow head at the `to` end, so the smoke
+/// screenshot exercises the binding rendering path.
+fn default_demo_bindings() -> Array[Binding] {
+  [
+    {
+      id: "bind-1",
+      from: "rect-1",
+      to: "kp-1",
+    },
+  ]
 }
 
 // ─────────────────────────────────────────────────────────────────

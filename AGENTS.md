@@ -459,6 +459,94 @@ screen). 219/219 app_moui tests still pass; `moon check --target
 native` 0 errors; smoke `run_smoke.ps1 -OutFile ... -WaitSeconds 8`
 captures the screenshot in 8 s.
 
+### Phase 5.3 — fit-contain offset for annotations + binding arrow (visual smoke demo)
+
+Phase 5.3 wires the existing canvas_view annotation + binding pipeline
+into the live UI. Phase 5.2 proved the image-cache → blit → presenter
+chain works end-to-end on a magenta fixture; Phase 5.3 layers the
+annotation + binding renderer on top so a single smoke screenshot
+demonstrates all four Shape variants (Rect fill+stroke, Polygon
+fill+stroke+vertex_dots, Keypoint circle, Binding dashed arrow +
+arrowhead) without requiring a real .json label file + working
+sync→async file-read bridge.
+
+**What landed:**
+
+1. **`app.mbt::Model::new`** — defaults `annotations:
+   default_demo_annotations()` + `bindings: default_demo_bindings()`
+   so cold-start state has 3 annotations + 1 binding visible without
+   requiring `LoadImage` (still blocked — see `image_header.mbt` doc).
+
+   - `default_demo_annotations()` — Rect `(40,40)→(140,140)` + 3-vertex
+     Polygon triangle `(80,60)/(180,90)/(110,170)` + Keypoint `(60,170)`.
+     Covers every Shape variant in `@views/canvas` with deliberately
+     small coords so they fit inside the 200×200 magenta fixture even
+     when the canvas viewport is wider.
+   - `default_demo_bindings()` — 1 binding from `rect-1` centroid
+     `(90,90)` to `kp-1` centroid `(60,170)`. Dashed yellow arrow with
+     arrowhead at the kp-1 end, so the binding's fill+stroke+arrowhead
+     trio is visible in one smoke.
+
+2. **`canvas_view.mbt::img_to_screen`** — signature changed from
+   `(p : Point, pan, zoom)` to `(p : Point, dst_origin : Point, pan,
+   zoom)`. Pre-Phase 5.3, `img_to_screen` returned the canvas-local
+   position assuming the image natural-origin == canvas (0,0), which
+   is only true when the image's fit-contain destination rect
+   coincides with the canvas top-left. When the canvas is wider than
+   the image (the smoke case: 200 px image in a ~600 px canvas
+   viewport), the fit-contain math centers the image with horizontal
+   padding — so an annotation at image-natural `(40, 40)` lands at
+   canvas-local `(40 + left_padding, 40 + top_padding)`, not at
+   canvas-local `(40, 40)`. The `dst_origin` parameter carries that
+   left/top padding into every primitive, so the annotation lines up
+   with where the image actually drew.
+
+3. **11 helper functions updated** to thread `dst_origin` through
+   the call chain: `draw_annotation`, `draw_handles`, `draw_bindings`,
+   `draw_binding_arrow`, `draw_cursor_crosshair`, `draw_polygon_path`,
+   `draw_polygon_fill`, `draw_polygon_vertex_dots`, `draw_draft_polygon`,
+   `draw_draft_rect`, `draw_binding_from_marker`. The fit-contain rect
+   is precomputed once in `issue_static_commands` + `draw_dynamic_layer`
+   via `fit_contain_rect(frame.size, natural_w, natural_h)` and passed
+   to each helper as `dst_origin = rect.origin`.
+
+4. **First-attempt bug discovery** (smoke
+   `_build/phase5_3_smoke._window.png`): the annotation primitives
+   drew at image-natural coords directly, so the rect outline landed
+   at canvas-local `(40, 40)` (in the sidebar area, overlapping the
+   "Folders" text). Adding `dst_origin` and threading it through
+   the helpers fixed the offset — see
+   `_build/phase5_3_smoke_v2._window.png` for the corrected render.
+
+**Verification:** `_build/phase5_3_smoke_v2._window.png` shows the
+toolbar + sidebar + canvas with:
+- 200×200 magenta image filling the canvas viewport (Phase 5.2 chain).
+- Red Rect outline `(40,40)→(140,140)` at the image-natural position
+  (now correctly inside the image's fit-contain dest rect, not at the
+  canvas top-left). Label "rect-1" inside the rect.
+- Red 3-vertex Polygon triangle outline + fill + vertex dots + label
+  "poly-1" at image-natural position.
+- Red Keypoint circle with white outline + label "kp-1" at
+  image-natural `(60, 170)`.
+- Yellow dashed binding arrow with arrowhead from rect-1 centroid
+  `(90, 90)` to kp-1 centroid `(60, 170)`.
+
+219/219 app_moui tests pass; `moon check --target native` 0 errors.
+`app_moui/_build/native/release/build/app_moui.exe` (1.2 MB) launches
+under `_build/run_smoke.ps1 -OutFile _build/phase5_3_smoke_v2._window.png
+-WaitSeconds 8` and renders the screenshot in 8 s.
+
+**Known issues deferred:**
+- `paint_canvas_decoration` is now unused (Phase 5.2 swap) but the
+  function remains for backwards compat — produces an unused_function
+  warning, non-blocking.
+- 4-stripe multi-color fixture bug from Phase 5.2 is still open. Solid
+  magenta remains the demo default until the `paint_image` src_h
+  clamping bug is root-caused (likely an off-by-one in the loop
+  bounds for branching paths, see Phase 5.2 deferred).
+- Phase 5.3 still uses the synthetic fixture path — production
+  `LoadImage(path)` needs the sync→async file-read bridge (blocked).
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as
