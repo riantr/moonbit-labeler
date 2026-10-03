@@ -426,9 +426,15 @@ pub(all) enum Msg {
   // SetAnnotations(annotations, bindings) — bulk-replace the model's
   //   annotation set + binding list. Used to sync the model after
   //   parsing the label JSON (parser added in 5.x).
-  // BeginDragHandle(ann_id, handle_idx) — start dragging the n-th
-  //   handle of the given annotation. While dragState is Some, every
-  //   CursorMoved emits ModifyHandle instead of hit-testing.
+  // BeginDragHandle(ann_id, handle_idx, start_img_pt) — start
+  //   dragging the n-th handle of the given annotation. The
+  //   `start_img_pt` is the cursor position at drag start in
+  //   image-natural coordinates (recorded in dragState for
+  //   future delta math + audit). While dragState is Some,
+  //   every CursorMoved emits ModifyHandle instead of
+  //   hit-testing. Phase 5.5 added the start_img_pt parameter
+  //   so the handler doesn't need to read cursorImgPt (which
+  //   may not be set yet on the first drag frame).
   // EndDragHandle — release the active drag (no-op when None).
   SetAnnotations(Array[Annotation], Array[Binding])
   // Phase 5.14.B — parse a JSON label text and bulk-load the
@@ -454,7 +460,10 @@ pub(all) enum Msg {
   // the caller (write_file) decides whether to also flush to
   // disk via an Effect.
   SaveCurrentLabel
-  BeginDragHandle(String, Int)
+  // Phase 5.5 — added `start_img_pt` so the handler doesn't
+  // need to read model.cursorImgPt (which may be None on the
+  // first drag frame, before any CursorMoved has fired).
+  BeginDragHandle(String, Int, Point)
   EndDragHandle
   // Phase 5.10 — full image decode result. Carries the decoded
   // pixel width, height, byte length, and pixel format name
@@ -1189,34 +1198,21 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         @moui.Effect::none(),
       )
     }
-    BeginDragHandle(ann_id, handle_idx) =>
-      // Phase 5.3 — start dragging handle. If the cursor is in the
-      // canvas, snapshot its current image position as the drag
-      // origin; otherwise defer until the first CursorMoved.
-      match model.cursorImgPt {
-        Some(img_pt) =>
-          (
-            {
-              ..model,
-              dragState: Some({ ann_id, handle_idx, start_img_pt: img_pt, }),
-              staticLayerDirty: true,
-            },
-            @moui.Effect::none(),
-          )
-        None =>
-          (
-            {
-              ..model,
-              dragState: Some({
-                ann_id,
-                handle_idx,
-                start_img_pt: { x: 0.0, y: 0.0, },
-              }),
-              staticLayerDirty: true,
-            },
-            @moui.Effect::none(),
-          )
-      }
+    BeginDragHandle(ann_id, handle_idx, start_img_pt) =>
+      // Phase 5.5 — start dragging handle. The caller passes
+      // the cursor's image-natural position at drag start
+      // explicitly, so we don't depend on model.cursorImgPt
+      // being set (which it might not be on the very first
+      // drag frame). dragState.start_img_pt is recorded for
+      // future delta math + audit.
+      (
+        {
+          ..model,
+          dragState: Some({ ann_id, handle_idx, start_img_pt, }),
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     EndDragHandle =>
       (
         { ..model, dragState: None, staticLayerDirty: true, },

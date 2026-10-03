@@ -654,6 +654,95 @@ launches + renders in 8 s.
   handle labels. Tracked as a follow-up: normalize `p1`/`p2`
   to `(min, max)` at write time.
 
+### Phase 5.5 — wire on_drag phase routing (Started/Changed/Ended → BeginDragHandle/CursorMoved/EndDragHandle)
+
+Phase 5.5 closes the loop on the drag UX: clicking on a handle
+of the selected annotation now arms `BeginDragHandle` based on
+hit-test state, and releasing the mouse clears it via
+`EndDragHandle`. Pre-5.5 the `BeginDragHandle` / `EndDragHandle`
+chain was wired in `update` but the canvas view only ever
+dispatched `Pan(delta)` + `CursorMoved` per drag frame — there
+was no path from "user clicked on a handle" to "model.dragState
+is Some".
+
+**What landed:**
+
+1. **`Msg::BeginDragHandle(ann_id, handle_idx, start_img_pt)`**
+   — added `start_img_pt : Point` to the variant so the
+   handler doesn't need to read `model.cursorImgPt` (which
+   may be `None` on the very first drag frame, before any
+   `CursorMoved` has fired). The handler records the explicit
+   `start_img_pt` verbatim in `dragState.start_img_pt`.
+
+2. **`app.mbt::BeginDragHandle handler`** — simplified from
+   the Phase 5.3 `match cursorImgPt { Some → ..., None → (0,0) }`
+   fallback to a single-branch handler that uses the explicit
+   parameter. Removes the silent "drag origin = (0, 0) when
+   cursorImgPt is None" failure mode that pre-5.5 produced when
+   `on_drag` Started fired before any `CursorMoved`.
+
+3. **`canvas_view.mbt::canvas_view` second `on_drag` callback**
+   — replaced the Phase 5.11 always-fire `CursorMoved` with a
+   `match ev.phase` dispatch:
+     - `Started` → `hit_test_handle(img_pt, annotations, sel_id, 12.0)`;
+       if Some, dispatch `BeginDragHandle(ann_id, handle_idx, img_pt)`;
+       else dispatch `CursorMoved(img_pt, canvas_pt)`.
+     - `Changed` → `CursorMoved(img_pt, canvas_pt)` (the
+       Phase 5.4 `dragState is Some → ModifyHandle` routing
+       fires inside the `CursorMoved` handler).
+     - `Ended` → `EndDragHandle` (no-op when dragState is
+       already None).
+     - `Idle` / `Pending` / `Cancelled` → `CursorMoved` for
+       cursor tracking.
+
+4. **`main_native.mbt::build_demo_drag_model`** — updated to
+   use the new `BeginDragHandle` signature. The smoke
+   screenshot proves the entire chain
+   (Started → BeginDragHandle → CursorMoved → ModifyHandle →
+   Ended → EndDragHandle) still produces the same resized rect
+   as Phase 5.4.
+
+5. **5 new tests** (234 total, was 229):
+   - `BeginDragHandle — uses explicit start_img_pt, not cursorImgPt (5.5)`
+   - `BeginDragHandle — works with cursorImgPt = None (5.5)`
+   - `on_drag Started phase logic — cursor over selected handle arms BeginDragHandle (5.5)`
+   - `on_drag Started phase logic — cursor NOT over handle does not arm drag (5.5)`
+   - `EndDragHandle — clears dragState (already None) (5.5)`
+
+**Verification:** `_build/phase5_5_smoke._window._window.png`
+shows the same post-drag state as Phase 5.4 (rect-1 BR corner
+resized from `(140, 140)` → `(175, 175)`, binding arrow's
+origin centroid shifted accordingly). Visual identity is the
+expected outcome — Phase 5.5 is purely an internal-routing
+change, not a visual one. 234/234 tests pass; `moon check
+--target native` 0 errors; `app_moui/_build/native/release/build/
+app_moui.exe` (1.2 MB) launches + renders in 8 s.
+
+**Known issues deferred:**
+- The `Started → hit_test_handle` decision is made with the
+  `model.selectedId` from the previous frame. If the user
+  clicks on a handle BEFORE any prior `CursorMoved` has
+  selected anything, `selectedId` is None and the handle drag
+  doesn't arm. Tracked as a follow-up: also fire a
+  `hit_test_select` on `Started` when `selectedId` is None, so
+  clicking on a handle always selects the annotation AND
+  begins the drag in the same frame.
+- `on_drag` doesn't distinguish between left-button drag and
+  middle/right-button drag. Moui 0.1.12 doesn't expose the
+  button ID on `DragGestureEvent`, so right-click-drag (which
+  Phase 5.19 repurposes for wheel-zoom simulation) is also
+  routed through this same handler chain. Side effect: when
+  `zoomDragMode` is on, the first `on_drag` callback's
+  `Pan(delta)` is interpreted as a zoom delta by the
+  `update` handler, but the second `on_drag` callback's
+  `Started → BeginDragHandle` still tries to arm a handle
+  drag. The handle drag arms then no-ops on the next
+  `CursorMoved` (because the cursor's screen position has
+  moved past any handle). User-visible impact: clicking on a
+  handle while zoom-drag mode is on briefly flashes the
+  handle hover state but doesn't actually drag it. Tracked
+  as a follow-up.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

@@ -3574,14 +3574,15 @@ test "ModifyHandle — unknown id is a no-op (5.4)" {
 /// clears dragState. This is the end-to-end flow that
 /// canvas_view's on_drag + on_secondary_tap handlers will
 /// drive when a handle drag is in progress.
-test "drag sequence — BeginDragHandle + CursorMoved + EndDragHandle (5.4)" {
-  let model : Model = {
-    ..Model::new(),
-    cursorImgPt: Some({ x: 90.0, y: 90.0, }),
-    cursorCanvasPt: Some({ x: 90.0, y: 90.0, }),
-  }
+test "drag sequence — BeginDragHandle + CursorMoved + EndDragHandle (5.4/5.5)" {
+  let model : Model = Model::new()
   // Step 1: BeginDragHandle for rect-1's BR corner (handle 4).
-  let (m1, _) = update(model, BeginDragHandle("rect-1", 4))
+  // Phase 5.5 — explicit start_img_pt replaces the cursorImgPt
+  // lookup; the cursor position can be passed directly.
+  let (m1, _) = update(
+    model,
+    BeginDragHandle("rect-1", 4, { x: 140.0, y: 140.0 }),
+  )
   assert_true(m1.dragState is Some(_))
   // Step 2: CursorMoved while dragging should dispatch a
   // follow-up ModifyHandle via Effect::send and update the
@@ -3676,4 +3677,128 @@ test "CursorMoved — with dragState: preserves dragState (5.4)" {
     }
     None => fail("cursorImgPt should be Some after CursorMoved")
   }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.5 — phase-routed on_drag dispatch
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.5 — BeginDragHandle now takes the start image-space
+/// position explicitly (replacing the cursorImgPt lookup).
+/// The handler records it verbatim in `dragState.start_img_pt`,
+/// no matter whether the model's `cursorImgPt` was set first.
+/// This lets canvas_view's `on_drag` Started-phase dispatch
+/// fire without needing a prior CursorMoved.
+test "BeginDragHandle — uses explicit start_img_pt, not cursorImgPt (5.5)" {
+  let model : Model = {
+    ..Model::new(),
+    cursorImgPt: Some({ x: 999.0, y: 999.0, }),
+  }
+  let (next, _) = update(
+    model,
+    BeginDragHandle("rect-1", 4, { x: 50.0, y: 60.0 }),
+  )
+  match next.dragState {
+    Some(d) => {
+      assert_eq(d.ann_id, "rect-1")
+      assert_eq(d.handle_idx, 4)
+      // start_img_pt must be the explicit arg, NOT the
+      // cursorImgPt from the model.
+      assert_eq(d.start_img_pt.x, 50.0)
+      assert_eq(d.start_img_pt.y, 60.0)
+    }
+    None => fail("dragState should be Some after BeginDragHandle")
+  }
+}
+
+///|
+/// Phase 5.5 — BeginDragHandle with cursorImgPt = None still
+/// works (pre-5.5 it would fall back to (0, 0); the new
+/// signature removes that fallback path entirely).
+test "BeginDragHandle — works with cursorImgPt = None (5.5)" {
+  let model : Model = Model::new()
+  let (next, _) = update(
+    model,
+    BeginDragHandle("rect-1", 4, { x: 100.0, y: 100.0 }),
+  )
+  match next.dragState {
+    Some(d) => {
+      assert_eq(d.start_img_pt.x, 100.0)
+      assert_eq(d.start_img_pt.y, 100.0)
+    }
+    None => fail("dragState should be Some")
+  }
+}
+
+///|
+/// Phase 5.5 — `hit_test_handle` returns Some when the cursor
+/// is over a handle of the selected annotation. This is the
+/// "Started → BeginDragHandle" path that canvas_view.mbt's
+/// on_drag callback takes. We verify the hit-test logic by
+/// building a Model with the rect-1 selected + cursor over
+/// its BR corner + calling hit_test_handle directly (the
+/// on_drag wiring itself isn't unit-testable without a
+/// full Moui event simulation).
+test "on_drag Started phase logic — cursor over selected handle arms BeginDragHandle (5.5)" {
+  let model : Model = Model::new()
+  // rect-1's BR corner is at (140, 140). Cursor at (140, 140)
+  // should hit handle 4 (the BR handle).
+  let hit = hit_test_handle(
+    { x: 140.0, y: 140.0 },
+    model.annotations,
+    "rect-1",
+    12.0,
+  )
+  match hit {
+    Some((ann_id, handle_idx)) => {
+      assert_eq(ann_id, "rect-1")
+      assert_eq(handle_idx, 4)
+    }
+    None => fail("expected hit on rect-1's BR handle")
+  }
+  // Verify that BeginDragHandle with the hit args sets dragState.
+  let (next, _) = update(
+    model,
+    BeginDragHandle("rect-1", 4, { x: 140.0, y: 140.0 }),
+  )
+  assert_true(next.dragState is Some(_))
+}
+
+///|
+/// Phase 5.5 — when the cursor is NOT over a handle of the
+/// selected annotation, `hit_test_handle` returns None and
+/// the on_drag Started phase should fall through to plain
+/// CursorMoved (no handle drag arms). We verify the hit-test
+/// returns None.
+test "on_drag Started phase logic — cursor NOT over handle does not arm drag (5.5)" {
+  let model : Model = Model::new()
+  // rect-1's BR is at (140, 140); a cursor at (10, 10) is
+  // far from any handle (12 px radius) or body.
+  let hit = hit_test_handle(
+    { x: 10.0, y: 10.0 },
+    model.annotations,
+    "rect-1",
+    12.0,
+  )
+  assert_true(hit is None)
+  // Model remains unchanged (no dragState set).
+  let (next, _) = update(model, CursorMoved({ x: 10.0, y: 10.0 }, { x: 10.0, y: 10.0 }))
+  assert_true(next.dragState is None)
+}
+
+///|
+/// Phase 5.5 — EndDragHandle clears dragState when None
+/// already (preserves the Phase 5.4 contract). The handler
+/// always sets staticLayerDirty = true (it doesn't check
+/// whether dragState was Some to begin with) — pinned here
+/// so any future change to the no-op path is a deliberate
+/// decision, not a silent regression.
+test "EndDragHandle — clears dragState (already None) (5.5)" {
+  let model : Model = Model::new()
+  let (next, _) = update(model, EndDragHandle)
+  assert_true(next.dragState is None)
+  // Handler currently marks static dirty unconditionally;
+  // documented in EndDragHandle handler in app.mbt.
+  assert_true(next.staticLayerDirty)
 }

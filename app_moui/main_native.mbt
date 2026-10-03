@@ -147,11 +147,13 @@ fn main {
 ///|
 /// Phase 5.4 — simulate a single handle drag on `Model::new()`
 /// before the first frame, so the smoke screenshot demonstrates
-/// the drag wiring visually. Specifically: dispatch
-/// `BeginDragHandle("rect-1", 4)` (BR corner of the default
-/// Rect) + a `CursorMoved` to a new image-natural position +
-/// `ModifyHandle` to land the drag + `EndDragHandle`. The
-/// resulting Model has rect-1 resized from
+/// the drag wiring visually. Phase 5.5 — `BeginDragHandle` now
+/// takes the start image-space position explicitly, so the
+/// dispatched sequence is:
+/// `BeginDragHandle("rect-1", 4, (140,140))` (BR corner of the
+/// default Rect) + a `CursorMoved` to a new image-natural
+/// position + `ModifyHandle` to land the drag + `EndDragHandle`.
+/// The resulting Model has rect-1 resized from
 /// `(40, 40) → (140, 140)` to `(40, 40) → (175, 175)`, proving
 /// the full `update` chain (CursorMoved with dragState Some →
 /// Effect::send ModifyHandle → mutate_annotation →
@@ -159,15 +161,14 @@ fn main {
 /// Used only by the smoke harness; production callers can
 /// keep using `program()` which starts from `Model::new()`.
 fn build_demo_drag_model() -> Model {
-  // Pre-set cursorImgPt so BeginDragHandle's `Some` branch
-  // captures it (BeginDragHandle snapshots cursorImgPt as the
-  // drag origin; we want it to be the original BR (140, 140)).
-  let base : Model = {
-    ..Model::new(),
-    cursorImgPt: Some({ x: 140.0, y: 140.0, }),
-    cursorCanvasPt: Some({ x: 140.0, y: 140.0, }),
-  }
-  let (m1, _) = update(base, BeginDragHandle("rect-1", 4))
+  // Phase 5.5 — BeginDragHandle now takes the start image-space
+  // position explicitly, so we don't need to pre-set
+  // cursorImgPt. The drag origin is the original BR (140, 140).
+  let base : Model = Model::new()
+  let (m1, _) = update(
+    base,
+    BeginDragHandle("rect-1", 4, { x: 140.0, y: 140.0 }),
+  )
   let (m2, _) = update(
     m1,
     CursorMoved({ x: 175.0, y: 175.0 }, { x: 175.0, y: 175.0 }),
