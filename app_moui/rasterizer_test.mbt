@@ -1463,3 +1463,119 @@ test "draw_path_diagonal_stroke_is_a_line_not_its_bounding_box" {
   assert_eq(pixel_at(buf, 2, 9), 0x00000000)
   assert_eq(pixel_at(buf, 9, 2), 0x00000000)
 }
+
+///|
+/// A 2x2 source with four distinct opaque colours, so a
+/// nearest-neighbour sample is unambiguous. Row 0: red, green.
+/// Row 1: blue, white.
+fn quadrant_rgba() -> Bytes {
+  let bytes : Array[Byte] = []
+  // Row 0 — red, then green.
+  bytes.push(b'\xFF')
+  bytes.push(b'\x00')
+  bytes.push(b'\x00')
+  bytes.push(b'\xFF')
+  bytes.push(b'\x00')
+  bytes.push(b'\xFF')
+  bytes.push(b'\x00')
+  bytes.push(b'\xFF')
+  // Row 1 — blue, then white.
+  bytes.push(b'\x00')
+  bytes.push(b'\x00')
+  bytes.push(b'\xFF')
+  bytes.push(b'\xFF')
+  bytes.push(b'\xFF')
+  bytes.push(b'\xFF')
+  bytes.push(b'\xFF')
+  bytes.push(b'\xFF')
+  Bytes::from_array(bytes)
+}
+
+///|
+/// Phase 5.14 — a `DrawImage` is painted into **`run.frame`**, not
+/// stretched to fill the clip.
+///
+/// The discriminator: the frame here is a 10x10 box in the middle of
+/// a 20x20 buffer, and the clip is the whole buffer. Before 5.14 the
+/// source mapping was taken relative to `run.frame ∩ clip`, so the
+/// 2x2 source was stretched over all 20x20 and the corners were
+/// painted too. With the frame honoured, only the 10x10 box is
+/// touched and the corners keep the clear colour.
+test "draw_image_paints_into_run_frame_not_the_whole_clip" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    20,
+    20,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let cache : ImageCache = ImageCache::new()
+  ignore(cache.load_bytes("quad.png", 2, 2, quadrant_rgba()))
+  let run : @core.ImageRun = {
+    source: "quad.png",
+    frame: @core.Rect::new(x=5.0, y=5.0, width=10.0, height=10.0),
+    opacity: 1.0,
+    fit: @core.ImageFit::Contain,
+  }
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawImage(run)],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, cache)
+  // Inside the frame: the 2x2 source fills it in quadrants. The top
+  // half of a 10x10 frame maps to source row 0 (red / green) and the
+  // bottom half to source row 1 (blue / white).
+  assert_eq(pixel_at(buf, 7, 7), 0xFFFF0000)
+  assert_eq(pixel_at(buf, 12, 7), 0xFF00FF00)
+  assert_eq(pixel_at(buf, 7, 12), 0xFF0000FF)
+  assert_eq(pixel_at(buf, 12, 12), 0xFFFFFFFF)
+  // Outside the frame but inside the clip: untouched. These four are
+  // the discriminator — the old stretch painted all of them.
+  assert_eq(pixel_at(buf, 1, 1), 0x00000000)
+  assert_eq(pixel_at(buf, 18, 1), 0x00000000)
+  assert_eq(pixel_at(buf, 1, 18), 0x00000000)
+  assert_eq(pixel_at(buf, 18, 18), 0x00000000)
+}
+
+///|
+/// Phase 5.14 — a `DrawImage` whose frame is **larger** than the
+/// clip must sample the part of the source that actually lands on
+/// screen, and must not index out of bounds.
+///
+/// The frame here is a 16x16 box whose top-left coincides with the
+/// 8x8 buffer, so the buffer shows only the source's top-left
+/// quadrant — source pixel (0, 0), which is red. The old
+/// stretch-to-the-clip behaviour instead scaled the whole 2x2 source
+/// across the 8x8 buffer, producing four coloured quadrants and a
+/// **white** bottom-right. That is the discriminator.
+///
+/// This is the direction the canvas hit in Phase 5.13, where the
+/// canvas frame was far larger than the viewport.
+test "draw_image_with_frame_larger_than_clip_samples_only_the_visible_corner" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    8,
+    8,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let cache : ImageCache = ImageCache::new()
+  ignore(cache.load_bytes("quad.png", 2, 2, quadrant_rgba()))
+  let run : @core.ImageRun = {
+    source: "quad.png",
+    frame: @core.Rect::new(x=0.0, y=0.0, width=16.0, height=16.0),
+    opacity: 1.0,
+    fit: @core.ImageFit::Contain,
+  }
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawImage(run)],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, cache)
+  // The buffer is the top-left eighth of the frame, i.e. entirely
+  // within the source's first texel: every pixel is red.
+  assert_eq(pixel_at(buf, 0, 0), 0xFFFF0000)
+  assert_eq(pixel_at(buf, 4, 0), 0xFFFF0000)
+  assert_eq(pixel_at(buf, 0, 4), 0xFFFF0000)
+  // The discriminator: under the old stretch this corner sampled the
+  // source's bottom-right texel and came out white.
+  assert_eq(pixel_at(buf, 7, 7), 0xFFFF0000)
+}

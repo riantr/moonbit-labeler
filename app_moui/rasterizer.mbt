@@ -384,7 +384,7 @@ fn paint_text(
 ///
 /// Behavior:
 ///   - Cache hit: nearest-neighbor sample from `image.data`
-///     (row-major RGBA8) into `buf` over `run.frame`, alpha-
+///     (row-major RGBA8) into `run.frame`, alpha-
 ///     blending with the destination. Out-of-frame pixels are
 ///     skipped.
 ///   - Cache miss: render the legacy gray-outline + diagonal
@@ -398,6 +398,28 @@ fn paint_text(
 ///     blur security-relevant edges. Phase 14 may add an
 ///     opt-in `ImageFit` -> bilinear path if a use case
 ///     appears.
+///
+/// Phase 5.14 — the source mapping is taken **relative to
+/// `run.frame`**, not relative to the clipped region. It used to be
+/// `src = d * src_size / (run.frame ∩ clip).size`, i.e. the image
+/// was stretched to fill whatever the clip allowed rather than
+/// fitted into the frame it was asked to occupy. Two consequences,
+/// both observed:
+///
+///  - A `DrawImage` with a small frame inside a large clip painted
+///    the whole clip, so the image was drawn over its neighbours
+///    and anything the clip happened to include.
+///  - It masked a real layout bug. `canvas_view` sizes the image
+///    with `fit_contain_rect`, and with a deliberately oversized
+///    frame (Phase 5.13 had a 1e9 x 1e9 canvas) the stretch
+///    happened to fill the viewport and *looked correct*, which is
+///    why the misplacement went unnoticed. With the frame honoured
+///    the fit-contain geometry is finally what the user sees.
+///
+/// The clip is still used, for two things: rejecting a fully
+/// off-screen run, and bounding the destination loop. Source indices
+/// are clamped to `[0, src_len - 1]` afterwards so a clipped run can
+/// never index out of bounds.
 fn paint_image(
   buf : PixelBuffer,
   run : @core.ImageRun,
@@ -416,12 +438,23 @@ fn paint_image(
   if dst_w <= 0 || dst_h <= 0 {
     return
   }
+  // Phase 5.14 — the frame the caller asked for. Every source lookup
+  // below is `(absolute destination pixel - frame origin) / frame
+  // size`, so a pixel outside the frame can never happen and a
+  // pixel inside always samples the right part of the source.
+  let frame_x : Double = run.frame.origin.x
+  let frame_y : Double = run.frame.origin.y
+  let frame_w : Double = run.frame.size.width
+  let frame_h : Double = run.frame.size.height
+  if frame_w <= 0.0 || frame_h <= 0.0 {
+    return
+  }
   match cache.get(run.source) {
     Some(img) => {
       // Map each destination pixel to a source pixel via
-      // nearest-neighbor. (src_x, src_y) live in image
-      // coordinates; the destination covers [x0..x1] x [y0..y1]
-      // which is dst_w x dst_h pixels.
+      // nearest-neighbor, both relative to the RUN FRAME. (The
+      // clip still bounds the loop, but it must not change which
+      // source texel a destination pixel reads.)
       let src_w : Int = img.width
       let src_h : Int = img.height
       if src_w <= 0 || src_h <= 0 {
@@ -432,13 +465,26 @@ fn paint_image(
       let src_stride : Int = src_w * 4
       for dy = 0; dy < dst_h; dy = dy + 1 {
         let dst_y : Int = y0 + dy
-        // Map dst_y ∈ [y0..y0+dst_h-1] to src_y ∈ [0..src_h-1].
-        let src_y : Int = dy * src_h / dst_h
+        let off_y : Double = y0.to_double() + dy.to_double() - frame_y
+        let mut src_y : Int = (off_y * src_h.to_double() / frame_h).to_int()
+        if src_y < 0 {
+          src_y = 0
+        }
+        if src_y > src_h - 1 {
+          src_y = src_h - 1
+        }
         let src_row_off : Int = src_y * src_stride
         let dst_row_off : Int = dst_y * buf.width * 4
         for dx = 0; dx < dst_w; dx = dx + 1 {
           let dst_x : Int = x0 + dx
-          let src_x : Int = dx * src_w / dst_w
+          let off_x : Double = x0.to_double() + dx.to_double() - frame_x
+          let mut src_x : Int = (off_x * src_w.to_double() / frame_w).to_int()
+          if src_x < 0 {
+            src_x = 0
+          }
+          if src_x > src_w - 1 {
+            src_x = src_w - 1
+          }
           let s_off : Int = src_row_off + src_x * 4
           let d_off : Int = dst_row_off + dst_x * 4
           // Read source RGBA (premultiplied? no — to_rgba8 gives

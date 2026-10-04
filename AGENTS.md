@@ -1756,6 +1756,83 @@ layout-only and touches no `update` arm); `moon check --target native`
 0 errors (185 pre-existing warnings, unchanged); `moon fmt --check`
 flags none of the 3 touched files.
 
+### Phase 5.14 — `paint_image` honours `run.frame` (correctness, not placement)
+
+**What changed.** `rasterizer.mbt::paint_image` took its source
+mapping from `run.frame ∩ clip`:
+
+```
+src = d * src_size / (run.frame ∩ clip).size
+```
+
+i.e. it **stretched the image to fill whatever the clip allowed**,
+ignoring the frame the caller had asked the image to occupy. It now
+maps relative to `run.frame`:
+
+```
+src = (absolute_dest - frame.origin) * src_size / frame.size
+```
+
+with the source index clamped to `[0, src_len - 1]`. The clip is
+still used for two things — rejecting a fully off-screen run, and
+bounding the destination loop — but it no longer decides *which* texel
+a destination pixel reads.
+
+**Why it matters beyond tidiness.** It was masking a real bug, in both
+directions:
+
+- A `DrawImage` with a small frame inside a large clip painted the
+  whole clip, over its neighbours.
+- With the canvas's frame deliberately oversized (Phase 5.13 was
+  fixing exactly that, via a 1e9 x 1e9 canvas), the stretch
+  coincidentally filled the viewport and *looked right*. That is why
+  the fit-contain geometry was never load-bearing, and why the image
+  placement bug went unnoticed for so long. With the frame honoured,
+  `fit_contain_rect` in `canvas_view.mbt` is finally what the user
+  actually sees — which also means a future layout regression can no
+  longer hide behind the stretch.
+
+**Two tests, both discriminators** (293/293, +2):
+
+- `draw_image_paints_into_run_frame_not_the_whole_clip` — a 10x10
+  frame in a 20x20 buffer. The 2x2 source (red/green/blue/white)
+  fills the frame in quadrants, and the four buffer **corners stay
+  clear**. Under the old stretch all four corners were painted, so
+  the test fails against the old code rather than merely describing
+  the new.
+- `draw_image_with_frame_larger_than_clip_samples_only_the_visible_corner`
+  — the opposite direction, and the one the canvas actually hit: a
+  16x16 frame over an 8x8 buffer, so the buffer is the source's
+  top-left corner. Every pixel is red; under the old stretch the
+  bottom-right corner came out **white** (source texel 1,1).
+
+**Still not fixed — the image is drawn right of centre.** The Phase
+5.13 note said the geometry implies a 392x392 image at x=367 inside
+the verified 767x392 canvas frame; the smoke still shows it around
+x=718. Since the layout snapshot reports the canvas at 767x392, the
+discrepancy must be in the **paint-time** frame: the value
+`CachedStaticLayerView::paint` receives is larger than the layout
+frame, so `fit_contain_rect` recentres against a bigger box. That is
+a runtime placement question (who supplies `ctx.frame` to a child of
+an explicit-size `FrameLayout`) and is **not** resolved here. The
+rasterizer is now correct either way, so the remaining work is
+upstream of it.
+
+**Smoke capture caveat, extended.** The full-desktop capture catches
+whatever is in the foreground — during this run it caught a browser
+window rather than the app. The per-window capture is the reliable
+one; it is also *not* 1:2 here (it is ~960x540 for a 947x504 window),
+so the Phase 5.13 note's "per-window is half the window" observation
+applies to the older 1920x1080 request and not to the current one.
+Re-measure before trusting either claim.
+
+**Verification:** 293/293 tests pass (+2); `moon check --target
+native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags neither touched file. Smoke
+`_build/phase5_14_final._window._window.png` shows the image, the
+rubber band, `rect-1` and the sidebar rows all still painting — this
+phase changes *where* an image samples, not whether it paints.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as
