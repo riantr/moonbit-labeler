@@ -4845,3 +4845,49 @@ test "polygon rubber band — shows after a single vertex (5.11)" {
     None => fail("expected a rubber band after one vertex")
   }
 }
+
+///|
+/// Phase 5.15 — pins the canvas's fit-contain geometry at the real
+/// window, so "is the image where it should be?" becomes a question a
+/// test answers rather than one a screenshot is asked.
+///
+/// The numbers are the ones the live inspector reports on this host:
+/// a 947x504 logical window, a 180-px sidebar, an 88-px toolbar and
+/// a 24-px status bar, so the canvas is 767x392 at (180, 88) and a
+/// 200x200 image fits into it as 392x392 centred at (367, 88) —
+/// 187 px of horizontal padding on each side and none vertically.
+///
+/// This exists because the geometry was measured by hand three times
+/// and the *screenshot* said the image was off-centre. It was not;
+/// the `PrintWindow` capture does not share a single scale with
+/// logical pixels, so pixel arithmetic on it cannot answer the
+/// question. This test can.
+test "fit_contain_rect — the demo image is centred in the real canvas (5.15)" {
+  let canvas : @core.Rect = @core.Rect::new(
+    x=180.0,
+    y=88.0,
+    width=767.0,
+    height=392.0,
+  )
+  let dst : @core.Rect = fit_contain_rect(canvas, 200.0, 200.0)
+  // Square image in a wider-than-tall frame: height-limited.
+  assert_eq(dst.size.width, 392.0)
+  assert_eq(dst.size.height, 392.0)
+  // Vertically the frame is filled exactly, so y is unchanged.
+  assert_eq(dst.origin.y, 88.0)
+  // Horizontally it is centred: 180 + (767 - 392) / 2. The difference
+  // is odd, so the centre lands on a **half** pixel — 367.5, not
+  // 367. An inspector dump truncates that to 367, which is a fine
+  // thing to read and a bad thing to compute a half-pixel centring
+  // expectation from.
+  assert_eq(dst.origin.x, 367.5)
+  // The image must not spill outside the canvas it is drawn into.
+  assert_true(dst.origin.x >= canvas.origin.x)
+  assert_true(dst.origin.y >= canvas.origin.y)
+  assert_true(
+    dst.origin.x + dst.size.width <= canvas.origin.x + canvas.size.width,
+  )
+  assert_true(
+    dst.origin.y + dst.size.height <= canvas.origin.y + canvas.size.height,
+  )
+}

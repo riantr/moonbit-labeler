@@ -1736,13 +1736,15 @@ The visible consequence is in
 (`# Knife`, `# Gun`, `# Pistol`, `# Rifle`, …) are now all on screen.
 They were clipped in every capture from 5.1 through 5.12.
 
-**Known remaining, honest:** the image is drawn toward the right of
-the canvas and clips at the window edge, rather than being centred by
-`fit_contain_rect`. The geometry says it should be centred in
-767x392 (a 392x392 image at x=367), and the layout is verified
-correct, so this is in the paint path — most likely the same
-`run.frame ∩ clip` stretch described above interacting with the
-rasterizer's own clip. Cosmetic, and tracked, not fixed.
+**Phase 5.15 correction — the geometry was never wrong.** This
+section said the image was clipped at the window edge. It was not.
+The paint-time measurement (see Phase 5.14's correction) gives
+`paint.frame = 180,88 767x392` and `fit = 367,88 392x392` — centred,
+inside the frame, nothing clipped. What changed the *rendered* result
+was Phase 5.14's `paint_image` fix, because until then the rasterizer
+ignored that frame and stretched the image to the clip. The layout
+work in 5.13 was necessary (the status bar really was at y=1e9) but
+it was never the cause of the apparent image problem.
 
 **Smoke capture caveat, now settled.** The per-window
 `PrintWindow` capture is **half** the requested window size, so it
@@ -1806,25 +1808,33 @@ directions:
   top-left corner. Every pixel is red; under the old stretch the
   bottom-right corner came out **white** (source texel 1,1).
 
-**Still not fixed — the image is drawn right of centre.** The Phase
-5.13 note said the geometry implies a 392x392 image at x=367 inside
-the verified 767x392 canvas frame; the smoke still shows it around
-x=718. Since the layout snapshot reports the canvas at 767x392, the
-discrepancy must be in the **paint-time** frame: the value
-`CachedStaticLayerView::paint` receives is larger than the layout
-frame, so `fit_contain_rect` recentres against a bigger box. That is
-a runtime placement question (who supplies `ctx.frame` to a child of
-an explicit-size `FrameLayout`) and is **not** resolved here. The
-rasterizer is now correct either way, so the remaining work is
-upstream of it.
+**Correction (Phase 5.15) — the image is NOT mis-centred.** This
+section originally reported the image as drawn right of centre with
+the geometry implying x=367. That was **wrong**, and the mistake was
+in the instrument rather than the code: a `PrintWindow` capture does
+not share a single scale with logical pixels here, so pixel
+arithmetic on it cannot answer a placement question at all. Measured
+directly in `CachedStaticLayerView::paint` on the real window:
 
-**Smoke capture caveat, extended.** The full-desktop capture catches
-whatever is in the foreground — during this run it caught a browser
-window rather than the app. The per-window capture is the reliable
-one; it is also *not* 1:2 here (it is ~960x540 for a 947x504 window),
-so the Phase 5.13 note's "per-window is half the window" observation
-applies to the older 1920x1080 request and not to the current one.
-Re-measure before trusting either claim.
+```
+paint.frame = 180,88  767x392
+fit_contain  = 367,88  392x392
+```
+
+which is exactly centred — 187 px of horizontal padding on each
+side. The geometry was always right; Phase 5.14's `paint_image` fix is
+what made the *rendered* output finally match it. The claim is
+replaced by a test (`fit_contain_rect — the demo image is centred in
+the real canvas`) so it cannot be re-derived by hand.
+
+**Smoke capture caveat, now settled.** The full-desktop capture catches
+whatever is in the foreground — during Phase 5.14's run it caught a
+browser window rather than the app. The per-window capture is the
+reliable one, but it is **not** a uniform scale of the window: a
+960x540 capture of a 947x504 window is not 1:1, and the factor
+differs between axes. So it is fine for "does the app render at all"
+and useless for "where exactly is this pixel". Measure placement in
+`paint` (or in the inspector snapshot), never on a capture.
 
 **Verification:** 293/293 tests pass (+2); `moon check --target
 native` 0 errors (185 pre-existing warnings, unchanged);
@@ -1832,6 +1842,62 @@ native` 0 errors (185 pre-existing warnings, unchanged);
 `_build/phase5_14_final._window._window.png` shows the image, the
 rubber band, `rect-1` and the sidebar rows all still painting — this
 phase changes *where* an image samples, not whether it paints.
+
+### Phase 5.15 — a correction, and the test that replaces the screenshot
+
+No behaviour change. The layout and the rasterizer are as Phase 5.14
+left them; this phase removes a wrong claim and makes the right claim
+checkable.
+
+**What was wrong.** Phases 5.13 and 5.14 both recorded "the image is
+drawn right of centre / clipped at the window edge" as a known issue.
+It was not. Measured directly in `CachedStaticLayerView::paint` on
+the real window:
+
+```
+paint.frame = 180,88  767x392
+fit_contain  = 367.5,88  392x392
+```
+
+Centred, inside the frame, nothing clipped — 187.5 px of horizontal
+padding on each side.
+
+**Where the mistake came from.** I read it off a `PrintWindow`
+screenshot. That capture does not share a single scale with logical
+pixels on this host: a 960x540 capture of a 947x504 window is not 1:1,
+and the factor differs between axes, so a red-pixel bounding box on
+it cannot recover a position. Fitting both axes from that box gave
+1.64 horizontally and 2.05 vertically — mutually inconsistent, which
+is the tell. I should have treated "my two axes disagree" as "my
+instrument is wrong" instead of "the code is wrong". Two phases
+(5.12, 5.14) were spent on the same mistake before the instrument,
+not the code, was questioned.
+
+Also worth recording: the inspector dump prints integers, and
+`to_int()` truncates the half-pixel centring **367.5 to 367**. Reading
+a centring expectation off a dump therefore produces a test that fails
+for a reason that has nothing to do with the bug.
+
+**What replaces it.** `fit_contain_rect — the demo image is centred in
+the real canvas (5.15)` pins the geometry with the real numbers —
+947x504 window, 180-px sidebar, 88-px toolbar, 24-px status bar, so a
+767x392 canvas at (180, 88) holding a 392x392 image at **367.5**, 88.
+It also asserts the image stays inside the canvas, so a future
+viewport change that broke the fit would fail here rather than being
+noticed by eye. Writing it is what caught the 367-vs-367.5
+discrepancy: the test's first draft asserted 367, and the real value
+is 367.5, because (767 - 392) is odd.
+
+**Rule this establishes.** A placement question is answered by
+`paint`, by the inspector snapshot, or by a test — never by a
+screenshot. A capture answers exactly one question: did anything
+render at all.
+
+**Verification:** 294/294 tests pass (+1); `moon check --target
+native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags neither touched file. No smoke re-run: this
+phase changes no rendering path, and the geometry it pins was
+measured from the live paint in this same phase.
 
 ## Stdio JSON-RPC bridge
 
