@@ -1257,11 +1257,170 @@ steady state.
   one. That asymmetry is now user-visible. The legacy frontend drops
   out of the rect tool but keeps the user in the keypoint tool, so
   this matches production — but it deserves a deliberate decision.
-- `CancelDraft` / `PopDraft` still have no key binding.
 - A real fix for the above would give the `Add*` handlers one shared
   mode-after-commit rule instead of three hand-written `mode: Select`
   lines; the 5.9 mode-reset test exists to make changing it deliberate.
 - Polygon drafting still has no rubber-band segment.
+
+### Phase 5.10 — keyboard shortcuts: `Escape` / `Backspace` / `Delete`
+
+> **Numbering collision.** The MoUI track already re-used 5.2–5.9
+> from the older roadmap, and 5.10 collides again: `Msg::ImageDecoded`
+> carries a comment reading "Phase 5.10 — full image decode result",
+> and the old roadmap also had 5.15 = Delete shortcut and 5.19 =
+> zoom-drag. This section keeps the "Phase 5.10" label for
+> chronological continuity with 5.9; where the two disagree, the
+> per-file comments are the tie-breaker.
+
+**What landed.** Three toolbar shortcuts, each a
+`@views.shortcut_button`:
+
+| Label | Key | Msg |
+| --- | --- | --- |
+| `Cancel` | `Escape` | `CancelDraft` |
+| `Undo pt` | `Backspace` | `PopDraft` |
+| `Delete` | `Delete` | `DeleteSelectedAnnotation` |
+
+`CancelDraft` / `PopDraft` had working `update` arms since the draft
+landed with no way to reach them. `DeleteSelectedAnnotation` was added
+in an earlier phase explicitly "for the Delete / Backspace keyboard
+shortcut" and had never been bound — nor tested. All three are now
+bound, and all three are now tested.
+
+`labeler_ui.mbt` gains `pub(all) struct ShortcutSpec`,
+`pub fn shortcut_specs()`, and `fn shortcut_row(theme)`, hung on a
+**third toolbar row** below the nav row. The specs are plain *data*
+rather than view code precisely so a test can drive them.
+
+**MoUI keyboard API — the four traps** (all verified against
+`.mooncakes/wzzc-dev/moui@0.1.12` sources, all silent on failure):
+
+1. **Key names are capitalised and the match is strict equality.**
+   `KeyboardShortcut::matches` is
+   `event.pressed && event.key == key && event.modifiers == mods`.
+   MoUI's Windows backend (`backend/common/input/window_event_decode.mbt`,
+   `named_key_name`) emits `"Escape"`, `"Backspace"`, `"Delete"`,
+   `"Enter"`, `"Tab"`, `"ArrowLeft"`, … Writing `"escape"` disables
+   the shortcut with **no error anywhere**. This is why the specs are
+   data and why the test drives MoUI's own matcher over them — it is
+   the only way to catch that class of typo without a human pressing
+   keys. Character keys are worse: their host name is the literal
+   character, so they are shift-sensitive and ambiguous. Hence
+   `Backspace` for undo-vertex rather than `Ctrl+Z`.
+
+2. **A bare `View::keyboard_shortcut` dispatches no `Msg`.**
+   `handle_keyboard_shortcut_modifier` returns
+   `{ activated: true, captured: true }` and *nothing else*. The `Msg`
+   only arrives because `runtime/input_keyboard.mbt::dispatch_keyboard_shortcut`
+   then calls `activate_first_child` on the matched node, and the first
+   child is a real pressable button whose `on_click` fires. So the
+   modifier must live on a node whose first child is a button —
+   which is what `shortcut_button` (a `row[button, key-chip]`) is for.
+   Attaching the modifier *to the button itself* would not work: a
+   button has no children to activate.
+
+3. **The first match wins and stops the walk.**
+   `dispatch_keyboard_shortcut_to_children` iterates children in order
+   and breaks at the first activated one, so two specs sharing a key
+   make the second permanently unreachable. A test asserts the three
+   keys are pairwise distinct.
+
+4. **Shortcuts are global, not focus-scoped.** `dispatch_keyboard_shortcut`
+   is a separate whole-tree walk; `dispatch_keyboard` is the
+   focus-based one. Nothing needs to be clicked first.
+
+Also noted: MoUI's `button` has **no `disabled` parameter**, and
+whether `View::disabled()` participates in the keyboard-shortcut path
+could not be verified locally. So the three buttons are always
+enabled, and safety comes from the handlers instead (below).
+
+**Handler safety — the reason the tests exist.** An always-enabled
+destructive key is only safe if its handler is a no-op when there is
+nothing to do. Five invariants are now pinned in
+`canvas_view_test.mbt`:
+
+- `PopDraft` stops at one vertex and never removes the draft's
+  anchor point (3 → 2 → 1 → 1, holding).
+- `PopDraft` on an empty draft is a *complete* no-op: not even
+  `dynamicLayerDirty` is set, so a stray Backspace never schedules a
+  repaint of an unchanged canvas.
+- `CancelDraft` clears the draft, disarms the mode, and leaves the
+  committed scene (annotations / bindings / selection) untouched.
+- `DeleteSelectedAnnotation` with no selection changes nothing —
+  including `label.dirty`, so a stray Delete cannot make the next
+  save write a label the user never edited.
+- `DeleteSelectedAnnotation` drops bindings referencing the id but
+  keeps the *far-end* annotation. The default scene (rect-1 →
+  kp-1) is exactly the ambiguous case: `kp-1` is on both sides of the
+  arrow and only the arrow may go.
+
+**Collateral fix — `CancelDraft` now disarms a pending binding.**
+`SetMode` already cleared both `draftPoints` and `bindingFromId`, but
+`CancelDraft` reset only the mode, leaving a half-armed binding.
+Harmless while `CancelDraft` was unreachable; a real leak the moment
+`Escape` became pressable. `FinishDraft` has the same latent shape but
+is not bound to any key and is not dispatched from the view tree, so
+it was left alone rather than changed untested.
+
+**Layout: the third row costs ~56 px, and why it is a separate row.**
+`shortcut_button` cannot be made narrow enough to share the nav row —
+measured off the smoke capture, the label button is floored at
+`max(72, width - shortcut_width - spacing)` and the key chip at
+`shortcut_width`, so three of them render at a **304-px pitch (912 px
+of a 960-px window)** while the nav row already spans the window.
+Three therefore need a row of their own.
+
+That row is not free. Measured with a pixel scan of
+`_build/phase5_10_final._window._window.png` (canvas top edge at
+x=700):
+
+| Configuration | canvas top (px) | toolbar cost |
+| --- | --- | --- |
+| 5.9 baseline (no shortcut row) | 178 | — |
+| `@views.frame` height=16 | 218 | +40 |
+| `@views.frame` height=24 (**shipped**) | 234 | +56 |
+| unclamped `shortcut_button` | 258 | +80 |
+
+**`height=16` is a trap and must not be "optimised" into place.**
+`@views.frame` clamps the child's *layout* box and does **not** clip
+its *paint*, so a 16-px frame around a ~40-px-tall button lets the
+button paint down into the canvas;
+`_build/phase5_10_smoke_v4._window._window.png` shows all three key
+chips sliced in half by the red image. Keep the frame's height equal
+to the button's real painted height, or the row overlaps the canvas.
+
+**Honest cost statement.** At the default window the sidebar's class
+chips clip one row earlier than in 5.9 (`# Knife` / `# Gun` were
+visible in `phase5_9_smoke._window._window.png` and are not in
+`phase5_10_final...`). This is a real, if small, regression — but the
+sidebar **already overflowed** before this phase: 5.9 showed only 2
+of 6 class chips, and the status bar was off-screen entirely (the
+Phase 20 deferred DPI/rasterizer issue). The root cause is that the
+content does not fit the window, not that this feature is too big.
+The status bar was tried as the home for the shortcuts and reverted:
+it is layout-free (canvas top returned to exactly 178) but sits below
+the fold, so the buttons would be invisible — the same failure mode as
+the Phase 18.C/D invisible-button hunt. Fixing the overflow (taller
+default window, or a denser sidebar) is the follow-up.
+
+**Verification boundary — no keystrokes were synthesised.** It is not
+possible to inject a key event into the window from the smoke harness,
+so the physical-key → `Msg` path is **not** end-to-end verified. What
+is verified: (a) every spec's key string matches a real
+`KeyboardEvent` through MoUI's own matcher, and near-misses
+(lower-case, key-up) do not; (b) each key's `Msg` drives the action it
+advertises; (c) each handler is no-op-safe. The unverified link is
+MoUI's dispatch actually routing a synthesised key to these three
+buttons.
+
+**Verification:** 283/283 tests pass (274 → 283, +9);
+`moon check --target native` 0 errors (185 pre-existing warnings,
+unchanged); `moon fmt --check` flags none of the 4 touched files (the
+repo-wide fmt drift is pre-existing in `component_blackbox_test.mbt`
+and unrelated files, so `moon fmt` was deliberately *not* run). Smoke
+`_build/phase5_10_final._window._window.png` shows the third row with
+`Cancel`/`Esc`, `Undo pt`/`Backspace` and `Delete`/`Delete` all fully
+painted, with no overlap against the canvas.
 
 ## Stdio JSON-RPC bridge
 

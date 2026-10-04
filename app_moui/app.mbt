@@ -906,9 +906,27 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         { ..model, draftPoints: [], mode: Select, dynamicLayerDirty: true, },
         @moui.Effect::none(),
       )
+    // Phase 5.10 — Escape now dispatches this (it had been
+    // unreachable since the draft landed), which makes it the app's
+    // "cancel everything in progress" affordance. It must therefore
+    // also disarm a *pending binding* — before this fix it reset the
+    // mode but left `bindingFromId` set, so a user who armed a
+    // binding, pressed Escape, then pressed `[Binding]` again hit
+    // `SetMode`, which clears the arm... but only by luck of the
+    // ordering. `SetMode` (line ~608) already clears both fields, so
+    // this arm was reachable-but-unreachable only by accident.
+    // `FinishDraft` above has the same latent shape; it is not bound
+    // to any key and not dispatched from the view tree, so it is left
+    // alone rather than changed untested.
     CancelDraft =>
       (
-        { ..model, draftPoints: [], mode: Select, dynamicLayerDirty: true, },
+        {
+          ..model,
+          draftPoints: [],
+          bindingFromId: None,
+          mode: Select,
+          dynamicLayerDirty: true,
+        },
         @moui.Effect::none(),
       )
     DeleteAnnotation(id) => {

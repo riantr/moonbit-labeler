@@ -4564,3 +4564,143 @@ test "AddRect — a stray click neither creates an annotation nor disarms the to
   assert_eq(next.annotations.length(), before)
   assert_eq(next.mode, Mode::Rect)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.10 — handler safety for the three toolbar shortcuts
+//
+// The shortcut buttons are always enabled: MoUI's `button` has no
+// `disabled` parameter and it is unverified whether `View::disabled()`
+// even participates in the keyboard-shortcut dispatch path. So the
+// shortcut that a user can always fire is exactly the shortcut that
+// must be safe to fire at the wrong moment. These tests pin that:
+// a stray Escape / Backspace / Delete may do nothing at all, but it
+// may never corrupt geometry, lose an annotation, or schedule a
+// pointless repaint.
+//
+// The key-name → Msg wiring itself is covered in labeler_ui_test.mbt.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.10 — `PopDraft` (the Backspace shortcut) stops at one
+/// vertex. The first pushed point is the draft's anchor, so a user
+/// holding Backspace must not be able to delete it and leave a
+/// one-less-than-intended polygon. The floor is a deliberate
+/// contract, not an accident, so it gets a test.
+test "PopDraft — stops at one vertex and never removes the anchor (5.10)" {
+  let base : Model = { ..Model::new(), mode: Polygon, }
+  let (p1, _) = update(base, PushDraft({ x: 10.0, y: 10.0 }))
+  let (p2, _) = update(p1, PushDraft({ x: 20.0, y: 20.0 }))
+  let (p3, _) = update(p2, PushDraft({ x: 30.0, y: 30.0 }))
+  assert_eq(p3.draftPoints.length(), 3)
+  let (d1, _) = update(p3, PopDraft)
+  assert_eq(d1.draftPoints.length(), 2)
+  assert_eq(d1.draftPoints[1].x, 20.0)
+  let (d0, _) = update(d1, PopDraft)
+  assert_eq(d0.draftPoints.length(), 1)
+  assert_eq(d0.draftPoints[0].x, 10.0)
+  // Floor: further presses are inert, not destructive.
+  let (again, _) = update(d0, PopDraft)
+  assert_eq(again.draftPoints.length(), 1)
+  assert_eq(again.draftPoints[0].x, 10.0)
+}
+
+///|
+/// Phase 5.10 — Backspace with nothing to undo must be a *complete*
+/// no-op. The shortcut cannot be disabled, so it will be pressed
+/// while the user is doing something else entirely; scheduling a
+/// repaint for an unchanged canvas is pure waste (and the reason
+/// `staticLayerDirty` exists as a separate flag is that a needless
+/// static repaint re-blits the whole image).
+test "PopDraft — an empty draft is a complete no-op, no repaint (5.10)" {
+  let base : Model = {
+    ..Model::new(),
+    mode: Polygon,
+    draftPoints: [],
+    dynamicLayerDirty: false,
+    staticLayerDirty: false,
+  }
+  let (next, _) = update(base, PopDraft)
+  assert_eq(next.draftPoints.length(), 0)
+  assert_true(!next.dynamicLayerDirty)
+  assert_true(!next.staticLayerDirty)
+}
+
+///|
+/// Phase 5.10 — Escape is the app's "cancel what I'm doing" key, so
+/// it must clear *both* kinds of in-progress work: the draft's
+/// vertex list and a pending binding arm. It must also leave the
+/// committed scene completely alone — pressing Escape right after
+/// drawing a rect must not take the rect away with it.
+test "CancelDraft — clears draft and disarms binding, scene untouched (5.10)" {
+  let pristine : Model = Model::new()
+  let ann_count : Int = pristine.annotations.length()
+  let binding_count : Int = pristine.bindings.length()
+  let busy : Model = {
+    ..pristine,
+    mode: EditBinding,
+    bindingFromId: Some("rect-1"),
+    draftPoints: [
+      { x: 10.0, y: 10.0 },
+      { x: 20.0, y: 20.0 },
+    ],
+  }
+  let (next, _) = update(busy, CancelDraft)
+  // Draft gone, arm gone, tool back to Select.
+  assert_eq(next.draftPoints.length(), 0)
+  assert_true(next.bindingFromId is None)
+  assert_eq(next.mode, Mode::Select)
+  assert_true(next.dynamicLayerDirty)
+  // Scene untouched.
+  assert_eq(next.annotations.length(), ann_count)
+  assert_eq(next.bindings.length(), binding_count)
+  assert_true(next.selectedId is None)
+}
+
+///|
+/// Phase 5.10 — Delete with nothing selected must be a complete
+/// no-op. Unlike the other two this one is destructive, so it also
+/// must not mark the label dirty: a stray Delete while browsing
+/// would otherwise make every following save write a label the user
+/// never edited.
+test "DeleteSelectedAnnotation — no selection means no-op and no dirty label (5.10)" {
+  let base : Model = {
+    ..Model::new(),
+    selectedId: None,
+    dynamicLayerDirty: false,
+    staticLayerDirty: false,
+  }
+  let (next, _) = update(base, DeleteSelectedAnnotation)
+  assert_eq(next.annotations.length(), base.annotations.length())
+  assert_eq(next.bindings.length(), base.bindings.length())
+  assert_true(next.selectedId is None)
+  assert_true(!next.label.dirty)
+  assert_true(!next.dynamicLayerDirty)
+  assert_true(!next.staticLayerDirty)
+}
+
+///|
+/// Phase 5.10 — deleting the selected annotation must also drop any
+/// binding that referenced it, and must *not* delete the other end of
+/// that binding. The default scene is rect-1 / poly-1 / kp-1 with
+/// bind-1 going rect-1 → kp-1, which is exactly the ambiguous case:
+/// kp-1 is on both sides of the arrow and only the arrow may go.
+test "DeleteSelectedAnnotation — drops the binding, keeps the far-end annotation (5.10)" {
+  let base : Model = { ..Model::new(), selectedId: Some("rect-1"), }
+  assert_eq(base.bindings.length(), 1)
+  assert_eq(base.annotations.length(), 3)
+  let (next, _) = update(base, DeleteSelectedAnnotation)
+  // The annotation and the arrow that referenced it are gone.
+  assert_eq(next.annotations.length(), 2)
+  assert_eq(next.bindings.length(), 0)
+  // kp-1 was the arrow's target but is itself still an annotation.
+  let ids : Array[String] = []
+  for ann in next.annotations {
+    ids.push(ann.id)
+  }
+  assert_true(ids.contains("kp-1"))
+  assert_true(ids.contains("poly-1"))
+  assert_true(!ids.contains("rect-1"))
+  // Selection cleared, so a second stray Delete cannot fire again.
+  assert_true(next.selectedId is None)
+  assert_true(next.label.dirty)
+}

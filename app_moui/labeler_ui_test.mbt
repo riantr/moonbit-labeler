@@ -212,3 +212,114 @@ test "mode_label — all five tools are captioned and unique (5.9)" {
     }
   }
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.10 — toolbar keyboard shortcuts
+//
+// `KeyboardShortcut::matches` is a strict `key ==` comparison
+// against the host's key name, so a wrong-capitalised key silently
+// disables a shortcut with no error anywhere. These tests drive
+// MoUI's *real* matcher over the specs, which is the only way to
+// catch that without a human pressing keys. The state machine each
+// Msg feeds is covered in canvas_view_test.mbt.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.10 — every spec's key string actually matches a key
+/// event with that name, i.e. the exact spelling MoUI's Windows
+/// backend emits (`named_key_name`). This is the assertion that
+/// catches "escape" vs "Escape".
+test "shortcut specs — key names match real KeyboardEvents (5.10)" {
+  let specs = shortcut_specs()
+  assert_eq(specs.length(), 3)
+  for spec in specs {
+    let sc : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
+      key=spec.key,
+      modifiers=spec.modifiers,
+    )
+    assert_true(
+      sc.matches(@core.KeyboardEvent::new(key=spec.key, pressed=true)),
+    )
+  }
+}
+
+///|
+/// Phase 5.10 — the near-misses must NOT match: a lower-cased key,
+/// and a key release (`pressed = false`). MoUI's matcher requires
+/// `event.pressed`, so a release must be ignored or the action would
+/// fire twice per keystroke.
+test "shortcut specs — wrong case and key release do not match (5.10)" {
+  for spec in shortcut_specs() {
+    let sc : @core.KeyboardShortcut = @core.KeyboardShortcut::new(
+      key=spec.key,
+      modifiers=spec.modifiers,
+    )
+    let lowered : String = spec.key.to_lower()
+    if lowered != spec.key {
+      assert_false(
+        sc.matches(@core.KeyboardEvent::new(key=lowered, pressed=true)),
+      )
+    }
+    // Key-up must not trigger.
+    assert_false(
+      sc.matches(@core.KeyboardEvent::new(key=spec.key, pressed=false)),
+    )
+  }
+}
+
+///|
+/// Phase 5.10 — the three keys are distinct. MoUI's
+/// `dispatch_keyboard_shortcut_to_children` iterates children in
+/// order and breaks at the first match, so two specs sharing a key
+/// would make the second permanently unreachable.
+test "shortcut specs — keys are distinct and labels are non-empty (5.10)" {
+  let specs = shortcut_specs()
+  let n : Int = specs.length()
+  for i = 0; i < n; i = i + 1 {
+    assert_true(specs[i].label != "")
+    assert_true(specs[i].key != "")
+    for j = 0; j < n; j = j + 1 {
+      if i != j {
+        assert_true(specs[i].key != specs[j].key)
+        assert_true(specs[i].label != specs[j].label)
+      }
+    }
+  }
+}
+
+///|
+/// Phase 5.10 — the shortcuts are the ones the toolbar claims:
+/// Escape abandons the draft, Backspace drops a vertex, Delete
+/// removes the selection. `Msg` has no `Eq` derive, so this checks
+/// each Msg's *effect* rather than the value.
+test "shortcut specs — each key drives the action it advertises (5.10)" {
+  let specs = shortcut_specs()
+  // Escape → CancelDraft: a 2-point draft is discarded.
+  let (d1, _) = update(
+    { ..Model::new(), mode: Rect, },
+    BeginDraft({ x: 10.0, y: 10.0, }),
+  )
+  let (d2, _) = update(d1, UpdateDraft({ x: 40.0, y: 40.0, }))
+  assert_eq(d2.draftPoints.length(), 2)
+  let (after_esc, _) = update(d2, CancelDraft)
+  assert_eq(after_esc.draftPoints.length(), 0)
+  // Backspace → PopDraft: the last vertex goes, the others stay.
+  let (p1, _) = update(
+    { ..Model::new(), mode: Polygon, },
+    PushDraft({ x: 10.0, y: 10.0 }),
+  )
+  let (p2, _) = update(p1, PushDraft({ x: 20.0, y: 20.0 }))
+  let (p3, _) = update(p2, PushDraft({ x: 30.0, y: 30.0 }))
+  assert_eq(p3.draftPoints.length(), 3)
+  let (after_bs, _) = update(p3, PopDraft)
+  assert_eq(after_bs.draftPoints.length(), 2)
+  assert_eq(after_bs.draftPoints[0].x, 10.0)
+  assert_eq(after_bs.draftPoints[1].x, 20.0)
+  // Delete → DeleteSelectedAnnotation: the selected rect goes.
+  let selected = { ..Model::new(), selectedId: Some("rect-1"), }
+  let before_del : Int = selected.annotations.length()
+  let (after_del, _) = update(selected, DeleteSelectedAnnotation)
+  assert_eq(after_del.annotations.length(), before_del - 1)
+  assert_true(after_del.selectedId is None)
+  assert_eq(specs.length(), 3)
+}

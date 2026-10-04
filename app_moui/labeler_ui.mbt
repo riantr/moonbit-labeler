@@ -164,6 +164,25 @@ pub fn build_labeler_ui_view(
         ],
         spacing=4.0,
       ),
+      // Phase 5.10 — keyboard shortcuts, on their own toolbar row.
+      //
+      // They cannot share the nav row: measured off
+      // `phase5_10_smoke._window._window.png`, three
+      // `shortcut_button`s render at a 304-px pitch (912 px of the
+      // 960-px window) because `shortcut_button` floors the label
+      // button at `max(72, width - shortcut_width - spacing)` and
+      // the key chip at `shortcut_width`. The nav row already
+      // spans the window, so a third row is the only placement
+      // that fits.
+      //
+      // Cost, measured: this row adds ~56 px to the toolbar, which
+      // clips the sidebar's class chips one row earlier. The sidebar
+      // already overflowed before this phase — `phase5_9` showed 2
+      // of 6 class chips and the status bar was off-screen entirely
+      // (Phase 20's deferred DPI/rasterizer issue) — so the real fix
+      // is a taller window, tracked in AGENTS.md, not a smaller
+      // feature set.
+      shortcut_row(dark_theme),
     ],
     spacing=4.0,
   )
@@ -331,6 +350,137 @@ fn mode_button(
     width~,
     height=24.0,
   )
+}
+
+///|
+/// Phase 5.10 — one keyboard shortcut: the label shown on the
+/// button, the host key name, its modifier mask, the Msg the press
+/// dispatches, and the button width.
+///
+/// This is deliberately *data*, not view code, because
+/// `KeyboardShortcut::matches` is a strict
+/// `event.pressed && event.key == key && event.modifiers == mods`
+/// comparison against the host's own key name. MoUI's Windows
+/// backend (`backend/common/input/window_event_decode.mbt ::
+/// named_key_name`) emits capitalised names — "Escape",
+/// "Backspace", "Delete" — so writing "escape" would silently
+/// disable the shortcut with no error anywhere. Keeping the specs
+/// as a plain list lets a test drive MoUI's *real* matcher over
+/// them, which is the only way to catch that class of typo without
+/// a human pressing keys.
+pub(all) struct ShortcutSpec {
+  label : String
+  key : String
+  modifiers : @core.KeyModifiers
+  msg : Msg
+  width : Double
+}
+
+///|
+/// Phase 5.10 — the app's keyboard shortcuts.
+///
+/// `CancelDraft` / `PopDraft` had working `update` arms since the
+/// draft landed but no way to reach them; `DeleteSelectedAnnotation`
+/// was added in an earlier phase explicitly "for the Delete /
+/// Backspace keyboard shortcut" and likewise never bound. All three
+/// now have one.
+///
+/// The keys are deliberately distinct, because MoUI's
+/// `dispatch_keyboard_shortcut_to_children` walks the children in
+/// order and **stops at the first match** — two specs sharing a key
+/// would make the second unreachable. Backspace (not Ctrl+Z) is the
+/// undo-vertex key because a character key's host name is the
+/// literal character, so it is shift-sensitive and ambiguous, while
+/// the named keys are exact.
+pub fn shortcut_specs() -> Array[ShortcutSpec] {
+  [
+    {
+      label: "Cancel",
+      key: "Escape",
+      modifiers: @core.KeyModifiers::none(),
+      msg: CancelDraft,
+      width: 132.0,
+    },
+    {
+      label: "Undo pt",
+      key: "Backspace",
+      modifiers: @core.KeyModifiers::none(),
+      msg: PopDraft,
+      width: 148.0,
+    },
+    {
+      label: "Delete",
+      key: "Delete",
+      modifiers: @core.KeyModifiers::none(),
+      msg: DeleteSelectedAnnotation,
+      width: 148.0,
+    },
+  ]
+}
+
+///|
+/// Phase 5.10 — build the shortcut buttons. Each spec becomes a
+/// `@views.shortcut_button`, which renders the label plus the
+/// shortcut's `display_label()` (so "Escape" reads as "Esc") and
+/// attaches the shortcut via `View::keyboard_shortcut`.
+///
+/// A `shortcut_button` (rather than a bare `View::keyboard_shortcut`
+/// on some invisible node) is required by the runtime: on a key
+/// match, `dispatch_keyboard_shortcut` calls
+/// `activate_first_child`, and the modifier itself returns
+/// `activated: true` with **no Msg**. The Msg only arrives because
+/// the first child is a real pressable button whose `on_click` fires.
+/// A zero-size shortcut host — or a modifier attached directly to
+/// the button itself, which has no children — would therefore never
+/// dispatch anything.
+///
+/// These are always enabled, never conditionally greyed out: their
+/// handlers are already no-op-safe (`PopDraft` refuses to drop below
+/// one vertex, `CancelDraft` on an empty draft is a harmless reset,
+/// `DeleteSelectedAnnotation` with no selection does nothing), and
+/// that safety is pinned by tests in canvas_view_test.mbt rather than
+/// by hiding the control. MoUI's `button` has no `disabled`
+/// parameter, and whether `View::disabled()` participates in the
+/// keyboard-shortcut dispatch path was not verifiable locally.
+///
+/// The `@views.frame` wrapper is the Phase 18.E clamp `mode_button`
+/// uses: the dark theme's control metrics force an intrinsic button
+/// height regardless of the `height` we pass. Measured on the smoke
+/// capture, an unclamped row cost ~80 px of toolbar height and a
+/// `height=24` clamp ~56.
+///
+/// `height=16` (the sidebar's row pitch) would cost only ~40 px, and
+/// was tried — but it is a trap. `@views.frame` clamps the child's
+/// *layout* box and does **not** clip its *paint*, so a 16-px frame
+/// around a ~40-px-tall button lets the button paint straight down
+/// into the canvas; `phase5_10_smoke_v4._window._window.png` shows
+/// the three key chips sliced in half by the red image. Keep the
+/// frame's height equal to the button's real painted height, or the
+/// row overlaps the canvas below it.
+fn shortcut_row(theme : @core.Theme) -> @moui.View[Msg] {
+  let buttons : Array[@moui.View[Msg]] = []
+  for spec in shortcut_specs() {
+    buttons.push(
+      @views.frame(
+        @views.shortcut_button(
+          spec.label,
+          on_click=spec.msg,
+          shortcut=@core.KeyboardShortcut::new(
+            key=spec.key,
+            modifiers=spec.modifiers,
+          ),
+          variant=@style.ButtonVariant::Ghost,
+          theme~,
+          width=spec.width,
+          height=24.0,
+          shortcut_width=48.0,
+        ),
+        width=spec.width,
+        height=24.0,
+      ),
+    )
+  }
+  @views.row(buttons, spacing=4.0)
 }
 
 ///|
