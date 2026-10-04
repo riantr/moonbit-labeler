@@ -266,7 +266,48 @@ pub fn build_labeler_ui_view(
   // presumably painting into a region the rasterizer no longer
   // samples. Not understood, so not shipped; the 1e9 leak is
   // recorded as an open item instead.
-  let canvas : @moui.View[Msg] = canvas_view(model)
+  // Phase 5.13 — the frame, and why it exists.
+  //
+  // `canvas_view` is meant to be greedy, but "greedy" means whatever
+  // `ctx.constraints.max` happens to be, and MoUI 0.1.12's
+  // `ViewNode::child_constraints` defaults to `constraints.loosen()`
+  // — so a pass-through layout hands its children the *unbounded*
+  // max (`Constraints::unbounded()` = 1.0e9, `core/geometry.mbt:86`).
+  // Neither `@layout.stack` nor `@views.canvas` overrides it. The
+  // canvas therefore measured **1e9 x 1e9**, which:
+  //
+  //  - poisoned the outer column, so the status bar was placed at
+  //    `y = 1_000_000_088` and never painted;
+  //  - *appeared* to work, because `rasterizer.mbt::paint_image`
+  //    maps the destination using `run.frame ∩ clip`, i.e. it
+  //    **stretches the image to fill the clipped region** rather
+  //    than fitting it into `run.frame`. With a 1e9 frame the
+  //    intersection is the whole viewport, so the image filled the
+  //    canvas — correct by accident. And because a 200x200 square
+  //    image in a 1e9 square frame has the same aspect ratio,
+  //    `fit_contain_rect` returned the frame unchanged, so
+  //    `dst_origin` stayed at the frame origin and the annotations
+  //    landed correctly too.
+  //
+  // Bounding the frame removes the accident, and then the bound has
+  // to be the *real* viewport: an earlier attempt used
+  // `build_labeler_ui_view`'s hardcoded `1280.0, 800.0` parameters
+  // and produced a 1100x688 canvas, whose fitted image landed at
+  // `y = 368` — almost entirely outside the 947x504 buffer, so the
+  // canvas rendered blank. `width` / `height` are now
+  // `Model::viewport`, which `main_native.mbt` sets from the same
+  // constants it hands the runtime.
+  //
+  // With a correct bound the main row's height becomes 392 rather
+  // than 1e9, the column resolves [88, 392, 24] inside 504, and the
+  // status bar lands flush at `y = 480`.
+  let canvas_frame_w : Double = if width > 180.0 { width - 180.0 } else { 1.0 }
+  let canvas_frame_h : Double = if height > 112.0 { height - 112.0 } else { 1.0 }
+  let canvas : @moui.View[Msg] = @views.frame(
+    canvas_view(model),
+    max_width=canvas_frame_w,
+    max_height=canvas_frame_h,
+  )
   // ─── Bottom status bar ───
   let status_text : String = match model.toastMessage {
     Some(msg) => msg

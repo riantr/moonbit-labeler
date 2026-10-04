@@ -1664,6 +1664,98 @@ to the 5.11 capture — image, annotations, rubber band, `poly-1`'s
 triangle and the binding arrow all still paint — so the typography
 change is layout-only, which is the claim.
 
+### Phase 5.13 — the canvas is bounded, and the status bar is on screen
+
+Closes the item Phase 5.12 diagnosed: the status bar was parked at
+`y = 1_000_000_088`, and both attempts to fix it there had been
+reverted.
+
+**Root cause, complete.** `canvas_view` is greedy by design — its
+layers return `ctx.constraints.max`. MoUI 0.1.12's
+`ViewNode::child_constraints` defaults to `constraints.loosen()`, and
+neither `@layout.stack` nor `@views.canvas` overrides it, so a
+pass-through layout hands its children the **unbounded** max
+(`Constraints::unbounded()` = 1.0e9, `core/geometry.mbt:86`). The
+canvas measured 1e9 x 1e9, which poisoned the outer column and
+threw the status bar a billion pixels down.
+
+**Why it looked like it worked.** `rasterizer.mbt::paint_image` maps
+the destination with `src = d * src_size / dst_size`, where `dst`
+comes from `run.frame ∩ clip` — it **stretches the image to fill the
+clipped region** rather than fitting it into `run.frame`. With a 1e9
+frame the intersection is the whole viewport, so the image filled the
+canvas: correct by accident. And because a 200x200 square image in a
+1e9 square frame has the same aspect ratio, `fit_contain_rect`
+returned the frame unchanged, so `dst_origin` stayed at the frame
+origin and the annotations landed correctly too. One number, 1e9,
+was doing two unrelated jobs.
+
+**The fix, and the trap on the way.** Bounding the canvas with
+`@views.frame(max_width=, max_height=)` removes the accident, and
+then the bound has to be the real viewport. The first attempt used
+`build_labeler_ui_view`'s hardcoded `1280.0, 800.0` parameters, which
+had been wrong since Phase 18.B (`main_native.mbt` opened 1920x1080,
+and nothing ever checked the two against each other). That produced a
+1100x688 canvas whose fitted image landed at `y = 368` — almost
+entirely outside the 947x504 buffer — so **the canvas rendered blank**
+and looked like a cache bug. It was never a cache bug.
+
+**`Model::viewport` is the fix.** The view has no other way to learn
+the real size: MoUI 0.1.12 exposes no resize callback, and
+`child_constraints` hands children 1e9 rather than the parent's
+resolved size, so "how much room is there" has to be told. The
+viewport is now a Model field, set by `main_native.mbt` from the same
+constants the runtime is given.
+
+**The two numbers are deliberately different, and getting that wrong
+is observable.** `AppRuntime::size()` returns the request **divided by
+the DPI scale factor** (2 on this host). So:
+
+| | value | role |
+| --- | --- | --- |
+| request | 1920x1080 | what Win32 wants; Phase 18.B was right |
+| `AppRuntime::size()` | 947x504 | the logical layout |
+| `Model::viewport` | 947x504 | what the view sizes against |
+
+Asking for 947x504 produces a **460x216** logical layout — a
+half-size window. Verified: that build's live layout reported
+460x216, and the fixed one reports 947x504.
+
+**Verified layout, live, via the inspector** (was / is):
+
+| node | was | is |
+| --- | --- | --- |
+| root column | 947 x 504 | 947 x 504 |
+| toolbar | 88 | 88 |
+| main row | 947 x 1e9 | 947 x **392** |
+| canvas | x=180, 1e9 x 1e9 | x=180, **767 x 392** |
+| status text | **y = 1000000088** | **y = 480** (504 - 24) |
+
+The visible consequence is in
+`_build/phase5_13_final._window.png`: the sidebar's class chips
+(`# Knife`, `# Gun`, `# Pistol`, `# Rifle`, …) are now all on screen.
+They were clipped in every capture from 5.1 through 5.12.
+
+**Known remaining, honest:** the image is drawn toward the right of
+the canvas and clips at the window edge, rather than being centred by
+`fit_contain_rect`. The geometry says it should be centred in
+767x392 (a 392x392 image at x=367), and the layout is verified
+correct, so this is in the paint path — most likely the same
+`run.frame ∩ clip` stretch described above interacting with the
+rasterizer's own clip. Cosmetic, and tracked, not fixed.
+
+**Smoke capture caveat, now settled.** The per-window
+`PrintWindow` capture is **half** the requested window size, so it
+shows only the top-left of a 947x504 window. Every "the status bar is
+missing" reading from a per-window capture was partly this. The
+full-desktop capture (`<out>.png`, no `._window` suffix) shows the
+whole window and is the one to look at for layout questions.
+
+**Verification:** 291/291 tests pass (unchanged — this phase is
+layout-only and touches no `update` arm); `moon check --target native`
+0 errors (185 pre-existing warnings, unchanged); `moon fmt --check`
+flags none of the 3 touched files.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

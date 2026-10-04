@@ -60,23 +60,33 @@
 /// the smoke flag, the binary blocks indefinitely waiting for
 /// the user to close the window.
 fn main {
-  // Initial window framebuffer size. 1920×1080 leaves room
-  // for the 240 px sidebar + an 800 px canvas viewport (5.12.D
-  // hardcodes 800×600 for FitView; 800 is the minimum that
-  // matters, but 800 is the canvas width not the window width,
-  // so the window itself can be wider for the sidebar +
-  // chrome).
+  // Phase 5.13 — the window size, and the two numbers it becomes.
   //
-  // Phase 18.B — bumped from 1280×800 to 1920×1080 so the
-  // view-tree path has plenty of room to lay out the toolbar +
-  // 4 folder buttons + 6 chips + canvas decoration + status bar
-  // side by side. The earlier 1280×800 fit, but Phase 18.B's
-  // explicit-width buttons (180×20 for folders/chips, 80×24 for
-  // toolbar buttons, 200×24 for the title text, 320×24 for the
-  // folder label) plus the toolbar's two-row layout push the
-  // intrinsic width past 1280 px, which is what was clipping
-  // the sidebar buttons and toolbar nav row.
-  let size : @core.Size = @core.Size::new(width=1920.0, height=1080.0)
+  // This used to be a bare 1920x1080 with the comment "leaves room
+  // for the 240 px sidebar + an 800 px canvas viewport", and a
+  // separate `1280x800` was hardcoded into `app.mbt::view` for the
+  // view tree. Neither number was ever checked against the other.
+  //
+  // The physical request is what Win32 wants; the logical pair is
+  // what the layout (and therefore `Model::viewport`) works in.
+  // `AppRuntime::size()` returns the request divided by the DPI
+  // scale factor, which is 2 on this host: 1920x1080 requested
+  // gives a 947x504 logical layout. Getting this backwards is
+  // observable — requesting 947x504 produced a 460x216 logical
+  // layout, i.e. a half-size window. Phase 18.B's 1920x1080 was
+  // right and should not have been "fixed"; the display is
+  // 1894x1009 physical, so that is as large as the window can
+  // usefully get. The scale factor is not knowable before the
+  // surface exists, so both numbers are spelled out rather than
+  // derived.
+  let window_physical_width : Double = 1920.0
+  let window_physical_height : Double = 1080.0
+  let window_logical_width : Double = 947.0
+  let window_logical_height : Double = 504.0
+  let size : @core.Size = @core.Size::new(
+    width=window_physical_width,
+    height=window_physical_height,
+  )
   // Phase 5.2 — pre-populate the renderer's module-local
   // ImageCache with a synthetic 200×200 RGBA8 test fixture so
   // the smoke screenshot can demonstrate the full image-source
@@ -101,7 +111,13 @@ fn main {
   // the cold-start Model. Production callers can keep using
   // the default `program()` (Model::new with no initial
   // drag).
-  let init_model : Model = build_demo_drag_model()
+  let init_model : Model = {
+    ..build_demo_drag_model(),
+    viewport: @core.Size::new(
+      width=window_logical_width,
+      height=window_logical_height,
+    ),
+  }
   let program : @moui.Program[Model, Msg] = program_with_init(
     init_model,
   )

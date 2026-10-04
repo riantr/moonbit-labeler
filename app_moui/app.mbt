@@ -191,6 +191,19 @@ pub(all) struct Model {
   // blit them in phase 10 (the MoUI DrawImage primitive
   // currently only takes a file-path source, not raw bytes).
   imageDecoded : ImageDecodedMeta?
+  // Phase 5.12 — the viewport the view tree is sized against.
+  // Phase 5.13 — this was previously a hardcoded `1280.0, 800.0`
+  // passed straight into `build_labeler_ui_view`, which had been
+  // wrong since Phase 18.B (the launcher opens 1920x1080, and after
+  // the host reports its real surface the runtime re-lays-out to
+  // 947x504 on this machine). It is on the Model because
+  // `main_native.mbt` is the only place that knows the window size
+  // it asked for, and the view has no other way to learn the real
+  // one: MoUI 0.1.12 has no resize callback, and
+  // `ViewNode::child_constraints` defaults to `constraints.loosen()`
+  // so a pass-through layout hands its children the unbounded 1e9
+  // max rather than the parent's resolved size.
+  viewport : @core.Size
   fitMode : @core.ImageFit
   // Phase 5.3 — annotations + bindings + active handle drag.
   annotations : Array[Annotation]
@@ -231,6 +244,13 @@ pub fn Model::new() -> Model {
     draftPoints: [],
     bindingFromId: None,
     classes: [],
+    // Phase 5.13 — default viewport. `main_native.mbt` overwrites
+    // this on the cold-start model with the size it asks the
+    // runtime for, so the view and the window cannot disagree. The
+    // value here is only what a headless `Model::new()` caller
+    // gets; it matches the 947x504 logical surface this host
+    // actually produces (1894x1009 physical at scale_factor 2).
+    viewport: @core.Size::new(width=947.0, height=504.0),
     // Phase 5.3 — default annotation set + binding. The smoke
     // screenshot demonstrates the full annotation rendering
     // pipeline (image + annotation bodies + binding arrows +
@@ -1818,11 +1838,12 @@ pub fn view(model : Model) -> @moui.View[Msg] {
   // SetMode, SetClassType, etc.) are wired into the new toolbar
   // and sidebar buttons.
   //
-  // We pass `1280.0, 800.0` as the initial layout size to match
-  // the @core.Size::new(width=1280, height=800) the windows
-  // backend launches with (main_native.mbt). Moui's flex layout
-  // resizes the tree on window-resize events automatically.
-  build_labeler_ui_view(model, 1280.0, 800.0)
+  // We pass `model.viewport` as the initial layout size, which
+  // `main_native.mbt` sets from the same constants it hands the
+  // runtime. Moui's flex layout resizes the tree on window-resize
+  // events automatically, but the view still needs a real number to
+  // bound the canvas with — see `Model::viewport`.
+  build_labeler_ui_view(model, model.viewport.width, model.viewport.height)
 }
 
 // ─────────────────────────────────────────────────────────────────
