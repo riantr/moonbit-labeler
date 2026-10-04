@@ -1566,6 +1566,104 @@ fix it. The findings, so the next attempt does not repeat them:
   `PrintWindow` capture is 960x540, so capture px are half of
   logical px.
 
+### Phase 5.12 — chrome theme: the declared font size is layout ballast
+
+**What landed.** `labeler_ui.mbt` gains `chrome_typography_scale()`,
+`chrome_spacing_scale()` and `compact_theme(base)`, applied to the
+**controls only** (nav-row buttons, sidebar folder rows, sidebar class
+chips, shortcut row). Text widgets keep `dark_theme` and their
+explicit heights.
+
+**Why shrinking the declared type is free.** MoUI's `button` measures
+itself as `max(min_size.height, text_height + 2 *
+spacing_scale.sm)` (`views/button/button.mbt:156`), and the text
+height comes from the theme's font via
+`@core.TextSystem::fallback()`, which reports `font.size * 1.25`
+(`core/text_layout.mbt:568`) — 20 logical px for the theme's 16-px
+control font. But `rasterizer.mbt::paint_text` **ignores `font.size`
+entirely**: it draws a fixed 5x7 glyph cell and vertically centres it
+in `run.frame`. The declared size is therefore pure layout ballast —
+a 16-px control font produced 36-px buttons (20 + 2x8) inside
+`@views.frame(width=180, height=16)` rows that asked for 16, and the
+frames were powerless to stop it.
+
+`control` drops to 10 px, so the declared text height becomes 12.5 and
+`sm` to 1, so the button lands on `max(16, 12.5 + 2) = 16` — the
+frame's own floor. **The glyphs are redrawn byte-identically**,
+because `paint_text` never looked at the size.
+
+**Verified, not assumed.** MoUI exposes the live layout through
+`AppRuntime::inspector_snapshot()` (a record that derives `Debug` and
+`ToJson`). Dumped from inside `render_frame` — the only hook that
+fires after the surface reports its real size — the sidebar's folder
+rows go from `y = 126, 144, 162, 180` (pitch 18) where they were
+pitch 36, and the class chips from pitch 36 to 17. The whole chrome
+now measures 88 (toolbar) + ~253 (sidebar) + 24 (status) = ~365 of the
+504 logical px available. That is the first time the layout has
+provably fit the window.
+
+**Recipe, worth keeping.** `moon run` the exe with `--smoke` and
+redirect stdout; parse `layout.bounds` (per-node `element_id`, `frame`,
+`constraints`) and join it against `view_tree.nodes` (`element_id` ->
+`kind`). The values are MoonBit's `Json` debug form — `Object({...})`,
+`Number(...)`, `String(...)` — not strict JSON, so `ConvertFrom-Json`
+will not read it. Two gotchas: the layout reported in `main` is measured
+against the *requested* size, not the real surface, so the dump has to
+come from inside the frame loop; and this host runs at
+`scale_factor = 2`, so the window is **947x504 logical**, not the
+1920x1080 `main_native.mbt` asks for (the runtime re-lays-out to the
+real surface). Pixel-scanning the smoke capture cannot answer any of
+this — the capture's px-to-logical mapping is not 1:1 and guessing it
+is what cost Phase 5.11 and most of this phase.
+
+**Open: the status bar is parked at y = 1,000,000,088.** Still not
+fixed, but now measured rather than guessed, and the cause is known:
+
+- MoUI 0.1.12's `ViewNode::child_constraints` defaults to
+  `constraints.loosen()`, and neither `@layout.stack` nor
+  `@views.canvas` overrides it. The unbounded max is `1.0e9`
+  (`core/geometry.mbt:86`), and `canvas_view`'s layers return
+  `ctx.constraints.max`. The live snapshot records the whole chain:
+  root column `947x504` (constraints min = max, correct), main row
+  `947 x 1e9`, canvas `x=180, w=1e9, h=1e9`, status text
+  **`y = 1000000088`**.
+- So the status bar is not clipped, it is a billion pixels below the
+  window. That is the real cause of every symptom chased since Phase
+  18 — including **Phase 20's status-bar mystery, which was recorded
+  as a DPI and `windows_skia` bottom-edge raster bug and is neither**
+  — and of the sidebar's apparent overflow, which was always inside
+  the window.
+
+Two fixes were tried and **both reverted**:
+
+- **`.expanded()` on the main row** (weighted child, so its base is 0
+  and the 1e9 canvas cannot poison `child_main_total`). The column
+  then resolves [88, 0, 24], hands the main row `504 - 112 = 392`,
+  and puts the status bar at `y = 480 = 504 - 24` — **confirmed
+  correct in the inspector**. But the canvas's own width stays 1e9, the
+  fit-contain math centres the image in that frame, and the canvas
+  renders blank.
+- **`@views.frame(canvas, max_width=, max_height=)`** to bound that
+  width. It does bound it (node 85: 1e9 -> 1100), but the canvas
+  *still* renders blank — no image, no annotations, only the neutral
+  background. The static layer is painting somewhere the rasterizer no
+  longer samples. Not understood, so not shipped.
+
+The open question is the second one: **why does bounding the canvas
+stop the static layer from painting at all?** Start from
+`CachedStaticLayerView::paint` (`canvas_view.mbt:293`) and the
+`ViewPaintLayer` cache, since bounding the frame changes the layer's
+cache key and the first frame after a key change is exactly when a
+cache-fill pattern drops commands.
+
+**Verification:** 291/291 tests pass (289 -> 291, +2 on the theme
+scales); `moon check --target native` 0 errors (185 pre-existing
+warnings, unchanged); `moon fmt --check` flags neither touched file.
+Smoke `_build/phase5_12_final._window._window.png` is pixel-equivalent
+to the 5.11 capture — image, annotations, rubber band, `poly-1`'s
+triangle and the binding arrow all still paint — so the typography
+change is layout-only, which is the claim.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

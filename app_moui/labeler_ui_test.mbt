@@ -323,3 +323,65 @@ test "shortcut specs — each key drives the action it advertises (5.10)" {
   assert_true(after_del.selectedId is None)
   assert_eq(specs.length(), 3)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.12 — chrome theme
+//
+// The declared font size is pure layout ballast: `paint_text` ignores
+// it and draws a fixed 5x7 cell, while `button.layout` sizes itself
+// from it. These tests pin the one number that matters — that the
+// declared control size stays under the threshold where a button's
+// intrinsic height stops fitting inside the 16-px floor the sidebar
+// frames request. Everything else about the scale is cosmetic.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.12 — `compact_theme` must not disturb anything except the
+/// two scales it exists to change. Palette, radii and shadows are
+/// inherited, so a colour regression in a future edit shows up here
+/// rather than in a screenshot.
+test "compact_theme — changes only typography and spacing (5.12)" {
+  let base : @core.Theme = @core.Theme::neutral().with_palette(
+    @core.ColorPalette::dark(),
+  )
+  let c : @core.Theme = compact_theme(base)
+  // Palette identity.
+  assert_eq(c.palette, base.palette)
+  assert_eq(c.scheme, base.scheme)
+  assert_eq(c.radius_scale, base.radius_scale)
+  // The two scales it does change.
+  assert_true(c.typography != base.typography)
+  assert_true(c.spacing_scale != base.spacing_scale)
+}
+
+///|
+/// Phase 5.12 — the chrome's declared control size must be small
+/// enough that a button's intrinsic height fits the 16-px floor the
+/// sidebar rows and the 24-px nav row request. The button's height is
+/// `max(floor, font.size * 1.25 + 2 * spacing_scale.sm)`
+/// (`views/button/button.mbt:156`), so this is the inequality that
+/// decides whether the frames are honoured or ignored.
+///
+/// A regression here is invisible in a unit test but very visible on
+/// screen: it re-inflates the sidebar to 2.25x and pushes the status
+/// bar off the window.
+test "chrome scale — declared text height fits the requested button floors (5.12)" {
+  let typo : @core.TypographyScale = chrome_typography_scale()
+  let spacing : @core.SpacingScale = chrome_spacing_scale()
+  // Sidebar rows are framed at 16, the nav/shortcut rows at 24.
+  let sidebar_floor : Double = 16.0
+  let toolbar_floor : Double = 24.0
+  let text_h : Double = typo.control.size * 1.25
+  let intrinsic : Double = text_h + 2.0 * spacing.sm
+  assert_true(intrinsic <= sidebar_floor)
+  // And the control size must not collapse so far that the glyph cell
+  // (7 logical px) is squeezed: keep it under 2 px of slack.
+  assert_true(text_h <= 7.0 + 8.0)
+  // Title/display tiers are only used by plain `@views.text`, whose
+  // requested heights (32) already exceed their declared text height,
+  // but pin them anyway so a future bump cannot silently re-inflate a
+  // text widget.
+  assert_true(typo.title.size * 1.25 <= 32.0)
+  assert_true(typo.body.size * 1.25 <= toolbar_floor)
+  assert_true(typo.control.size < 16.0)
+}

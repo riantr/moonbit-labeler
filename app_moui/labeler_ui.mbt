@@ -52,8 +52,9 @@ pub fn build_labeler_ui_view(
   width : Double,
   height : Double,
 ) -> @moui.View[Msg] {
-  let _ : Double = width
-  let _ : Double = height
+  // Phase 5.12 — `width` / `height` are no longer discarded (they
+  // were `let _ : Double = width` through Phase 5.11). They bound the
+  // canvas frame below; see the sizing note there.
   // Phase 18.A — dark theme. The runtime's default `Environment`
   // carries a light ColorScheme, which makes `@views.text` and
   // `@views.button` paint dark foreground on the dark slate
@@ -63,6 +64,14 @@ pub fn build_labeler_ui_view(
   let dark_theme : @core.Theme = @core.Theme::neutral().with_palette(
     @core.ColorPalette::dark(),
   )
+  // Phase 5.12 — the chrome (nav row, sidebar rows, shortcut row)
+  // gets a theme whose declared type sizes match the 5x7 bitmap font
+  // we actually rasterize, so controls land on the heights their
+  // `@views.frame` wrappers request instead of 2.25x that. Text
+  // widgets keep `dark_theme`: their explicit heights already
+  // exceeded the declared text height, so they were never inflated.
+  // See `chrome_typography_scale` for the measurement behind this.
+  let compact : @core.Theme = compact_theme(dark_theme)
   // Background colors for the three regions. Match the Phase 16.C
   // legacy DrawFrame palette so the view-tree path produces the
   // same visual fingerprint as the rasterizer-only test. These
@@ -147,11 +156,11 @@ pub fn build_labeler_ui_view(
       // the programmatic `SetMode` path.
       @views.row(
         [
-          mode_button(model, Mode::Select, dark_theme, 72.0),
-          mode_button(model, Mode::Rect, dark_theme, 64.0),
-          mode_button(model, Mode::Polygon, dark_theme, 80.0),
-          mode_button(model, Mode::Keypoint, dark_theme, 88.0),
-          mode_button(model, Mode::EditBinding, dark_theme, 80.0),
+          mode_button(model, Mode::Select, compact, 72.0),
+          mode_button(model, Mode::Rect, compact, 64.0),
+          mode_button(model, Mode::Polygon, compact, 80.0),
+          mode_button(model, Mode::Keypoint, compact, 88.0),
+          mode_button(model, Mode::EditBinding, compact, 80.0),
           // Zoom % — kept as plain text. It's a read-out, not
           // an actionable control. Phase 18.E leaves it as-is.
           @views.text(
@@ -182,7 +191,7 @@ pub fn build_labeler_ui_view(
       // (Phase 20's deferred DPI/rasterizer issue) — so the real fix
       // is a taller window, tracked in AGENTS.md, not a smaller
       // feature set.
-      shortcut_row(dark_theme),
+      shortcut_row(compact),
     ],
     spacing=4.0,
   )
@@ -210,7 +219,7 @@ pub fn build_labeler_ui_view(
         width=180.0,
         height=32.0,
       ),
-      @views.column(sidebar_folder_rows(model, dark_theme), spacing=2.0),
+      @views.column(sidebar_folder_rows(model, compact), spacing=2.0),
       @views.text(
         "Classes",
         theme=dark_theme,
@@ -218,7 +227,7 @@ pub fn build_labeler_ui_view(
         width=180.0,
         height=32.0,
       ),
-      @views.column(sidebar_class_rows(model, dark_theme), spacing=1.0),
+      @views.column(sidebar_class_rows(model, compact), spacing=1.0),
     ],
     spacing=6.0,
   )
@@ -247,6 +256,16 @@ pub fn build_labeler_ui_view(
   // canvas layers whose `layout` impls both return
   // `ctx.constraints.max`, so the canvas fills whatever space
   // the outer row gives it. No custom measure needed.
+  //
+  // Phase 5.12 — tried and reverted: wrapping this in
+  // `@views.frame(max_width=, max_height=)` to bound the 1e9 leak
+  // described in the compose block below. It does bound the frame
+  // (verified in the inspector: node 85 goes from 1e9 to 1100), but
+  // the canvas then renders **blank** — neither the image nor a
+  // single annotation reaches the buffer. The static layer is
+  // presumably painting into a region the rasterizer no longer
+  // samples. Not understood, so not shipped; the 1e9 leak is
+  // recorded as an open item instead.
   let canvas : @moui.View[Msg] = canvas_view(model)
   // ─── Bottom status bar ───
   let status_text : String = match model.toastMessage {
@@ -258,9 +277,12 @@ pub fn build_labeler_ui_view(
   // 19 px line-height needs ≥20 px box; 24 px gives ~5 px
   // breathing room). 16 px clips the descenders of "g", "p",
   // "y" which were visible in the Phase 19 smoke as flat-topped
-  // letters. Status bar row's intrinsic height = max of children
-  // = 24 px (was 16). This eats 8 more px from the outer
-  // column, leaving less for the spacer to absorb.
+  // letters. The width is a declared floor, not a request: with
+  // the chrome theme's 10-px body font the row still measures 24.
+  //
+  // Phase 5.12 — this bar was never actually on screen before; see
+  // the compose block below. The height reasoning above stands, it
+  // just never got the chance to show.
   let status_bar : @moui.View[Msg] = @views.row(
     [
       @views.text(
@@ -274,20 +296,52 @@ pub fn build_labeler_ui_view(
     spacing=8.0,
   )
   // ─── Compose ───
-  // Outer column:
-  //   1. toolbar (fixed height ~72 — header 32 + nav 24 + spacing)
-  //   2. SPACER with flex_weight=1 (Phase 20) — claims all leftover
-  //      vertical space so the status bar always sits flush at the
-  //      window bottom regardless of sidebar/canvas intrinsic sizes.
-  //      Phase 18.B had no spacer; when toolbar + main_row + status_bar
-  //      summed past window_h the status bar got clipped off-screen.
-  //   3. main row: sidebar (192 wide) + canvas (fills the rest)
-  //      The row's intrinsic height = max(sidebar_h, canvas_h).
-  //      Sidebar drives it (~248 px: header 32 + 4×16 + spacing +
-  //      header 32 + 6×16 + spacing).
-  //   4. status bar (~16 tall)
-  // The spacer pushes the row to the top and the status bar to the
-  // bottom — a classic 3-region fixed-bottom layout.
+  // Outer column: [toolbar, spacer, main row, status bar].
+  //
+  // Phase 5.12 — **the spacer is the bug, and replacing it does not
+  // work either.** Both halves of that are now measured rather than
+  // guessed, so the next attempt does not repeat them.
+  //
+  // The measurement. MoUI 0.1.12's `ViewNode::child_constraints`
+  // defaults to `constraints.loosen()`, and neither `@layout.stack`
+  // nor `@views.canvas` overrides it. `canvas_view`'s layers return
+  // `ctx.constraints.max`, and the unbounded max is 1.0e9
+  // (`core/geometry.mbt:86`). The inspector's live snapshot of the
+  // real layout (947x504 on this host) records it directly:
+  //
+  //   node  1 root column   947 x 504      constraints min = max = 947x504
+  //   node 59 main row      947 x 1000000088
+  //   node 91 canvas         x 180, w = 1000000000, h = 1000000000
+  //   node 93 status text    y = 1000000088
+  //
+  // So the status bar is not "clipped" — it is parked a billion
+  // pixels below the window. That is the true cause of every symptom
+  // chased since Phase 18, including Phase 20's status-bar mystery
+  // (blamed on DPI and on `windows_skia` bottom-edge text; the text
+  // simply was never on screen) and the sidebar's apparent overflow
+  // (it was always inside the window).
+  //
+  // Attempt A, reverted: mark the main row `.expanded()` so it
+  // becomes a weighted child. Weighted children claim no main-axis
+  // base, so the 1e9 canvas cannot poison `child_main_total`; the
+  // column then resolves [88, 0, 24] and hands the main row
+  // 504 - 112 = 392, putting the status bar at y = 480 = 504 - 24 —
+  // **verified correct in the inspector**. But the canvas's own
+  // width stays 1e9, the fit-contain math centres the image in that
+  // frame, and the canvas renders blank. Fixing that needs the
+  // canvas bounded, which leads to:
+  //
+  // Attempt B, reverted: `@views.frame(canvas, max_width=,
+  // max_height=)`. This does bound it (node 85: 1e9 -> 1100), but
+  // the canvas *still* renders blank — no image, no annotations, only
+  // the neutral background. The static layer is painting somewhere
+  // the rasterizer no longer samples. Not understood, so not
+  // shipped.
+  //
+  // Phase 5.12 therefore ships only the chrome theme above, which is
+  // independently verified. The spacer stays; the status bar stays
+  // off-screen; the open question is why bounding the canvas stops
+  // the static layer from painting.
   @views.column(
     [
       toolbar,
@@ -314,6 +368,91 @@ pub fn mode_button_variant(
     @style.ButtonVariant::Primary
   } else {
     @style.ButtonVariant::Ghost
+  }
+}
+
+///|
+/// Phase 5.12 — a typography scale sized to the font we actually
+/// rasterize.
+///
+/// **Why the declared size is pure ballast.** MoUI's `button` measures
+/// itself as `max(min_size.height, text_height + 2 *
+/// spacing_scale.sm)` (`views/button/button.mbt:156`), and the text
+/// height comes from the theme's font via
+/// `@core.TextSystem::fallback()`, which reports
+/// `font.size * 1.25` (`core/text_layout.mbt:568`). But
+/// `rasterizer.mbt::paint_text` **ignores `font.size` entirely**: it
+/// draws a fixed 5x7 glyph cell and vertically centres it in
+/// `run.frame`. The declared size therefore inflates every text
+/// bearing widget by 2.25x while changing nothing on screen — a
+/// 16-px control font produced 36-px buttons (20 + 2x8) in
+/// `@views.frame(width=180, height=16)` rows that asked for 16.
+///
+/// **Why that overflowed the window.** Measured on this host, the
+/// window is 947x504 logical px at `scale_factor = 2` (a 1894x1009
+/// physical display), so the 1920x1080 the launcher requests is not
+/// obtainable — the runtime re-lays-out to the real surface size.
+/// The chrome wanted ~658 logical px: a 234-px toolbar (three rows at
+/// ~78 each) plus a ~424-px sidebar (10 rows at 36 plus two 32-px
+/// headers). That is 30% more than the 504 available, which is why
+/// the status bar never appeared and the lower class chips were cut
+/// off. Both had been mis-diagnosed: the status bar was recorded in
+/// Phase 20 as a DPI/rasterizer bug in bottom-edge text, and it is
+/// neither — the text was never laid out there.
+///
+/// **Why shrinking the type is free.** Because `paint_text` ignores
+/// the size, a smaller declared size collapses the boxes to their
+/// requested heights and the glyphs are redrawn identically. The
+/// buttons land on the 16 px the frames already asked for, the
+/// sidebar pitch becomes 18, and the whole chrome fits in
+/// 88 + 244 + 24 = 356 of the 504 available.
+///
+/// 10 px is not arbitrary: the glyph cell is 7 logical px tall, so
+/// 10 px declares (10 x 1.25 = 12.5) slightly more room than the
+/// glyphs actually need, which keeps `sm = 1` inside the 16-px floor
+/// instead of collapsing the text onto its own descenders.
+pub fn chrome_typography_scale() -> @core.TypographyScale {
+  let small : @core.FontSpec = @core.FontSpec::new(size=10.0, weight=600)
+  {
+    display: @core.FontSpec::new(size=16.0, weight=600),
+    headline: @core.FontSpec::new(size=14.0, weight=600),
+    title: @core.FontSpec::new(size=12.0, weight=600),
+    subtitle: @core.FontSpec::new(size=11.0, weight=600),
+    body: @core.FontSpec::new(size=10.0, weight=400),
+    label: small,
+    caption: @core.FontSpec::new(size=9.0, weight=400),
+    overline: @core.FontSpec::new(size=9.0, weight=600),
+    // `control` is MoUI's historical alias for `label`; the button
+    // widget reads this one, so it must shrink too.
+    control: small,
+  }
+}
+
+///|
+/// Phase 5.12 — a compact spacing scale to go with
+/// `chrome_typography_scale`. With a 10-px control font the button
+/// is `max(16, 12.5 + 2 * sm)`, so any `sm` up to 1.75 lands on the
+/// 16-px floor the frames request. `sm = 1` keeps a visible pad.
+/// `lg` also drops so the horizontal padding stops inflating button
+/// widths — it is what made the Phase 5.10 shortcut row render at a
+/// 304-px pitch.
+pub fn chrome_spacing_scale() -> @core.SpacingScale {
+  { xs: 2.0, sm: 1.0, md: 3.0, lg: 4.0, xl: 6.0 }
+}
+
+///|
+/// Phase 5.12 — derive the chrome theme. Only the typography and
+/// spacing change; palette, radii and shadows are inherited, so
+/// colours and the canvas are untouched. Applied to the *controls*
+/// only (nav-row buttons, sidebar rows, shortcut row); the text
+/// widgets keep `dark_theme` and their explicit heights, which were
+/// never inflated because their requested height already exceeded the
+/// declared text height.
+pub fn compact_theme(base : @core.Theme) -> @core.Theme {
+  {
+    ..base,
+    typography: chrome_typography_scale(),
+    spacing_scale: chrome_spacing_scale(),
   }
 }
 
