@@ -143,4 +143,72 @@ test "labeler_ui_small_buffer_handles_minimum" {
   assert_eq(r, 56)
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.9 — toolbar tool buttons
+//
+// The nav row's five buttons became real mode selectors in Phase
+// 5.9 (`on_click = SetMode(mode)`, see `mode_button` below).
+// MoUI's `View[Msg]` keeps its fields private with no accessor, so a
+// click cannot be simulated from a test — these pin the two pure
+// decisions the buttons make (which variant highlights the armed
+// tool, and what each button is captioned). The state machine the
+// click feeds is covered in canvas_view_test.mbt.
+// ─────────────────────────────────────────────────────────────────
+
 ///|
+/// Phase 5.9 — exactly one button in the nav row is highlighted:
+/// the armed tool renders `Primary` and the other four stay
+/// `Ghost`. Exhaustive over all five modes, because "two buttons
+/// look active" is the failure this guards.
+test "mode_button_variant — only the armed tool is Primary (5.9)" {
+  let modes : Array[Mode] = [
+    Mode::Select,
+    Mode::Rect,
+    Mode::Polygon,
+    Mode::Keypoint,
+    Mode::EditBinding,
+  ]
+  for armed in modes {
+    assert_eq(
+      mode_button_variant(armed, armed),
+      @style.ButtonVariant::Primary,
+    )
+    for other in modes {
+      if other != armed {
+        assert_eq(
+          mode_button_variant(armed, other),
+          @style.ButtonVariant::Ghost,
+        )
+      }
+    }
+  }
+}
+
+///|
+/// Phase 5.9 — every tool has a caption, and no two share one. Two
+/// buttons captioned identically would leave the user unable to
+/// tell which tool either one picks.
+test "mode_label — all five tools are captioned and unique (5.9)" {
+  assert_eq(mode_label(Mode::Select), "Select")
+  assert_eq(mode_label(Mode::Rect), "Rect")
+  assert_eq(mode_label(Mode::Polygon), "Polygon")
+  assert_eq(mode_label(Mode::Keypoint), "Keypoint")
+  assert_eq(mode_label(Mode::EditBinding), "Binding")
+  let modes : Array[Mode] = [
+    Mode::Select,
+    Mode::Rect,
+    Mode::Polygon,
+    Mode::Keypoint,
+    Mode::EditBinding,
+  ]
+  let n : Int = modes.length()
+  for i = 0; i < n; i = i + 1 {
+    let caption : String = mode_label(modes[i])
+    assert_true(caption != "")
+    for j = 0; j < n; j = j + 1 {
+      if i != j {
+        assert_true(caption != mode_label(modes[j]))
+      }
+    }
+  }
+}

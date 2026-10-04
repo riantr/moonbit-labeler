@@ -195,16 +195,39 @@ fn build_demo_drag_model() -> Model {
   // the lower-left region, clear of rect-1 / poly-1 / kp-1, so it's
   // visually unambiguous.
   //
+  // Phase 5.9 — the tool is armed through `SetMode`, which is
+  // exactly what clicking [Rect] in the toolbar dispatches. The
+  // pre-5.9 version patched `mode` straight into the struct literal
+  // (`{ ..m4, mode: Rect, }`), i.e. it reached for the programmatic
+  // path Phase 5.9 exists to make unnecessary.
+  let (armed, _) = update(m4, SetMode(Rect))
+  //
   // The dispatched sequence is exactly what the canvas's
   // mode-aware `on_drag` sends in Rect mode: BeginDraft on press,
   // UpdateDraft per drag frame, CommitDraft on release → AddRect.
-  let (d1, _) = update(
-    { ..m4, mode: Rect, },
-    BeginDraft({ x: 8.0, y: 96.0 }),
-  )
+  let (d1, _) = update(armed, BeginDraft({ x: 8.0, y: 96.0 }))
   let (d2, _) = update(d1, UpdateDraft({ x: 46.0, y: 190.0 }))
   let (d3, _) = update(d2, AddRect({ x: 8.0, y: 96.0 }, { x: 46.0, y: 190.0 }))
-  d3
+  // `AddRect` resets the mode back to Select (a bare click must not
+  // silently keep drawing), so drawing a second rect needs the tool
+  // re-armed — which is precisely the loop the toolbar now closes
+  // for the user. Re-arming here exercises it twice, and leaves the
+  // second rect (`ann-2`) in the smoke screenshot alongside
+  // `ann-1`.
+  //
+  // Note the screenshot therefore shows **[Select]** as the armed
+  // tool, not [Rect]: the final `AddRect` reset the mode, which is
+  // the honest post-draw steady state. Seeing one button filled
+  // (`ButtonVariant::Primary`) against four `Ghost` is the
+  // user-visible half of Phase 5.9 either way.
+  let (rearmed, _) = update(d3, SetMode(Rect))
+  let (e1, _) = update(rearmed, BeginDraft({ x: 118.0, y: 148.0 }))
+  let (e2, _) = update(e1, UpdateDraft({ x: 192.0, y: 196.0 }))
+  let (e3, _) = update(
+    e2,
+    AddRect({ x: 118.0, y: 148.0 }, { x: 192.0, y: 196.0 }),
+  )
+  e3
 }
 
 ///|

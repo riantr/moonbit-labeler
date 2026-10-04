@@ -29,6 +29,23 @@ pub(all) enum Mode {
 } derive(Debug, Eq)
 
 ///|
+/// Phase 5.9 — canonical display caption for each drawing tool.
+/// Single source of truth shared by the toolbar button label and the
+/// status-bar line emitted by `SetMode`, so the two can never drift
+/// apart. `EditBinding` renders as "Binding" because that is what
+/// the primitive is called everywhere else in the UI and on disk
+/// (the label file's `bindings` array).
+pub fn mode_label(mode : Mode) -> String {
+  match mode {
+    Select => "Select"
+    Rect => "Rect"
+    Polygon => "Polygon"
+    Keypoint => "Keypoint"
+    EditBinding => "Binding"
+  }
+}
+
+///|
 pub(all) enum ClassType {
   Object
   Tag
@@ -578,7 +595,23 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
     ClassesLoaded(classes) => ({ ..model, classes, }, @moui.Effect::none())
     SetMode(mode) =>
       (
-        { ..model, mode, draftPoints: [], bindingFromId: None, },
+        {
+          ..model,
+          mode,
+          // Phase 5.9 — switching tools abandons any in-progress
+          // draft and disarms a half-armed binding. The draft
+          // rubber-band is painted by the *dynamic* layer (see
+          // `draw_dynamic_layer`), so the stale preview only needs
+          // that layer to repaint. The static layer is untouched
+          // because the image, pan, zoom and annotation set are all
+          // unchanged — pre-5.9 this handler set no dirty flag at
+          // all, which left the previous tool's rubber-band on
+          // screen until some unrelated Msg happened to repaint.
+          draftPoints: [],
+          bindingFromId: None,
+          statusMessage: "Mode: " + mode_label(mode),
+          dynamicLayerDirty: true,
+        },
         @moui.Effect::none(),
       )
     SetClassType(ct) => ({ ..model, classType: ct, }, @moui.Effect::none())
@@ -861,14 +894,21 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         )
       }
     }
+    // Phase 5.9 — `FinishDraft` / `CancelDraft` only discard the
+    // in-progress draft, and the draft preview is drawn by the
+    // *dynamic* layer, so that is the only layer that needs to
+    // repaint. Pre-5.9 these two set `staticLayerDirty`, forcing a
+    // full background + image re-blit for a change that touches
+    // neither. `PopDraft` above already carried the correct flag;
+    // these two were missed when Phase 5.8 swept the draft handlers.
     FinishDraft =>
       (
-        { ..model, draftPoints: [], mode: Select, staticLayerDirty: true, },
+        { ..model, draftPoints: [], mode: Select, dynamicLayerDirty: true, },
         @moui.Effect::none(),
       )
     CancelDraft =>
       (
-        { ..model, draftPoints: [], mode: Select, staticLayerDirty: true, },
+        { ..model, draftPoints: [], mode: Select, dynamicLayerDirty: true, },
         @moui.Effect::none(),
       )
     DeleteAnnotation(id) => {

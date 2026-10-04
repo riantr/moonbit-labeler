@@ -4306,3 +4306,261 @@ test "DoubleTapped — polygon commits, other modes toggle zoom-drag (5.8)" {
   let (sel, _) = update({ ..Model::new(), mode: Select, }, DoubleTapped)
   assert_true(sel.zoomDragMode)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.9 — the toolbar's mode selectors
+//
+// Phase 5.9 gave the toolbar's nav row real `on_click =
+// SetMode(mode)` handlers (see `mode_button` in labeler_ui.mbt).
+// Before that the drawing tools were reachable only by dispatching
+// SetMode programmatically, so a cold-started UI was pinned to
+// Select. MoUI keeps `View[Msg]`'s fields private, so the click
+// itself can't be simulated — what these tests pin is the state
+// machine the click feeds, end to end: SetMode, then the exact
+// gesture Msg sequence `canvas_view`'s mode-aware on_drag
+// dispatches for that tool.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.9 — the toolbar has one button per `Mode` variant, so
+/// `SetMode` must reach all five. A tool with no reachable
+/// `SetMode` is a tool the user cannot pick.
+test "SetMode — reaches all five tools (5.9)" {
+  let modes : Array[Mode] = [
+    Mode::Select,
+    Mode::Rect,
+    Mode::Polygon,
+    Mode::Keypoint,
+    Mode::EditBinding,
+  ]
+  for m in modes {
+    let (next, _) = update(Model::new(), SetMode(m))
+    assert_eq(next.mode, m)
+  }
+}
+
+///|
+/// Phase 5.9 — switching tools abandons the in-progress draft. A
+/// user who rubber-bans a rect and then clicks [Polygon] must not
+/// leave the half-drawn rect behind for a later commit to pick up.
+test "SetMode — abandons an in-progress draft (5.9)" {
+  let (m1, _) = update(
+    { ..Model::new(), mode: Rect, },
+    BeginDraft({ x: 10.0, y: 10.0, }),
+  )
+  let (m2, _) = update(m1, UpdateDraft({ x: 40.0, y: 40.0, }))
+  assert_eq(m2.draftPoints.length(), 2)
+  let (m3, _) = update(m2, SetMode(Mode::Polygon))
+  assert_eq(m3.draftPoints.length(), 0)
+  assert_eq(m3.mode, Mode::Polygon)
+}
+
+///|
+/// Phase 5.9 — switching tools also disarms a half-armed binding
+/// source. Otherwise picking a new tool leaves a pending "from"
+/// annotation that the next binding click would silently reuse.
+test "SetMode — disarms a pending binding source (5.9)" {
+  let armed : Model = {
+    ..Model::new(),
+    mode: EditBinding,
+    bindingFromId: Some("rect-1"),
+  }
+  let (next, _) = update(armed, SetMode(Mode::Rect))
+  assert_true(next.bindingFromId is None)
+}
+
+///|
+/// Phase 5.9 — the status line names the armed tool so the click
+/// has a confirmation cue. Built from the same `mode_label` as the
+/// button caption, so the two can never disagree.
+test "SetMode — status line names the armed tool (5.9)" {
+  let (next, _) = update(Model::new(), SetMode(Mode::Polygon))
+  assert_eq(next.statusMessage, "Mode: Polygon")
+  assert_eq(next.statusMessage, "Mode: " + mode_label(Mode::Polygon))
+}
+
+///|
+/// Phase 5.9 — a tool switch only changes what the *dynamic* layer
+/// draws (the draft rubber-band it clears), so it must not mark the
+/// static layer dirty — switching tools should never trigger a full
+/// background + image re-blit. Pre-5.9 `SetMode` set no dirty flag
+/// at all, which left the previous tool's rubber-band on screen
+/// until some unrelated Msg happened to repaint.
+test "SetMode — dirties the dynamic layer only (5.9)" {
+  let clean : Model = {
+    ..Model::new(),
+    staticLayerDirty: false,
+    dynamicLayerDirty: false,
+  }
+  let (next, _) = update(clean, SetMode(Mode::Rect))
+  assert_true(next.dynamicLayerDirty)
+  assert_false(next.staticLayerDirty)
+}
+
+///|
+/// Phase 5.9 — `SetMode` / `FinishDraft` / `CancelDraft` are the
+/// three ways a draft ends, and all three must dirty the dynamic
+/// layer only. `FinishDraft` and `CancelDraft` carried
+/// `staticLayerDirty` until Phase 5.9, forcing a full image re-blit
+/// for a change that touches neither the image nor the annotations.
+test "draft teardown — FinishDraft / CancelDraft dirty the dynamic layer only (5.9)" {
+  // Build a real 2-point draft through the canvas's own Msg path.
+  let (d1, _) = update(
+    { ..Model::new(), mode: Rect, },
+    BeginDraft({ x: 10.0, y: 10.0, }),
+  )
+  let (d2, _) = update(d1, UpdateDraft({ x: 40.0, y: 40.0, }))
+  let drafting : Model = {
+    ..d2,
+    staticLayerDirty: false,
+    dynamicLayerDirty: false,
+  }
+  assert_eq(drafting.draftPoints.length(), 2)
+  let (fin, _) = update(drafting, FinishDraft)
+  assert_eq(fin.draftPoints.length(), 0)
+  assert_eq(fin.mode, Mode::Select)
+  assert_true(fin.dynamicLayerDirty)
+  assert_false(fin.staticLayerDirty)
+  let (cancel, _) = update(drafting, CancelDraft)
+  assert_eq(cancel.draftPoints.length(), 0)
+  assert_eq(cancel.mode, Mode::Select)
+  assert_true(cancel.dynamicLayerDirty)
+  assert_false(cancel.staticLayerDirty)
+}
+
+///|
+/// Phase 5.9 — the point of wiring the toolbar. Clicking [Rect]
+/// dispatches SetMode(Rect); from there the gesture sequence the
+/// canvas dispatches for the Rect tool must actually produce a
+/// rectangle. This is the regression test for the whole reason
+/// Phase 5.9 exists: before it, no click could leave Select, so
+/// this gesture path was unreachable from the UI.
+test "toolbar [Rect] → SetMode → drag creates a rect (5.9)" {
+  let (m0, _) = update(Model::new(), SetMode(Mode::Rect))
+  assert_eq(m0.mode, Mode::Rect)
+  let before : Int = m0.annotations.length()
+  let (m1, _) = update(m0, BeginDraft({ x: 20.0, y: 20.0, }))
+  let (m2, _) = update(m1, UpdateDraft({ x: 60.0, y: 80.0, }))
+  let (m3, _) = update(m2, CommitDraft)
+  // CommitDraft dispatches AddRect(draft[0], draft[1]) rather than
+  // mutating in place, so feed that Msg back to finish the chain.
+  let (m4, _) = update(
+    m3,
+    AddRect(m3.draftPoints[0], m3.draftPoints[1]),
+  )
+  assert_eq(m4.annotations.length(), before + 1)
+  let created = m4.annotations[before]
+  assert_eq(created.shape, Shape::Rect)
+  // Rect geometry is stored as exactly two points: (TL, BR).
+  assert_eq(created.points.length(), 2)
+  assert_eq(created.points[0].x, 20.0)
+  assert_eq(created.points[0].y, 20.0)
+  assert_eq(created.points[1].x, 60.0)
+  assert_eq(created.points[1].y, 80.0)
+  // AddRect selects what it creates, so the new rect's handles show.
+  assert_true(m4.selectedId is Some(_))
+}
+
+///|
+/// Phase 5.9 — same chain for the Polygon tool: SetMode(Polygon),
+/// then three vertex presses (PushDraft) and a double-tap to
+/// commit. The polygon path needs >= 3 vertices, so this also
+/// pins that switching to Polygon doesn't inherit the Rect draft.
+test "toolbar [Polygon] → SetMode → 3 vertices + double-tap creates a polygon (5.9)" {
+  let (m0, _) = update(Model::new(), SetMode(Mode::Polygon))
+  assert_eq(m0.mode, Mode::Polygon)
+  let before : Int = m0.annotations.length()
+  let (m1, _) = update(m0, PushDraft({ x: 30.0, y: 30.0, }))
+  let (m2, _) = update(m1, PushDraft({ x: 90.0, y: 40.0, }))
+  let (m3, _) = update(m2, PushDraft({ x: 50.0, y: 95.0, }))
+  assert_eq(m3.draftPoints.length(), 3)
+  // Double-tap is the Polygon tool's commit gesture (Phase 5.8);
+  // it must NOT be swallowed by the zoom-drag toggle in this mode.
+  assert_false(m3.zoomDragMode)
+  let (m4, _) = update(m3, DoubleTapped)
+  let (m5, _) = update(m4, AddPolygon(m4.draftPoints))
+  assert_eq(m5.annotations.length(), before + 1)
+  let created = m5.annotations[before]
+  assert_eq(created.shape, Shape::Polygon)
+  assert_eq(created.points.length(), 3)
+  assert_false(m5.zoomDragMode)
+}
+
+///|
+/// Phase 5.9 — the Keypoint tool drops a point on every press and
+/// deliberately stays in Keypoint mode (Phase 5.8) so consecutive
+/// points can be placed without re-clicking the toolbar. Driving
+/// it through SetMode pins that the mode survives the click path
+/// as well as the AddKeypoint path.
+test "toolbar [Keypoint] → SetMode → press places a keypoint and stays armed (5.9)" {
+  let (m0, _) = update(Model::new(), SetMode(Mode::Keypoint))
+  let before : Int = m0.annotations.length()
+  let (m1, _) = update(m0, AddKeypoint({ x: 55.0, y: 65.0, }))
+  assert_eq(m1.annotations.length(), before + 1)
+  // Stays armed for the next point.
+  assert_eq(m1.mode, Mode::Keypoint)
+  let created = m1.annotations[before]
+  assert_eq(created.shape, Shape::Keypoint)
+  assert_eq(created.points.length(), 1)
+  assert_eq(created.points[0].x, 55.0)
+  assert_eq(created.points[0].y, 65.0)
+  let (m2, _) = update(m1, AddKeypoint({ x: 25.0, y: 45.0, }))
+  assert_eq(m2.annotations.length(), before + 2)
+  assert_eq(m2.mode, Mode::Keypoint)
+}
+
+///|
+/// Phase 5.9 — [Select] is reachable, which matters because every
+/// select-and-drag-handle path (Phase 5.4-5.6) is gated on
+/// `mode == Select`. A user who picked a drawing tool needs a way
+/// back; the pre-5.9 `[File]` slot was a dead button and `[Select]`
+/// did not exist at all.
+test "toolbar [Select] → SetMode restores handle dragging (5.9)" {
+  let (m0, _) = update(Model::new(), SetMode(Mode::Rect))
+  assert_eq(m0.mode, Mode::Rect)
+  let (m1, _) = update(m0, SetMode(Mode::Select))
+  assert_eq(m1.mode, Mode::Select)
+  // A press on rect-1's BR corner must now arm a handle drag, which
+  // is the whole job of Select mode.
+  let (m2, _) = update(
+    m1,
+    BeginDragHandle("rect-1", 4, { x: 140.0, y: 140.0, }),
+  )
+  assert_true(m2.dragState is Some(_))
+}
+
+///|
+/// Phase 5.9 — pins the mode-reset policy documented on the `Add*`
+/// handlers, now that the toolbar makes it user-visible: every tool
+/// drops back to Select after creating an annotation, *except*
+/// `AddKeypoint`, which stays in Keypoint so consecutive points can
+/// be placed without re-clicking. The two halves differ on purpose
+/// (the keypoint behaviour matches the legacy frontend's keypoint
+/// tool), so this test exists to make any future change to it a
+/// deliberate decision rather than an accident.
+test "mode reset after creation — AddRect returns to Select, AddKeypoint stays (5.9)" {
+  let (after_rect, _) = update(
+    Model::new(),
+    AddRect({ x: 0.0, y: 0.0 }, { x: 20.0, y: 20.0 }),
+  )
+  assert_eq(after_rect.mode, Mode::Select)
+  let (after_kp, _) = update(
+    { ..Model::new(), mode: Keypoint, },
+    AddKeypoint({ x: 5.0, y: 5.0 }),
+  )
+  assert_eq(after_kp.mode, Mode::Keypoint)
+}
+
+///|
+/// Phase 5.9 — a degenerate rect (a click with no drag) must not
+/// create an annotation, and per the handler's own comment must also
+/// leave the mode alone. Without the toolbar this was invisible; now
+/// a stray click that kicked the user out of the Rect tool would be
+/// immediately obvious.
+test "AddRect — a stray click neither creates an annotation nor disarms the tool (5.9)" {
+  let armed : Model = { ..Model::new(), mode: Rect, }
+  let before : Int = armed.annotations.length()
+  let (next, _) = update(armed, AddRect({ x: 7.0, y: 7.0 }, { x: 7.0, y: 7.0 }))
+  assert_eq(next.annotations.length(), before)
+  assert_eq(next.mode, Mode::Rect)
+}

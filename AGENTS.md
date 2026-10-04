@@ -1145,18 +1145,123 @@ BeginDraft → UpdateDraft → AddRect sequence, so the screenshot is
 evidence for creation, not just editing.
 
 **Known issues deferred:**
-- The toolbar's mode buttons are still `@views.text` placeholders
-  (Phase 18.E/19/20 used text because `@views.button` needed the
-  rasterizer fix of that phase; the buttons render now, but the
-  sidebar/toolbar still have no `on_click` handlers wired to
-  `SetMode`), so the drawing tools are reachable only via the
-  programmatic Msg path and the default `Select` mode. Wiring the
-  toolbar is the prerequisite for a user to actually pick Rect /
-  Polygon / Keypoint.
 - Polygon drafting shows committed vertices only — there's no
   rubber-band segment from the last vertex to the live cursor.
   `draw_draft_polygon` would need `model.cursorImgPt` threaded in.
 - `CancelDraft` / `PopDraft` (undo-vertex) have no key binding yet.
+
+### Phase 5.9 — toolbar tool buttons dispatch `SetMode` (the UI can finally pick a tool)
+
+Phase 5.8 made the drawing tools *work*; this makes them *reachable*.
+The blocker it removes: the toolbar's nav row was five `@views.button`
+widgets with **no `on_click` at all**, so `SetMode` could only be
+dispatched programmatically. A cold-started UI was therefore pinned to
+`Select` forever, and the whole Phase 5.4–5.8 gesture pipeline
+(handle drag, draft, commit) was unreachable by a user.
+
+**1. `mode_button` / `mode_button_variant` in `labeler_ui.mbt`.** The
+nav row's five hard-coded button blocks collapse into five
+`mode_button(model, mode, theme, width)` calls. The helper wires
+`on_click=SetMode(mode)` and picks the variant via
+`mode_button_variant(model.mode, mode)` — `ButtonVariant::Primary`
+for the armed tool, `Ghost` for the other four — so exactly one
+button in the row reads as active. `mode_button_variant` is a pure
+`pub fn` taking two `Mode`s precisely so that "only the current mode
+is highlighted" is unit-testable without a paint pass. The
+`@views.frame` wrapper (Phase 18.E) is retained: the dark theme's
+16-px body font + 2×8-px padding otherwise forces a 32-px intrinsic
+button height and inflates the toolbar.
+
+**2. `[File]` → `[Select]`.** The `[File]` slot was a permanently
+dead button (`File` is not a `Mode` variant) and its absence hid a
+real hole: `Select` is the mode every select-and-drag-handle path
+(Phase 5.4–5.6) is gated on, so a user who picked a drawing tool had
+no way back. The slot is reused rather than appended, so the row
+keeps its original width budget (`[Select]` 72, `[Rect]` 64,
+`[Polygon]` 80, `[Keypoint]` 88, `[Binding]` 80 → 484 px, inside the
+528-px header row).
+
+**3. `mode_label(mode)` in `app.mbt`.** Single source of truth for
+the button caption *and* the status line, so they can't drift.
+`EditBinding` renders as `"Binding"` to match the primitive's name
+everywhere else. The button label is `"[" + mode_label(mode) + "]"`.
+
+**4. `SetMode` set no dirty flag — fixed.** `SetMode` clears
+`draftPoints` and disarms `bindingFromId`, but the pre-5.9 handler
+set *neither* `staticLayerDirty` nor `dynamicLayerDirty`. The draft
+rubber-band is painted by the **dynamic** layer (`draw_draft_rect` /
+`draw_draft_polygon`), so switching tools mid-draft left the previous
+tool's rubber-band on screen until some unrelated Msg happened to
+repaint. It now sets `dynamicLayerDirty: true` only — the image, pan,
+zoom and annotation set are all unchanged, so a tool switch must not
+cost a full background+image re-blit. It also sets
+`statusMessage: "Mode: " + mode_label(mode)`, matching every other
+mutating handler in the file.
+
+**5. `FinishDraft` / `CancelDraft` were missed by the Phase 5.8
+sweep.** Those two still set `staticLayerDirty: true` when discarding
+a draft — a change that touches neither the image nor the annotations.
+`PopDraft` had already been converted; these two were overlooked. All
+three draft-teardown paths (`SetMode` / `FinishDraft` / `CancelDraft`)
+now dirty the dynamic layer only, and one test pins all three.
+
+**6. Dead `paint_canvas_decoration` removed.** Superseded by Phase
+5.2's `canvas_view(model)` and referenced nowhere (not even tests) —
+it was the source of the `unused` warning carried since Phase 5.2.
+Removed together with its 66-line doc block.
+
+**14 new tests** (274 total, was 260). The click itself is **not**
+directly testable — MoUI declares `View[Msg]` with private fields and
+no accessor, so a real event simulation isn't available (the same
+limitation the Phase 5.5 `on_drag` tests document). The tests
+therefore pin the two pure decisions the buttons make plus the whole
+state machine the click feeds:
+
+- `labeler_ui_test.mbt` (2): `mode_button_variant` is `Primary` for
+  the armed mode and `Ghost` for all others, exhaustively over all
+  25 pairs; `mode_label` captions are non-empty and pairwise unique
+  (two identical captions would make the tool ambiguous).
+- `canvas_view_test.mbt` (12): `SetMode` reaches all five modes;
+  abandons an in-progress draft; disarms a pending `bindingFromId`;
+  names the armed tool in `statusMessage`; dirties the dynamic layer
+  only; `FinishDraft` / `CancelDraft` also dirty dynamic-only. Then
+  four end-to-end chains — `[Rect]` → drag → a rect with the right
+  two corner points; `[Polygon]` → 3 vertices + double-tap → a
+  3-point polygon that does *not* trip the zoom-drag toggle;
+  `[Keypoint]` → press → a point, staying armed; `[Select]` → press
+  on a handle → drag armed. Plus the documented mode-reset policy
+  (`AddRect` returns to `Select`, `AddKeypoint` stays) and the
+  degenerate-rect case leaving the tool armed.
+
+**Verification:** 274/274 tests pass; `moon check --target native`
+0 errors (185 pre-existing `derive` warnings, unchanged);
+`moon fmt --check` flags none of the 6 touched files (the repo-wide
+fmt drift is pre-existing in `component_blackbox_test.mbt` and
+unrelated files, so `moon fmt` was deliberately *not* run — it would
+rewrite those). Smoke `_build/phase5_9_smoke._window._window.png`
+shows `[Select]` with a filled `Primary` background and a dark label
+against the four `Ghost` buttons with light labels — the active-tool
+state is visibly distinct. A fifth runtime annotation `ann-2` appears
+in the canvas alongside `ann-1`, created through the real
+`SetMode → BeginDraft → UpdateDraft → AddRect` path, so the demo
+exercises the toolbar's own Msg.
+
+Note the screenshot shows **[Select]** armed rather than `[Rect]`:
+the final `AddRect` resets the mode, which is the honest post-draw
+steady state.
+
+**Known issues deferred:**
+- **Rect costs one toolbar click per rectangle.** `AddRect` resets
+  the mode to `Select` (documented on the handler, and pinned by a
+  5.9 test), so drawing N rects costs N clicks where N keypoints cost
+  one. That asymmetry is now user-visible. The legacy frontend drops
+  out of the rect tool but keeps the user in the keypoint tool, so
+  this matches production — but it deserves a deliberate decision.
+- `CancelDraft` / `PopDraft` still have no key binding.
+- A real fix for the above would give the `Add*` handlers one shared
+  mode-after-commit rule instead of three hand-written `mode: Select`
+  lines; the 5.9 mode-reset test exists to make changing it deliberate.
+- Polygon drafting still has no rubber-band segment.
 
 ## Stdio JSON-RPC bridge
 

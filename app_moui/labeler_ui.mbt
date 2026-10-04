@@ -132,66 +132,26 @@ pub fn build_labeler_ui_view(
         ],
         spacing=8.0,
       ),
-      // Nav row: mode labels (Phase 18.E — real Ghost buttons,
-      // each wrapped in a fixed-height frame to clamp the
-      // theme-driven intrinsic height back down to 24 px).
+      // Nav row: the tool picker. Phase 5.9 — the five controls are
+      // now real mode selectors (`on_click = SetMode(mode)`) built
+      // by `mode_button`; the armed tool is drawn with
+      // `ButtonVariant::Primary` and the rest stay `Ghost`, so
+      // exactly one button in the row reads as active.
+      //
+      // Phase 5.9 also replaced the old `[File]` slot with
+      // `[Select]`. `[File]` was a permanently dead button (no
+      // on_click, and `File` is not a `Mode` variant), and its
+      // absence left a real hole: `Select` is the mode every
+      // select-and-drag-handle path (Phase 5.4-5.6) depends on,
+      // so a user who picked a drawing tool had no way back except
+      // the programmatic `SetMode` path.
       @views.row(
         [
-          @views.frame(
-            @views.button(
-              "[File]",
-              theme=dark_theme,
-              variant=@style.ButtonVariant::Ghost,
-              width=64.0,
-              height=24.0,
-            ),
-            width=64.0,
-            height=24.0,
-          ),
-          @views.frame(
-            @views.button(
-              "[Rect]",
-              theme=dark_theme,
-              variant=@style.ButtonVariant::Ghost,
-              width=64.0,
-              height=24.0,
-            ),
-            width=64.0,
-            height=24.0,
-          ),
-          @views.frame(
-            @views.button(
-              "[Polygon]",
-              theme=dark_theme,
-              variant=@style.ButtonVariant::Ghost,
-              width=80.0,
-              height=24.0,
-            ),
-            width=80.0,
-            height=24.0,
-          ),
-          @views.frame(
-            @views.button(
-              "[Keypoint]",
-              theme=dark_theme,
-              variant=@style.ButtonVariant::Ghost,
-              width=88.0,
-              height=24.0,
-            ),
-            width=88.0,
-            height=24.0,
-          ),
-          @views.frame(
-            @views.button(
-              "[Binding]",
-              theme=dark_theme,
-              variant=@style.ButtonVariant::Ghost,
-              width=80.0,
-              height=24.0,
-            ),
-            width=80.0,
-            height=24.0,
-          ),
+          mode_button(model, Mode::Select, dark_theme, 72.0),
+          mode_button(model, Mode::Rect, dark_theme, 64.0),
+          mode_button(model, Mode::Polygon, dark_theme, 80.0),
+          mode_button(model, Mode::Keypoint, dark_theme, 88.0),
+          mode_button(model, Mode::EditBinding, dark_theme, 80.0),
           // Zoom % — kept as plain text. It's a read-out, not
           // an actionable control. Phase 18.E leaves it as-is.
           @views.text(
@@ -321,6 +281,59 @@ pub fn build_labeler_ui_view(
 }
 
 ///|
+/// Phase 5.9 — pick the style that shows which tool is armed.
+/// `Primary` is the loud filled variant; every other mode stays
+/// `Ghost` so exactly one control in the nav row reads as active.
+/// Split out as a pure function (rather than inlined in the view
+/// builder) so the "only the current mode is highlighted" invariant
+/// is unit-testable without running a paint pass.
+pub fn mode_button_variant(
+  current : Mode,
+  candidate : Mode,
+) -> @style.ButtonVariant {
+  if current == candidate {
+    @style.ButtonVariant::Primary
+  } else {
+    @style.ButtonVariant::Ghost
+  }
+}
+
+///|
+/// Phase 5.9 — one tool button in the toolbar's nav row.
+///
+/// Pre-5.9 the nav row's buttons had no `on_click` at all, so the
+/// drawing tools were reachable *only* by dispatching `SetMode`
+/// programmatically: a cold-started UI was pinned to `Select` and
+/// the user had no way to pick Rect / Polygon / Keypoint / Binding.
+/// This wires `on_click=SetMode(mode)` and highlights the armed
+/// tool via `mode_button_variant`.
+///
+/// The `@views.frame` wrapper is the Phase 18.E workaround for the
+/// dark theme's 16-px body font + 2x8-px padding, which forces a
+/// 32-px intrinsic button height regardless of the `height` we
+/// pass. The frame clamps it back to the 24-px nav-row pitch so
+/// the toolbar doesn't inflate and push the status bar off-screen.
+fn mode_button(
+  model : Model,
+  mode : Mode,
+  theme : @core.Theme,
+  width : Double,
+) -> @moui.View[Msg] {
+  @views.frame(
+    @views.button(
+      "[" + mode_label(mode) + "]",
+      on_click=SetMode(mode),
+      theme~,
+      variant=mode_button_variant(model.mode, mode),
+      width~,
+      height=24.0,
+    ),
+    width~,
+    height=24.0,
+  )
+}
+
+///|
 /// Build folder-row widgets for the sidebar. Uses model.images
 /// (populated by the ListImages op) when non-empty, else falls
 /// back to a 4-item demo set so the cold-start screenshot has
@@ -416,72 +429,6 @@ fn sidebar_class_rows(
 /// labeler gains domain-specific class metadata.
 fn parse_class_type(_name : String) -> ClassType {
   ClassType::Object
-}
-
-///|
-/// Paint the canvas-area decoration. Phase 19 — dark-slate
-/// background + white bezier swoop in the top-right corner.
-/// This is the `@views.canvas` draw callback invoked from
-/// `build_labeler_ui_view`. The two-decided-shape (MoveTo +
-/// CubicTo + LineTo + Close) is preserved from the Phase 16.C
-/// legacy `build_labeler_ui_demo_frame` path so the canvas
-/// area's visual fingerprint matches between the legacy
-/// rasterizer-only test and the new Moui view tree.
-///|
-/// Paint the canvas-area decoration. Phase 19 — dark-slate
-/// fill (matches the Phase 16.C `canvas_bg = (10, 10, 12)`
-/// so the canvas area's visual fingerprint is identical
-/// between the legacy rasterizer-only test and the new Moui
-/// view tree path) plus a white bezier swoop anchored to
-/// the top-right corner of the canvas frame.
-///
-/// The swoop coordinates are `frame.origin + (offset_x,
-/// offset_y)` rather than `frame.origin + frame.size.width
-/// - 60` etc. — verified end-to-end through the smoke
-/// pipeline: with `right - X` math the swoop lands at
-/// `right ≈ 720` which sits at the right edge of the
-/// host framebuffer and gets clipped/erased by the runtime's
-/// retained-layer system on subsequent frames (the PrintWindow
-/// screenshot caught a frame where the swoop had already been
-/// cleared); the `origin + offset` form stays inside the
-/// canvas's allocated frame regardless of where the column
-/// puts it. The 40 px tall swoop (top-10 to top+40) matches
-/// the Phase 16.C decoration proportions so the visual
-/// feel is preserved.
-fn paint_canvas_decoration(
-  pctx : @common.PaintContext,
-  frame : @core.Rect,
-) -> Unit {
-  // Dark-slate fill that matches `renderer.mbt:162`'s window
-  // init color. The window background is already this color
-  // but repainting keeps the canvas crisp if the column
-  // reorders things later.
-  @common.fill_rect(
-    pctx,
-    frame,
-    @core.Color::rgba(r=0.10, g=0.10, b=0.12, a=1.0),
-  )
-  let origin_x : Double = frame.origin.x
-  let origin_y : Double = frame.origin.y
-  // White bezier swoop at top-right. Shape: MoveTo +
-  // CubicTo + LineTo + Close, same verbs as the Phase 16.C
-  // legacy decoration. The 80-px-wide × 40-px-tall swoop
-  // sits at `origin + (80, 10)` so it stays anchored
-  // regardless of canvas frame size.
-  let swoop : @core.PathSpec = @core.PathSpec::new(
-    verbs=[
-      @core.PathVerb::MoveTo(@core.Point::new(x=origin_x + 80.0, y=origin_y + 10.0)),
-      @core.PathVerb::CubicTo(
-        @core.Point::new(x=origin_x + 120.0, y=origin_y + 5.0),
-        @core.Point::new(x=origin_x + 135.0, y=origin_y + 30.0),
-        @core.Point::new(x=origin_x + 100.0, y=origin_y + 40.0),
-      ),
-      @core.PathVerb::LineTo(@core.Point::new(x=origin_x + 80.0, y=origin_y + 40.0)),
-      @core.PathVerb::Close,
-    ],
-    fill=Some(@core.Brush::solid(@core.Color::rgba(r=1.0, g=1.0, b=1.0, a=1.0))),
-  )
-  @common.draw_path(pctx, swoop)
 }
 
 // ─────────────────────────────────────────────────────────────────
