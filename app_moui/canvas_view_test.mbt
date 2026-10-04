@@ -4704,3 +4704,144 @@ test "DeleteSelectedAnnotation — drops the binding, keeps the far-end annotati
   assert_true(next.selectedId is None)
   assert_true(next.label.dirty)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.11 — polygon rubber-band geometry
+//
+// The band is the line from the last committed vertex to the live
+// cursor. Before this, a polygon being drawn showed only its
+// committed vertices, so the user had no way to see where the next
+// click would land. These tests pin the pure geometry helper, which
+// is the whole of the feature's decision-making; the paint pass just
+// strokes whatever the helper returns.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.11 — no band without an anchor and no band without an
+/// end. A band with no committed vertex would be a stray line across
+/// the canvas; a band with no cursor would be invisible. Both must be
+/// absent, not degenerate.
+test "polygon rubber band — needs both a committed vertex and a cursor (5.11)" {
+  let cur : Point = { x: 50.0, y: 50.0 }
+  let zero : Point = { x: 0.0, y: 0.0 }
+  // No committed vertex: nothing to hang the band off.
+  assert_true(
+    polygon_rubber_band([], Some(cur), zero, 1.0, zero) is None,
+  )
+  // No cursor: nothing for the band to point at.
+  assert_true(
+    polygon_rubber_band(
+      [{ x: 10.0, y: 10.0 }, { x: 20.0, y: 20.0 }],
+      None,
+      zero,
+      1.0,
+      zero,
+    ) is None,
+  )
+  // Neither.
+  assert_true(polygon_rubber_band([], None, zero, 1.0, zero) is None)
+  // Sanity: the input is otherwise valid.
+  assert_true(
+    polygon_rubber_band([{ x: 10.0, y: 10.0 }], Some(cur), zero, 1.0, zero)
+    is Some(_),
+  )
+}
+
+///|
+/// Phase 5.11 — the band hangs off the **last** committed vertex, not
+/// the first. Anchoring on vertex 0 would draw a chord across the
+/// shape instead of extending it, which is the whole visual difference
+/// between "extending" and "already closed".
+test "polygon rubber band — anchors on the last committed vertex (5.11)" {
+  let zero : Point = { x: 0.0, y: 0.0 }
+  let pts : Array[Point] = [
+    { x: 10.0, y: 10.0 },
+    { x: 20.0, y: 5.0 },
+    { x: 30.0, y: 25.0 },
+  ]
+  let band = polygon_rubber_band(pts, Some({ x: 99.0, y: 99.0 }), zero, 1.0, zero)
+  assert_true(band is Some(_))
+  match band {
+    Some((from, to)) => {
+      assert_eq(from.x, 30.0)
+      assert_eq(from.y, 25.0)
+      assert_eq(to.x, 99.0)
+      assert_eq(to.y, 99.0)
+    }
+    None => fail("expected a rubber band for 3 vertices + a cursor")
+  }
+  // Appending a 4th vertex moves the anchor, and nothing else.
+  let pts2 : Array[Point] = [
+    { x: 10.0, y: 10.0 },
+    { x: 20.0, y: 5.0 },
+    { x: 30.0, y: 25.0 },
+    { x: 40.0, y: 40.0 },
+  ]
+  let band2 = polygon_rubber_band(pts2, Some({ x: 99.0, y: 99.0 }), zero, 1.0, zero)
+  match band2 {
+    Some((from, to)) => {
+      assert_eq(from.x, 40.0)
+      assert_eq(from.y, 40.0)
+      assert_eq(to.x, 99.0)
+      assert_eq(to.y, 99.0)
+    }
+    None => fail("expected a rubber band after appending a 4th vertex")
+  }
+}
+
+///|
+/// Phase 5.11 — the band must ride the exact same transform as the
+/// committed polyline, or it will drift away from the shape it
+/// extends as soon as the user pans or zooms. Pinned against
+/// `img_to_screen` directly rather than against hand-computed
+/// numbers, so the test states the invariant ("same transform") and
+/// not a copy of the formula.
+test "polygon rubber band — follows pan, zoom and the fit-contain offset (5.11)" {
+  let pts : Array[Point] = [{ x: 12.0, y: 34.0 }]
+  let cur : Point = { x: 56.0, y: 78.0 }
+  let zero : Point = { x: 0.0, y: 0.0 }
+  let pan : Point = { x: -7.0, y: 11.0 }
+  let dst : Point = { x: 100.0, y: 200.0 }
+  for zoom in [0.5, 1.0, 2.5, 4.0] {
+    let band = polygon_rubber_band(pts, Some(cur), pan, zoom, dst)
+    assert_true(band is Some(_))
+    match band {
+      Some((from, to)) => {
+        let want_from = img_to_screen(pts[0], dst, pan, zoom)
+        let want_to = img_to_screen(cur, dst, pan, zoom)
+        assert_eq(from.x, want_from.x)
+        assert_eq(from.y, want_from.y)
+        assert_eq(to.x, want_to.x)
+        assert_eq(to.y, want_to.y)
+      }
+      None => fail("expected a rubber band")
+    }
+  }
+}
+
+///|
+/// Phase 5.11 — a single committed vertex is enough. That is the very
+/// first click of a polygon, and it is exactly the moment the user
+/// most needs to see where the second click will land; suppressing
+/// the band until two vertices exist would hide the feedback for the
+/// one step where it is most useful.
+test "polygon rubber band — shows after a single vertex (5.11)" {
+  let zero : Point = { x: 0.0, y: 0.0 }
+  let band = polygon_rubber_band(
+    [{ x: 5.0, y: 5.0 }],
+    Some({ x: 25.0, y: 15.0 }),
+    zero,
+    1.0,
+    zero,
+  )
+  assert_true(band is Some(_))
+  match band {
+    Some((from, to)) => {
+      assert_eq(from.x, 5.0)
+      assert_eq(from.y, 5.0)
+      assert_eq(to.x, 25.0)
+      assert_eq(to.y, 15.0)
+    }
+    None => fail("expected a rubber band after one vertex")
+  }
+}

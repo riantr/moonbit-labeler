@@ -227,7 +227,31 @@ fn build_demo_drag_model() -> Model {
     e2,
     AddRect({ x: 118.0, y: 148.0 }, { x: 192.0, y: 196.0 }),
   )
-  e3
+  // Phase 5.11 — finish in the middle of a polygon so the smoke
+  // screenshot shows the new rubber-band segment: two committed
+  // vertices plus a cursor position between clicks, which is the only
+  // state where the band exists.
+  //
+  // The vertices are placed in the image's top strip, clear of
+  // rect-1 (y >= 40), poly-1 (y >= 30, x >= 110), kp-1 and the two
+  // runtime rects, so the band cannot be confused with existing
+  // geometry. They go in through `PushDraft`, the Msg the canvas
+  // sends in Polygon mode, and the tool is armed through `SetMode`
+  // exactly as clicking [Polygon] would.
+  //
+  // The screenshot therefore shows **[Polygon]** as the armed tool
+  // rather than [Select]. That still demonstrates Phase 5.9's cue —
+  // one filled `Primary` against four `Ghost` — and the band is only
+  // reachable with the polygon tool active, so this is the honest
+  // state to capture.
+  let (polygon_armed, _) = update(e3, SetMode(Polygon))
+  let (poly1, _) = update(polygon_armed, PushDraft({ x: 20.0, y: 20.0 }))
+  let (poly2, _) = update(poly1, PushDraft({ x: 60.0, y: 10.0 }))
+  let (poly3, _) = update(
+    poly2,
+    CursorMoved({ x: 95.0, y: 25.0 }, { x: 95.0, y: 25.0 }),
+  )
+  poly3
 }
 
 ///|

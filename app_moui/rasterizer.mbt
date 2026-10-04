@@ -1168,9 +1168,20 @@ fn paint_polygon_fill(
 }
 
 ///|
-/// Stroke a polygon by stroking each edge as a thin filled
-/// rect (width pixels on either side of the line). Adequate
-/// for labeler outlines — no need for true Bresenham yet.
+/// Stroke a polygon by stamping a width x width square along each
+/// edge (a DDA walk). Adequate for labeler outlines — no need for
+/// true anti-aliased Bresenham yet.
+///
+/// Phase 5.11 — this used to paint the **axis-aligned bounding box**
+/// of the thick-line parallelogram for each edge. That is exact for
+/// axis-aligned edges, which is most of the labeler's annotation
+/// geometry, but for a *diagonal* edge the AABB is a filled box the
+/// size of the segment rather than a line: a 1-px stroke from
+/// (0,0) to (40,40) came out as a 40x40 square. The Phase 5.11
+/// rubber band (last vertex → cursor) is diagonal by nature, so the
+/// AABB showed up immediately as a solid quad across the canvas.
+/// Walking the segment and stamping a square per step is a few more
+/// operations and correct at every angle.
 fn paint_polygon_stroke(
   buf : PixelBuffer,
   verts : Array[@core.Point],
@@ -1183,7 +1194,9 @@ fn paint_polygon_stroke(
   if n < 2 {
     return
   }
-  let half : Double = width / 2.0
+  // A zero/negative width would stamp nothing useful; clamp to 1 px
+  // so a hairline stroke is still visible.
+  let stroke_w : Double = if width < 1.0 { 1.0 } else { width }
   for i = 0; i < n; i = i + 1 {
     let j : Int = (i + 1) % n
     let p1 = verts[i]
@@ -1194,42 +1207,37 @@ fn paint_polygon_stroke(
     if len == 0.0 {
       continue
     }
-    // Perpendicular unit vector for line width offset.
-    let nx : Double = -dy / len
-    let ny : Double = dx / len
-    let ox : Double = nx * half
-    let oy : Double = ny * half
-    // Build a thick-line rect (axis-aligned bbox of the
-    // parallelogram) — adequate for the labeler's polygon
-    // edges (mostly horizontal/vertical).
-    let x_min : Double = @math.minimum(
-      @math.minimum(p1.x - ox, p1.x + ox),
-      @math.minimum(p2.x - ox, p2.x + ox),
-    )
-    let x_max : Double = @math.maximum(
-      @math.maximum(p1.x - ox, p1.x + ox),
-      @math.maximum(p2.x - ox, p2.x + ox),
-    )
-    let y_min : Double = @math.minimum(
-      @math.minimum(p1.y - oy, p1.y + oy),
-      @math.minimum(p2.y - oy, p2.y + oy),
-    )
-    let y_max : Double = @math.maximum(
-      @math.maximum(p1.y - oy, p1.y + oy),
-      @math.maximum(p2.y - oy, p2.y + oy),
-    )
-    paint_rect(
-      buf,
-      @core.Rect::new(
-        x=x_min,
-        y=y_min,
-        width=x_max - x_min,
-        height=y_max - y_min,
-      ),
-      clip,
-      color,
-      opacity,
-    )
+    // Two samples per pixel of length, so diagonals get no gaps.
+    let steps : Int = @math.maximum(1.0, (len * 2.0).ceil()).to_int()
+    let step_x : Double = dx / steps.to_double()
+    let step_y : Double = dy / steps.to_double()
+    for s = 0; s <= steps; s = s + 1 {
+      let f = s.to_double()
+      let px : Double = p1.x + step_x * f
+      let py : Double = p1.y + step_y * f
+      // Snap the stamp to integer pixel coordinates and use
+      // `paint_rect_snap` rather than the AA `paint_rect`. A
+      // 1-px square centred on a fractional point is only partly
+      // covered by any one pixel, which the AA path renders as a
+      // dimmed, semi-transparent line (alpha 0xEA/0xFD instead of
+      // 0xFF). Snapping is also the convention the rest of this
+      // file uses for stroke geometry — see `paint_rect_snap`'s
+      // own doc comment — so a hairline stays a hairline.
+      let ix : Int = (px + 0.5).floor().to_int()
+      let iy : Int = (py + 0.5).floor().to_int()
+      paint_rect_snap(
+        buf,
+        @core.Rect::new(
+          x=ix.to_double(),
+          y=iy.to_double(),
+          width=stroke_w,
+          height=stroke_w,
+        ),
+        clip,
+        color,
+        opacity,
+      )
+    }
   }
 }
 
@@ -1245,15 +1253,26 @@ fn paint_path(
   let verts : Array[@core.Point] = path_vertices(spec)
   if verts.length() < 3 {
     // Single line / move: paint as a stroke if there's a stroke.
-    if verts.length() == 2 && spec.stroke is Some(_) {
-      paint_polygon_stroke(
-        buf,
-        verts,
-        spec.stroke_width,
-        clip,
-        @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=1.0),
-        opacity,
-      )
+    //
+    // Phase 5.11 — this hardcoded `rgba(0,0,0,1)` and ignored
+    // `spec.stroke` entirely, so a 2-vertex path (exactly what the
+    // Phase 5.11 rubber band and a 1-edge draft polyline emit) came
+    // out black regardless of the colour the caller asked for.
+    // `brush_color` handles Solid and the gradient variants exactly
+    // as the fill pass below does.
+    if verts.length() == 2 {
+      match spec.stroke {
+        Some(stroke_brush) =>
+          paint_polygon_stroke(
+            buf,
+            verts,
+            spec.stroke_width,
+            clip,
+            brush_color(stroke_brush),
+            opacity,
+          )
+        None => ()
+      }
     }
     return
   }

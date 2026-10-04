@@ -1422,6 +1422,150 @@ and unrelated files, so `moon fmt` was deliberately *not* run). Smoke
 `Cancel`/`Esc`, `Undo pt`/`Backspace` and `Delete`/`Delete` all fully
 painted, with no overlap against the canvas.
 
+### Phase 5.11 — polygon rubber band + two rasterizer stroke bugs
+
+**What landed.** The polygon tool showed only its *committed* vertices,
+with no indication of where the next click would land. It now draws a
+rubber-band segment from the last committed vertex to the live cursor.
+
+- `canvas_view.mbt` — new pure `pub fn polygon_rubber_band(points,
+  cursor, pan, zoom, dst_origin) -> (Point, Point)?`. Returns the
+  screen-space `(from, to)` of the band, or `None` when there is
+  nothing to band: no committed vertex (no anchor) or no cursor (no
+  end). Both cases matter — a band with no anchor is a stray line
+  across the canvas, one with no end is invisible.
+- `draw_draft_polygon` gains a `cursor : Point?` parameter; the call
+  site passes `model.cursorImgPt`. The band is drawn *after* the
+  fill and stroke passes so it never contaminates the committed
+  shape's fill area or its solid outline, and it is deliberately
+  weaker — same hue, alpha 0.55, 1 px vs the committed edge's
+  alpha 1.0 at 2 px. A fully opaque band would read as an
+  already-placed edge, which is the exact confusion it exists to
+  prevent.
+- The geometry is a pure function so it is unit-testable without a
+  paint pass, the same factoring `mode_button_variant` (5.9) used.
+  Four tests pin: both `None` cases, that the band anchors on the
+  **last** vertex (vertex 0 would draw a chord across the shape
+  instead of extending it), that it rides the identical
+  `(pan, zoom, dst_origin)` transform as the committed polyline —
+  asserted against `img_to_screen` rather than hand-computed numbers,
+  so the test states the invariant and not a copy of the formula —
+  and that it appears after a **single** vertex, which is the one
+  step where the feedback is most needed.
+
+**Two rasterizer bugs, found because the band is a diagonal.** A
+rubber band is a 2-vertex, diagonal, 1-px stroke, and it rendered as
+a solid orange quad with a black rectangle beside it. Both defects
+were pre-existing and affected every diagonal stroke in the app.
+
+1. **`paint_path` hardcoded black for 2-vertex paths.** The
+   `verts.length() < 3` branch called `paint_polygon_stroke` with
+   `rgba(0,0,0,1)` and ignored `spec.stroke` entirely. So a
+   2-vertex path came out black regardless of the colour requested —
+   which is exactly the shape of the new rubber band *and* of a
+   1-edge draft polyline. Now resolves the real brush via
+   `brush_color`, matching the fill pass.
+
+2. **`paint_polygon_stroke` painted each thick edge as its
+   axis-aligned bounding box.** That is exact for axis-aligned edges,
+   which is most of the labeler's annotation geometry, and a filled
+   box for anything diagonal: a 1-px stroke from (2,2) to (9,9)
+   filled the whole 7x7 square. Replaced with a DDA walk
+   (2 samples per pixel of length) stamping a `width x width` square
+   per step, which is correct at every angle.
+
+   The stamps go through `paint_rect_snap` at integer coordinates,
+   not the anti-aliased `paint_rect`. A 1-px square centred on a
+   fractional point is only partly covered by any one pixel, which
+   the AA path correctly renders as a dimmed line — alpha 0xEA/0xFD
+   instead of 0xFF. Snapping is also the convention the rest of the
+   file already uses for stroke geometry (see `paint_rect_snap`'s own
+   doc comment), so a hairline stays a hairline. This was found by a
+   test asserting an exact alpha, not by inspection.
+
+Two rasterizer tests pin both. The diagonal test's discriminator is
+the pixel *inside the segment's bounding box but far off the
+diagonal* — a bounding box paints those, a line leaves them clear.
+
+**Side effect worth knowing about:** fixing #2 also cleaned up
+geometry this phase did not touch. `poly-1`'s triangle edges and the
+`rect-1 → kp-1` binding arrow now render as crisp lines; before, the
+binding arrow was a black staircase of filled boxes. The
+`_build/phase5_11_final._window._window.png` vs
+`_build/phase5_10_final._window._window.png` comparison shows both.
+
+**Verification:** 289/289 tests pass (287 → 289, +2; 283 → 289
+including the four rubber-band geometry tests); `moon check
+--target native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags none of the 5 touched files. Smoke
+`_build/phase5_11_final._window._window.png` shows the two committed
+vertices as yellow dots with white rings, a solid yellow committed
+edge between them, a visibly weaker yellow band running from the
+second vertex to the white cursor crosshair, and `[Polygon]` drawn
+with the filled `Primary` background. `_build/phase5_11_band_zoom.png`
+is a 4x nearest-neighbour crop of that region, taken because the
+alpha difference between the committed edge and the band is the whole
+visual contract and is not legible at 1x.
+
+`build_demo_drag_model` now ends mid-polygon (two `PushDraft` points
+plus a `CursorMoved`), which is the only state in which a band
+exists. Side effect: the screenshot's armed tool is now `[Polygon]`
+rather than `[Select]`. That still demonstrates Phase 5.9's cue — one
+filled `Primary` against four `Ghost` — and a band is only reachable
+with the polygon tool active, so it is the honest state to capture.
+
+### Open: the window overflow (diagnosed, not fixed)
+
+The sidebar still overruns the bottom of the window and the status
+bar is still never painted. Phase 5.11 investigated this and did not
+fix it. The findings, so the next attempt does not repeat them:
+
+- **The status bar mystery from Phase 20 is a layout problem, not a
+  rasterizer or DPI problem.** The text was never laid out there;
+  the region was consumed by content above it. The three theories in
+  the Phase 20 note (DPI scale, `windows_skia` bottom-edge text, the
+  retained-layer bug seen in Phase 19) can all be dropped.
+- **The text measurement looks like the culprit, and the arithmetic
+  supports it.** `renderer.mbt` supplies
+  `@core.TextSystem::fallback()` to the renderer, whose measurement
+  is `height = font.size * 1.25` (`core/text_layout.mbt:568`) — 20
+  logical px for the 16-px control font. But
+  `rasterizer.mbt::paint_text` never uses that number: it draws a
+  fixed 5x7 glyph cell and vertically centres it in `run.frame`.
+  So layout reserves 20 px for text that occupies 7, and
+  `@views.button` inherits it
+  (`max(min_size.height, text_height + 2 * spacing_scale.sm)`).
+- **Three levers were tried and all three were inert.** Pixel-scanning
+  the smoke capture, the sidebar's row positions were byte-identical
+  across all of them (258 / 318 / 354 / 390 / 426 / 490):
+  1. `Theme::with_spacing_scale` (sm 8→2, lg 16→6) on the dense
+     chrome. Real but tiny: the row pitch moved 50→36 px while the
+     text term alone predicts 36, so padding is not what sets it.
+  2. `bitmap_text_system()` — a `TextSystem` measuring via the app's
+     own `measure_text` (5x7 cells) — wired into the renderer's
+     `text_system=`. Canvas top moved 234→252, i.e. *worse*.
+  3. The same system installed on the runtime via the public
+     `AppRuntime::set_text_system` (which does mark layout + paint
+     dirty, and `RuntimeState::layout` re-measures). This reverted
+     (2) but still left the sidebar unchanged.
+  All three were reverted; the tree is at the 5.10 layout.
+- **So the row height is set by something not yet identified.**
+  `@views.frame(child, width=, height=)` wraps every sidebar row at
+  16 px, yet the rows lay out at 36. `resolve_frame_size` clamps to
+  the requested height, but the result is then passed through
+  `constraints.constrain(...)`, which can expand to a `min` supplied
+  by the parent. Finding what sets that `min` — most likely in
+  `@layout.column`'s `child_constraints` — is the next step. Note
+  that `@views.frame` clamps layout and does not clip paint (Phase
+  5.10), so any fix here has to work through the layout min rather
+  than through a smaller frame.
+- **Measurement recipe** (reuse it): scan the per-window capture at
+  x=700 for the first strongly-red pixel to get the canvas top, and
+  count text-bright pixels in x∈[30,200] to get sidebar row
+  positions. The window is requested at 1920x1080 but the
+  `PrintWindow` capture is 960x540, so capture px are half of
+  logical px.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

@@ -631,6 +631,7 @@ pub fn draw_dynamic_layer(
         draw_draft_polygon(
           pctx,
           model.draftPoints,
+          model.cursorImgPt,
           model.pan,
           model.zoom,
           dst_origin,
@@ -1267,6 +1268,42 @@ fn draw_label_text(
 // so users learn one cue for "in-progress state".
 
 ///|
+/// Phase 5.11 — the screen-space endpoints of the polygon's
+/// rubber-band segment: the line from the last *committed* vertex to
+/// the live cursor, i.e. the edge that a click right now would add.
+///
+/// Returns `None` when there is nothing to band — no committed vertex
+/// yet (there is no "last" to hang it off) or no cursor position.
+/// Both cases matter: a band with no anchor would be a stray line
+/// across the canvas, and a band with no end would be invisible.
+///
+/// Kept as a pure function, like `mode_button_variant` in 5.9, so the
+/// geometry is unit-testable without a paint pass. It takes the same
+/// `(pan, zoom, dst_origin)` transform the drawing helpers use, so a
+/// test can pin that the band follows zoom and fit-contain offset the
+/// same way the committed polyline does.
+pub fn polygon_rubber_band(
+  points : Array[Point],
+  cursor : Point?,
+  pan : Point,
+  zoom : Double,
+  dst_origin : Point,
+) -> (Point, Point)? {
+  if points.length() == 0 {
+    return None
+  }
+  match cursor {
+    None => None
+    Some(cur) => {
+      let last : Point = points[points.length() - 1]
+      let from : Point = img_to_screen(last, dst_origin, pan, zoom)
+      let to : Point = img_to_screen(cur, dst_origin, pan, zoom)
+      Some((from, to))
+    }
+  }
+}
+
+///|
 /// Phase 5.12.C — draft polygon rendering. When the user is in
 /// Polygon mode and has clicked N >= 3 points, this draws the
 /// in-progress polygon with a translucent fill (alpha 0.15,
@@ -1275,9 +1312,18 @@ fn draw_label_text(
 ///
 /// `points` is `model.draftPoints` (image-natural coords); we
 /// convert to screen once per vertex via `img_to_screen`.
+///
+/// Phase 5.11 — `cursor` is `model.cursorImgPt` (image-natural).
+/// When present it adds the rubber-band segment from the last
+/// committed vertex to the cursor, so the user can see where the
+/// next click will land before making it. The band is drawn
+/// *outside* the committed geometry: it is excluded from both the
+/// fill and the solid stroke, and drawn as a thin translucent line
+/// so it never reads as already-placed.
 fn draw_draft_polygon(
   pctx : @common.PaintContext,
   points : Array[Point],
+  cursor : Point?,
   pan : Point,
   zoom : Double,
   dst_origin : Point,
@@ -1343,6 +1389,37 @@ fn draw_draft_polygon(
     let rr : @core.RoundedRect = @core.RoundedRect::new(rect=r, radius=4.0)
     @common.fill_rounded_rect(pctx, rr, @core.Brush::solid(color))
     @common.stroke_rounded_rect(pctx, rr, @core.Brush::solid(white), 1.5)
+  }
+  // Phase 5.11 — rubber band from the last committed vertex to the
+  // cursor. Drawn last so it sits above the vertex dots, and drawn
+  // *after* the fill/stroke passes above so it never contaminates
+  // the committed shape's fill area or its solid outline.
+  //
+  // Alpha 0.55 + 1 px width is the visual contract: same hue as the
+  // committed outline, clearly weaker. A fully opaque line would
+  // read as an already-placed edge, which is the exact confusion
+  // this segment exists to prevent.
+  match polygon_rubber_band(points, cursor, pan, zoom, dst_origin) {
+    None => ()
+    Some((from, to)) => {
+      let band_color : @core.Color = @core.Color::rgba(
+        r=color.r,
+        g=color.g,
+        b=color.b,
+        a=0.55,
+      )
+      let verbs : Array[@core.PathVerb] = [
+        @core.PathVerb::MoveTo({ x: from.x, y: from.y, }),
+        @core.PathVerb::LineTo({ x: to.x, y: to.y, }),
+      ]
+      let band : @core.PathSpec = @core.PathSpec::new(
+        verbs~,
+        fill=None,
+        stroke=Some(@core.Brush::solid(band_color)),
+        stroke_width=1.0,
+      )
+      @common.draw_path(pctx, band)
+    }
   }
 }
 

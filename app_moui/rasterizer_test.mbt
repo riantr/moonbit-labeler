@@ -1377,3 +1377,89 @@ test "stroke_rounded_rect_brush_solid_paints_perimeter_only" {
   // Deep interior (3, 3) stays clear.
   assert_eq(pixel_at(buf, 3, 3), 0)
 }
+
+///|
+/// Phase 5.11 — a two-vertex path (MoveTo + LineTo) must be stroked
+/// in the colour the caller asked for. `paint_path`'s "< 3 verts"
+/// branch used to hardcode `rgba(0,0,0,1)` and ignore `spec.stroke`
+/// entirely, so the Phase 5.11 rubber band — which is always exactly
+/// two vertices — and a 1-edge draft polyline both came out black
+/// regardless of the colour they passed.
+///
+/// `pixel_at` packs AARRGGBB, so opaque green is 0xFF00FF00.
+test "draw_path_two_vertex_stroke_uses_the_requested_color" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    10,
+    10,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let green : @core.Color = @core.Color::rgba(r=0.0, g=1.0, b=0.0, a=1.0)
+  let line : @core.PathSpec = @core.PathSpec::new(
+    verbs=[
+      @core.PathVerb::MoveTo(@core.Point::new(x=1.0, y=5.0)),
+      @core.PathVerb::LineTo(@core.Point::new(x=8.0, y=5.0)),
+    ],
+    fill=None,
+    stroke=Some(@core.Brush::solid(green)),
+    stroke_width=1.0,
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawPath(line)],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // Along the line: opaque green. Under the old code these read
+  // 0xFF000000 (opaque black).
+  assert_eq(pixel_at(buf, 1, 5), 0xFF00FF00)
+  assert_eq(pixel_at(buf, 4, 5), 0xFF00FF00)
+  assert_eq(pixel_at(buf, 8, 5), 0xFF00FF00)
+  // Off the line stays clear.
+  assert_eq(pixel_at(buf, 4, 1), 0x00000000)
+}
+
+///|
+/// Phase 5.11 — a diagonal stroke must render as a *line*, not as the
+/// axis-aligned bounding box of the segment. `paint_polygon_stroke`
+/// used to paint each thick edge as the AABB of its parallelogram,
+/// which is exact for axis-aligned edges (most of the labeler's
+/// annotation geometry) and a filled box for anything diagonal — a
+/// 1-px stroke from (2,2) to (9,9) filled the whole 7x7 square.
+///
+/// The check is the one that distinguishes the two behaviours:
+/// pixels inside the segment's bounding box but far off the diagonal.
+/// A bounding box paints them; a line leaves them clear.
+///
+/// Opaque blue in AARRGGBB is 0xFF0000FF.
+test "draw_path_diagonal_stroke_is_a_line_not_its_bounding_box" {
+  let buf : PixelBuffer = PixelBuffer::new(
+    12,
+    12,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let blue : @core.Color = @core.Color::rgba(r=0.0, g=0.0, b=1.0, a=1.0)
+  let diag : @core.PathSpec = @core.PathSpec::new(
+    verbs=[
+      @core.PathVerb::MoveTo(@core.Point::new(x=2.0, y=2.0)),
+      @core.PathVerb::LineTo(@core.Point::new(x=9.0, y=9.0)),
+    ],
+    fill=None,
+    stroke=Some(@core.Brush::solid(blue)),
+    stroke_width=1.0,
+  )
+  let frame : @core.DrawFrame = @core.DrawFrame::new(
+    commands=[@core.DrawCommand::DrawPath(diag)],
+    damage=@core.DamageRegion::empty(),
+    clear_color=@core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  rasterize_draw_frame(buf, frame, ImageCache::new())
+  // On the diagonal: painted.
+  assert_eq(pixel_at(buf, 2, 2), 0xFF0000FF)
+  assert_eq(pixel_at(buf, 5, 5), 0xFF0000FF)
+  assert_eq(pixel_at(buf, 9, 9), 0xFF0000FF)
+  // Inside the segment's bounding box but far off the diagonal.
+  // Under the old AABB behaviour these were painted; a line leaves
+  // them clear.
+  assert_eq(pixel_at(buf, 2, 9), 0x00000000)
+  assert_eq(pixel_at(buf, 9, 2), 0x00000000)
+}
