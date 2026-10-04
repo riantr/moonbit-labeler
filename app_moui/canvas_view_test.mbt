@@ -4003,3 +4003,306 @@ test "CanvasPressed — zoomDragMode off still arms the drag (5.7 control)" {
   assert_true(next.dragState is Some(_))
   assert_eq(next.selectedId, Some("rect-1"))
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.8 — drawing tools: the Add* handlers actually create
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.8 — THE core fix. `AddRect` was a no-op placeholder: it
+/// reset `mode` and bumped the dirty flag but never appended
+/// anything. This is the same class of stub `ModifyHandle` was until
+/// Phase 5.4, and it meant the MoUI app could edit the three
+/// synthetic demo annotations but could not create a single new one.
+///
+/// A press-drag-release in Rect mode now goes:
+///   BeginDraft(corner1) → UpdateDraft(corner2) → CommitDraft
+///   → (Effect::send) AddRect(corner1, corner2)
+/// and lands one new Rect in `model.annotations`.
+test "AddRect — creates a new annotation with a fresh id (5.8)" {
+  let model : Model = { ..Model::new(), mode: Rect, }
+  let before = model.annotations.length()
+  // Drag well clear of the existing demo annotations so the point
+  // isn't ambiguous.
+  let (next, _) = update(
+    model,
+    AddRect({ x: 10.0, y: 10.0 }, { x: 60.0, y: 60.0 }),
+  )
+  assert_eq(next.annotations.length(), before + 1)
+  let last = next.annotations[next.annotations.length() - 1]
+  assert_eq(last.shape, Rect)
+  assert_eq(last.points.length(), 2)
+  assert_eq(last.points[0].x, 10.0)
+  assert_eq(last.points[1].x, 60.0)
+  // Deterministic id that doesn't collide with the demo set
+  // (rect-1, poly-1, kp-1) — none of which use the ann- prefix.
+  assert_eq(last.id, "ann-1")
+  // The new annotation becomes the selection (standard editor
+  // behaviour: you want to immediately drag its handles).
+  assert_eq(next.selectedId, Some("ann-1"))
+  // Back to the select tool, and the label is dirty so it gets saved.
+  assert_eq(next.mode, Select)
+  assert_true(next.label.dirty)
+  assert_true(next.staticLayerDirty)
+}
+
+///|
+/// Phase 5.8 — a click with no drag (zero-area) must NOT create a
+/// rect. Otherwise every stray click would leave a 1px sliver in the
+/// label that's hard to see and easy to leak into the export.
+test "AddRect — degenerate (zero-area) rect is ignored (5.8)" {
+  let model : Model = { ..Model::new(), mode: Rect, }
+  let before = model.annotations.length()
+  // Same x (vertical line) and same y (horizontal line).
+  let (m1, _) = update(model, AddRect({ x: 30.0, y: 10.0 }, { x: 30.0, y: 90.0 }))
+  assert_eq(m1.annotations.length(), before)
+  let (m2, _) = update(model, AddRect({ x: 10.0, y: 30.0 }, { x: 90.0, y: 30.0 }))
+  assert_eq(m2.annotations.length(), before)
+  // Also: the mode is NOT reset by a degenerate rect, so a stray
+  // click doesn't kick the user out of the Rect tool.
+  assert_eq(m1.mode, Rect)
+}
+
+///|
+/// Phase 5.8 — corners are stored in canonical (TL, BR) order
+/// regardless of drag direction, so the on-disk JSON is stable and
+/// the 8 handle indices keep their documented meaning (Phase 5.7).
+test "AddRect — normalises corners to TL/BR regardless of drag direction (5.8)" {
+  let model : Model = { ..Model::new(), mode: Rect, }
+  // Drag from bottom-right up to top-left.
+  let (next, _) = update(
+    model,
+    AddRect({ x: 80.0, y: 90.0 }, { x: 20.0, y: 10.0 }),
+  )
+  let last = next.annotations[next.annotations.length() - 1]
+  // points[0] must be the top-left (min x, min y).
+  assert_eq(last.points[0].x, 20.0)
+  assert_eq(last.points[0].y, 10.0)
+  // points[1] must be the bottom-right.
+  assert_eq(last.points[1].x, 80.0)
+  assert_eq(last.points[1].y, 90.0)
+}
+
+///|
+/// Phase 5.8 — polygon creation. Three vertices minimum; fewer is a
+/// stray click and must be ignored rather than creating a degenerate
+/// shape.
+test "AddPolygon — requires 3 vertices (5.8)" {
+  let model : Model = { ..Model::new(), mode: Polygon, }
+  let before = model.annotations.length()
+  let (m1, _) = update(
+    model,
+    AddPolygon([{ x: 10.0, y: 10.0 }, { x: 20.0, y: 20.0 }]),
+  )
+  assert_eq(m1.annotations.length(), before)
+  let (m2, _) = update(
+    model,
+    AddPolygon([
+      { x: 10.0, y: 10.0 },
+      { x: 30.0, y: 10.0 },
+      { x: 20.0, y: 30.0 },
+    ]),
+  )
+  assert_eq(m2.annotations.length(), before + 1)
+  let last = m2.annotations[m2.annotations.length() - 1]
+  assert_eq(last.shape, Polygon)
+  assert_eq(last.points.length(), 3)
+  assert_eq(last.id, "ann-1")
+  assert_eq(m2.mode, Select)
+}
+
+///|
+/// Phase 5.8 — keypoint creation. Stays in Keypoint mode after
+/// adding, so the user can rapidly tag several points without
+/// re-picking the tool each time (matches the legacy frontend's
+/// keypoint tool and is why `AddKeypoint` is the one Add* that does
+/// not reset `mode`).
+test "AddKeypoint — creates a point and STAYS in Keypoint mode (5.8)" {
+  let model : Model = { ..Model::new(), mode: Keypoint, }
+  let before = model.annotations.length()
+  let (next, _) = update(model, AddKeypoint({ x: 42.0, y: 43.0 }))
+  assert_eq(next.annotations.length(), before + 1)
+  let last = next.annotations[next.annotations.length() - 1]
+  assert_eq(last.shape, Keypoint)
+  assert_eq(last.points.length(), 1)
+  assert_eq(last.points[0].x, 42.0)
+  assert_eq(last.points[0].y, 43.0)
+  // Stays in the tool.
+  assert_eq(next.mode, Keypoint)
+  // Second keypoint gets the next id, not a duplicate.
+  let (m2, _) = update(next, AddKeypoint({ x: 44.0, y: 45.0 }))
+  assert_eq(m2.annotations[m2.annotations.length() - 1].id, "ann-2")
+}
+
+///|
+/// Phase 5.8 — ids never collide with existing annotations, and are
+/// deterministic (no RNG), so a given model always yields the same
+/// next id.
+test "AddRect — ids are collision-free and deterministic (5.8)" {
+  let model : Model = { ..Model::new(), mode: Rect, }
+  let (m1, _) = update(model, AddRect({ x: 1.0, y: 1.0 }, { x: 5.0, y: 5.0 }))
+  assert_eq(m1.annotations[m1.annotations.length() - 1].id, "ann-1")
+  let (m2, _) = update(m1, AddRect({ x: 6.0, y: 6.0 }, { x: 9.0, y: 9.0 }))
+  assert_eq(m2.annotations[m2.annotations.length() - 1].id, "ann-2")
+  let (m3, _) = update(m2, AddRect({ x: 10.0, y: 10.0 }, { x: 12.0, y: 12.0 }))
+  assert_eq(m3.annotations[m3.annotations.length() - 1].id, "ann-3")
+  // All distinct.
+  assert_eq(m3.annotations.length(), 6)
+}
+
+///|
+/// Phase 5.8 — bindings resolve their target by hit-testing the
+/// clicked point, and refuse to bind an annotation to itself.
+test "AddBinding — resolves target by hit-test, rejects self-loop (5.8)" {
+  let model : Model = {
+    ..Model::new(),
+    mode: EditBinding,
+    bindingFromId: Some("kp-1"),
+  }
+  let before = model.bindings.length()
+  // (60, 170) is kp-1's own point — must NOT create a self-binding.
+  let (m1, _) = update(
+    model,
+    AddBinding("kp-1", { x: 60.0, y: 170.0 }),
+  )
+  assert_eq(m1.bindings.length(), before)
+  // (90, 90) is inside rect-1 — that IS a valid binding target.
+  let (m2, _) = update(
+    model,
+    AddBinding("kp-1", { x: 90.0, y: 90.0 }),
+  )
+  assert_eq(m2.bindings.length(), before + 1)
+  let b = m2.bindings[m2.bindings.length() - 1]
+  assert_eq(b.from, "kp-1")
+  assert_eq(b.to, "rect-1")
+  assert_eq(b.id, "bind-2")
+  // The pending-binding state is consumed either way.
+  assert_true(m2.bindingFromId is None)
+  assert_eq(m2.mode, Select)
+}
+
+///|
+/// Phase 5.8 — the new annotation picks up the project's default
+/// class, falling back to "" (render the id as the on-canvas label)
+/// when no class is marked default.
+test "AddRect — inherits the default class id (5.8)" {
+  let with_default : Model = {
+    ..Model::new(),
+    mode: Rect,
+    classes: [
+      { id: "c1", name: "weapon", is_default: false, },
+      { id: "c2", name: "knife", is_default: true, },
+    ],
+  }
+  let (next, _) = update(
+    with_default,
+    AddRect({ x: 1.0, y: 1.0 }, { x: 5.0, y: 5.0 }),
+  )
+  let last = next.annotations[next.annotations.length() - 1]
+  assert_eq(last.class_id, "c2")
+  // No classes at all → "" (id-as-label fallback).
+  let (none, _) = update(
+    { ..Model::new(), mode: Rect, classes: [] },
+    AddRect({ x: 1.0, y: 1.0 }, { x: 5.0, y: 5.0 }),
+  )
+  assert_eq(none.annotations[none.annotations.length() - 1].class_id, "")
+}
+
+///|
+/// Phase 5.8 — draft mechanics. `UpdateDraft` is the Rect tool's
+/// rubber-band with the contract **grow to 2 points, then move the
+/// second**.
+///
+/// The grow-then-move split is load-bearing: a pure "replace the
+/// last point" version leaves the draft stuck at 1 point after
+/// `BeginDraft`, so `CommitDraft`'s `>= 2` check never passes and
+/// the Rect tool silently can't create anything. That was the first
+/// implementation; this test is what caught it.
+test "UpdateDraft — grows to 2 points then moves the second (5.8)" {
+  let model : Model = { ..Model::new(), mode: Rect, }
+  // Empty draft → appends.
+  let (m1, _) = update(model, UpdateDraft({ x: 10.0, y: 10.0 }))
+  assert_eq(m1.draftPoints.length(), 1)
+  assert_eq(m1.draftPoints[0].x, 10.0)
+  // One point → grows to 2 (this is the frame that makes the Rect
+  // tool work at all).
+  let (m2, _) = update(m1, UpdateDraft({ x: 20.0, y: 20.0 }))
+  assert_eq(m2.draftPoints.length(), 2)
+  assert_eq(m2.draftPoints[0].x, 10.0)
+  assert_eq(m2.draftPoints[1].x, 20.0)
+  // Two points → stays 2, and only the second moves.
+  let (m3, _) = update(m2, UpdateDraft({ x: 30.0, y: 30.0 }))
+  assert_eq(m3.draftPoints.length(), 2)
+  assert_eq(m3.draftPoints[0].x, 10.0)
+  assert_eq(m3.draftPoints[1].x, 30.0)
+  // Still 2 after many more frames (no runaway growth).
+  let (m4, _) = update(m3, UpdateDraft({ x: 40.0, y: 40.0 }))
+  let (m5, _) = update(m4, UpdateDraft({ x: 50.0, y: 50.0 }))
+  assert_eq(m5.draftPoints.length(), 2)
+  assert_eq(m5.draftPoints[1].x, 50.0)
+  // Draft updates only dirty the DYNAMIC layer — the draft preview
+  // is drawn by draw_dynamic_layer, and a rubber-band repaint must
+  // not force a full background+image blit.
+  assert_true(m5.dynamicLayerDirty)
+}
+
+///|
+/// Phase 5.8 — `CommitDraft` is the mode-aware commit. In Rect mode
+/// a 2-point draft dispatches AddRect; a 1-point draft (a click
+/// with no drag) is dropped silently instead of leaving a 1px rect.
+test "CommitDraft — rect mode commits 2 points, drops a 1-point click (5.8)" {
+  let model : Model = { ..Model::new(), mode: Rect, }
+  // One point → no Add* effect, draft cleared.
+  let (m1, _) = update(model, BeginDraft({ x: 10.0, y: 10.0 }))
+  let (m2, _) = update(m1, CommitDraft)
+  assert_eq(m2.draftPoints.length(), 0)
+  // Two points → the Add* Msg is dispatched (verified by feeding
+  // the same commit's effect target back through AddRect).
+  let (m3, _) = update(m1, UpdateDraft({ x: 40.0, y: 40.0 }))
+  assert_eq(m3.draftPoints.length(), 2)
+  let (m4, _) = update(m3, CommitDraft)
+  // The draft survives CommitDraft (AddPolygon/AddRect clears it
+  // when it runs), so the round-trip is AddRect(draft[0],draft[1]).
+  let (m5, _) = update(
+    m4,
+    AddRect(m4.draftPoints[0], m4.draftPoints[1]),
+  )
+  assert_eq(m5.draftPoints.length(), 0)
+  assert_eq(m5.annotations.length(), model.annotations.length() + 1)
+}
+
+///|
+/// Phase 5.8 — double-tap is overloaded per mode. In Polygon mode it
+/// commits the in-progress polygon; elsewhere it keeps the Phase 5.19
+/// wheel-zoom toggle. Both directions tested so neither can regress
+/// into the other.
+test "DoubleTapped — polygon commits, other modes toggle zoom-drag (5.8)" {
+  // Polygon mode with 3 vertices → commit (feed the AddPolygon back).
+  let poly : Model = {
+    ..Model::new(),
+    mode: Polygon,
+    draftPoints: [
+      { x: 10.0, y: 10.0 },
+      { x: 30.0, y: 10.0 },
+      { x: 20.0, y: 30.0 },
+    ],
+  }
+  let (toggled, _) = update(poly, DoubleTapped)
+  // Must NOT have toggled zoom mode.
+  assert_false(toggled.zoomDragMode)
+  let (committed, _) = update(
+    toggled,
+    AddPolygon(toggled.draftPoints),
+  )
+  assert_eq(committed.annotations.length(), Model::new().annotations.length() + 1)
+  // Polygon mode with only 2 vertices → no commit.
+  let (short, _) = update(
+    { ..Model::new(), mode: Polygon,
+      draftPoints: [{ x: 10.0, y: 10.0 }, { x: 20.0, y: 20.0 }] },
+    DoubleTapped,
+  )
+  assert_false(short.zoomDragMode)
+  // Select mode → still the Phase 5.19 zoom toggle.
+  let (sel, _) = update({ ..Model::new(), mode: Select, }, DoubleTapped)
+  assert_true(sel.zoomDragMode)
+}

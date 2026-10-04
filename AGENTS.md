@@ -1025,6 +1025,139 @@ zoom-drag guard (one with a control) in `canvas_view_test.mbt`.
 and produces a warning. `DragGestureEvent` still has no button ID —
 Phase 5.7's guard is a local mitigation, not a real fix.
 
+### Phase 5.8 — drawing tools: the Add* handlers finally create annotations
+
+Phase 5.8 closes the biggest remaining functional hole: **the MoUI
+app could not create a single annotation.** `AddRect` / `AddPolygon`
+/ `AddKeypoint` / `AddBinding` all existed as Msg variants, but every
+handler was a no-op placeholder that reset `mode` and bumped the
+dirty flag without appending anything — the same class of stub that
+`ModifyHandle` was until Phase 5.4. Worse, nothing dispatched them:
+the canvas's `on_drag` routed every phase to the Select-tool
+handlers regardless of `model.mode`. So the app could edit the three
+synthetic demo annotations and nothing else.
+
+**What landed:**
+
+1. **Deterministic id allocation** (`app.mbt`):
+   `annotation_id_prefix = "ann-"`, `binding_id_prefix = "bind-"`,
+   plus `first_free_suffix`, `next_annotation_id`,
+   `next_binding_id`. Deliberately **not** the production frontend's
+   scheme (`frontend/src/main.js:1066` uses
+   `newId(p) = p + "_" + random_base36_7`, e.g. `obj_ab12cd3`):
+   random ids are untestable and unbounded in length, which is the
+   wrong trade for a native canvas that renders the id as on-canvas
+   label text (see the note at `canvas_view.mbt:1145` — "ann-1",
+   "ann-23" easily fit; long ids get clipped).
+
+2. **`default_class_id(model)`** — first class flagged
+   `is_default`, else `""` (which makes `class_lookup_name` fall
+   back to rendering the annotation's own id, the same fallback the
+   synthetic Phase 5.3 demo annotations use).
+
+3. **`normalize_rect_corners` + `rect_is_degenerate`** — corners are
+   stored canonically as `(TL, BR)` regardless of drag direction, and
+   a zero-area "rect" (a click with no drag) is dropped rather than
+   left as an invisible 1 px sliver in the label.
+
+4. **The four `Add*` handlers are real.** Each allocates an id,
+   assigns the default class, appends, and selects the new entity.
+   `AddKeypoint` is the one that does **not** reset `mode` — staying
+   in Keypoint mode lets the user tag several points without
+   re-picking the tool (matching the legacy frontend's keypoint
+   tool). A degenerate rect leaves `mode` alone too, so a stray click
+   doesn't kick the user out of the Rect tool.
+
+5. **`AddBinding(from_id, pt)` resolves its target by hit-test**,
+   matching the frontend's two-step binding flow (click source →
+   click target) — the Msg carries the *point*, not the target id. It
+   refuses self-loops (target == source) and cancels cleanly (rather
+   than staying half-armed) when nothing is under the cursor.
+
+6. **Two new Msgs: `UpdateDraft(Point)` and `CommitDraft`.**
+   `CommitDraft` owns the per-tool minimum-vertex rules (Rect ≥ 2,
+   Polygon ≥ 3) in `update` rather than in the view closure, so
+   they're testable and can't drift between tools.
+
+7. **`DoubleTapped`** — a new Msg, no position payload. Moui 0.1.12's
+   `on_double_tap` takes a *bare* `Msg` (unlike `on_drag`, which gets
+   a `DragGestureEvent`), so it carries no coordinates; none are
+   needed because the polygon's vertices already live in
+   `model.draftPoints`. Double-tap is overloaded per mode: in Polygon
+   mode it commits the polygon (the standard "click vertices,
+   double-click to close" interaction — release can't serve, because
+   every press is already a vertex); elsewhere it keeps the Phase
+   5.19 wheel-zoom toggle.
+
+8. **Mode-aware canvas dispatch** (`canvas_view.mbt`) —
+   `Started` / `Changed` / `Ended` now branch on `model.mode`:
+   - `Select` / `EditBinding` → the Phase 5.6 selection + handle-drag
+     path.
+   - `Rect` → press `BeginDraft`, drag `UpdateDraft`, release
+     `CommitDraft`.
+   - `Polygon` → each press appends a vertex (first press
+     `BeginDraft`, later ones `PushDraft`); double-tap commits.
+   - `Keypoint` → each press drops a point immediately.
+   - `EditBinding` → `AddBinding` when a source is armed, otherwise
+     the press picks the source.
+
+9. **Draft handlers now dirty the *dynamic* layer**, not the static
+   one. The draft preview is drawn by `draw_dynamic_layer`
+   (`draw_draft_rect` / `draw_draft_polygon`), so pre-5.8's
+   `staticLayerDirty` forced a full background+image blit on every
+   rubber-band frame for a change that touches neither.
+
+10. **`Shape` now derives `Eq`** (was `Debug` only, while `Mode`
+    already derived `(Debug, Eq)`) so tests can assert on shape.
+
+**The bug the tests caught (worth keeping in mind).** The first
+`UpdateDraft` implementation "replaced the draft's last point". That
+silently disables the entire Rect tool: after `BeginDraft` the draft
+holds 1 point, `UpdateDraft` replaces it, so it stays at 1 forever,
+`CommitDraft`'s `>= 2` check never passes, and **no rect can ever be
+created** — with no error anywhere. The contract is now explicitly
+"grow the draft to 2 points, then move the second", and the test
+`UpdateDraft — grows to 2 points then moves the second (5.8)` pins
+it. A rubber-band helper whose failure mode is "the tool quietly does
+nothing" needs a test that asserts the *point count*, not just the
+last point's position.
+
+**11 new tests** (260 total, was 249): `AddRect` creates / rejects
+degenerate / normalises corners / ids collision-free + deterministic;
+`AddPolygon` requires 3 vertices; `AddKeypoint` creates and stays in
+mode and increments the id; `AddBinding` resolves target, rejects
+self-loop, consumes `bindingFromId`; `AddRect` inherits the default
+class (and falls back to `""`); `UpdateDraft` grow-then-move contract
+(including no runaway growth over many frames); `CommitDraft` 2-point
+commit vs 1-point drop; `DoubleTapped` per-mode overload in both
+directions (polygon commits and does *not* toggle zoom; Select still
+toggles).
+
+**Verification:** 260/260 tests pass; `moon check --target native`
+0 errors. `_build/phase5_8_smoke._window._window.png` shows the demo
+model after drawing a **fourth** annotation — `ann-1` at
+image-natural `(8, 96) → (46, 190)`, in the lower-left, clear of the
+three synthetic demo annotations, rendered with the selected (gold)
+stroke, its 8 square handles, and its `ann-1` label. The three demo
+annotations are still visible in their original positions. The smoke
+harness (`build_demo_drag_model`) now dispatches the real
+BeginDraft → UpdateDraft → AddRect sequence, so the screenshot is
+evidence for creation, not just editing.
+
+**Known issues deferred:**
+- The toolbar's mode buttons are still `@views.text` placeholders
+  (Phase 18.E/19/20 used text because `@views.button` needed the
+  rasterizer fix of that phase; the buttons render now, but the
+  sidebar/toolbar still have no `on_click` handlers wired to
+  `SetMode`), so the drawing tools are reachable only via the
+  programmatic Msg path and the default `Select` mode. Wiring the
+  toolbar is the prerequisite for a user to actually pick Rect /
+  Polygon / Keypoint.
+- Polygon drafting shows committed vertices only — there's no
+  rubber-band segment from the last vertex to the live cursor.
+  `draw_draft_polygon` would need `model.cursorImgPt` threaded in.
+- `CancelDraft` / `PopDraft` (undo-vertex) have no key binding yet.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

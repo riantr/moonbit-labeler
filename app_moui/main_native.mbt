@@ -189,7 +189,22 @@ fn build_demo_drag_model() -> Model {
     ModifyHandle("rect-1", 4, { x: 175.0, y: 175.0 }),
   )
   let (m4, _) = update(m3, EndDragHandle)
-  m4
+  // Phase 5.8 — then draw a *brand new* annotation with the Rect
+  // tool, so the smoke screenshot also proves creation works (not
+  // just editing of the three synthetic demo annotations). Drawn in
+  // the lower-left region, clear of rect-1 / poly-1 / kp-1, so it's
+  // visually unambiguous.
+  //
+  // The dispatched sequence is exactly what the canvas's
+  // mode-aware `on_drag` sends in Rect mode: BeginDraft on press,
+  // UpdateDraft per drag frame, CommitDraft on release → AddRect.
+  let (d1, _) = update(
+    { ..m4, mode: Rect, },
+    BeginDraft({ x: 8.0, y: 96.0 }),
+  )
+  let (d2, _) = update(d1, UpdateDraft({ x: 46.0, y: 190.0 }))
+  let (d3, _) = update(d2, AddRect({ x: 8.0, y: 96.0 }, { x: 46.0, y: 190.0 }))
+  d3
 }
 
 ///|

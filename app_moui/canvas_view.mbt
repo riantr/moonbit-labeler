@@ -146,13 +146,58 @@ pub fn canvas_view(model : Model) -> @moui.View[Msg] {
     }
     let canvas_pt : Point = { x: ev.position.x, y: ev.position.y }
     match ev.phase {
-      // Phase 5.6 — the press itself. `update`'s CanvasPressed
-      // handler runs hit_test_select + hit_test_handle against
-      // the live model, so a first-click on a handle selects
-      // the annotation AND arms the drag in the same frame.
-      Started => CanvasPressed(img_pt, canvas_pt)
-      Changed => CursorMoved(img_pt, canvas_pt)
-      Ended => EndDragHandle
+      // Phase 5.8 — mode-aware dispatch. Pre-5.8 every phase routed
+      // to the Select-tool handlers, so with the Rect/Polygon/
+      // Keypoint/EditBinding modes selected there was literally no
+      // way to create an annotation: the `Add*` Msg handlers existed
+      // but nothing dispatched them.
+      //
+      // Select / EditBinding → selection + handle drag (5.6 path).
+      // Rect               → press = first corner, drag = move the
+      //                      second corner, release = commit.
+      // Polygon            → each press appends a vertex; the
+      //                      double-tap handler below commits.
+      // Keypoint           → each press drops a point immediately;
+      //                      stays in Keypoint mode for rapid
+      //                      tagging.
+      Started =>
+        match model.mode {
+          Rect => BeginDraft(img_pt)
+          Polygon =>
+            // The first press starts the draft; later presses
+            // append, so the caller never has to know whether a
+            // draft is already in progress.
+            if model.draftPoints.length() == 0 {
+              BeginDraft(img_pt)
+            } else {
+              PushDraft(img_pt)
+            }
+          Keypoint => AddKeypoint(img_pt)
+          EditBinding =>
+            match model.bindingFromId {
+              Some(from_id) => AddBinding(from_id, img_pt)
+              // No source picked yet — this press picks it.
+              None => CanvasPressed(img_pt, canvas_pt)
+            }
+          Select => CanvasPressed(img_pt, canvas_pt)
+        }
+      Changed =>
+        match model.mode {
+          // Rubber-band the rect's second corner.
+          Rect => UpdateDraft(img_pt)
+          // Every other tool still wants a live crosshair.
+          _ => CursorMoved(img_pt, canvas_pt)
+        }
+      Ended =>
+        match model.mode {
+          Rect => CommitDraft
+          Polygon =>
+            // A polygon commits on double-tap, not release, so
+            // releasing just drops any pending handle drag.
+            EndDragHandle
+          Keypoint => EndDragHandle
+          _ => EndDragHandle
+        }
       _ => CursorMoved(img_pt, canvas_pt)
     }
   })
@@ -174,8 +219,23 @@ pub fn canvas_view(model : Model) -> @moui.View[Msg] {
   // Unit" on the RHS) makes the result reachable. Phase 5.19
   // also repurposed double-tap: now it toggles wheel-zoom
   // mode too (for touch users who lack a right button).
+  //
+  // Phase 5.8 — double-tap is overloaded per mode: in Polygon mode
+  // it commits the polygon (the standard "click vertices,
+  // double-click to close" interaction — release can't serve,
+  // because every press is already a vertex). Elsewhere it keeps
+  // the Phase 5.19 wheel-zoom toggle.
+  //
+  // The per-mode decision lives in `update` (behind `DoubleTapped`),
+  // consistent with the Phase 5.6 principle: view closures forward,
+  // `update` decides, so the rules stay unit-testable.
+  //
+  // Note Moui 0.1.12's `on_double_tap` takes a bare `Msg`, not a
+  // closure — it carries **no position payload**. That's fine here
+  // because the polygon vertices already live in `model.draftPoints`;
+  // no coordinates are needed to commit.
   let final_view : @moui.View[Msg] = after_secondary.on_double_tap(
-    ToggleZoomDragMode,
+    DoubleTapped,
   )
   final_view
 }

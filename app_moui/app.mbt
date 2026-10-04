@@ -65,7 +65,7 @@ pub(all) enum Shape {
   Rect
   Polygon
   Keypoint
-} derive(Debug)
+} derive(Debug, Eq)
 
 ///|
 pub(all) struct Annotation {
@@ -486,6 +486,35 @@ pub(all) enum Msg {
   // `hit_test_handle` to arm dragState — all in one Msg, one
   // frame, no stale reads.
   CanvasPressed(Point, Point)
+  // Phase 5.8 — the drawing-tool Msgs, completing the set needed to
+  // actually create annotations (the `Add*` handlers existed but
+  // nothing could reach them). Together with the now-real `AddRect` /
+  // `AddPolygon` / `AddKeypoint` / `AddBinding` handlers, a user can
+  // finally draw, not just edit the synthetic demo annotations.
+  //
+  // UpdateDraft(pt) — replace the draft's *last* point (rect tool
+  //   rubber-banding: press sets the first corner, every Changed
+  //   frame moves the second). Appends when the draft is empty so
+  //   callers can use it as "add or move" without a null check.
+  // CommitDraft — inspect `model.draftPoints` + `model.mode` and
+  //   dispatch the matching Add* via `Effect::send`: Rect needs 2
+  //   points, Polygon needs 3, otherwise no-op. Keeping the decision
+  //   here (rather than branching in the view closure) means the
+  //   draft-length rules are unit-testable and can't drift between
+  //   the tools.
+  UpdateDraft(Point)
+  CommitDraft
+  // Phase 5.8 — double-tap on the canvas, overloading the Phase 5.19
+  // wheel-zoom toggle. In Polygon mode it commits the in-progress
+  // polygon ("click vertices, double-click to close"); in every
+  // other mode it keeps toggling `zoomDragMode`. Routing it through
+  // `update` (rather than branching in the view closure) is what
+  // makes the per-mode rule testable.
+  //
+  // No position payload: Moui 0.1.12's `on_double_tap` takes a bare
+  // `Msg` and carries no coordinates, and none are needed — the
+  // polygon's vertices already live in `model.draftPoints`.
+  DoubleTapped
   // Phase 5.10 — full image decode result. Carries the decoded
   // pixel width, height, byte length, and pixel format name
   // (Gray8 / GrayA8 / RGB8 / RGBA8) so the model can expose
@@ -558,45 +587,148 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         { ..model, selectedId: id, staticLayerDirty: true, },
         @moui.Effect::none(),
       )
-    AddRect(_p1, _p2) =>
+    // Phase 5.8 — the Add* handlers were no-op placeholders (the
+    // same class of stub that `ModifyHandle` was until Phase 5.4):
+    // they reset `mode` / `draftPoints` and bumped the dirty flag
+    // but never appended anything, so the MoUI app could edit the
+    // three synthetic demo annotations and could not create a single
+    // new one. Each now actually constructs the annotation/binding.
+    //
+    // Shared contract: allocate a deterministic id, assign
+    // `default_class_id(model)`, append, select the new entity, and
+    // reset the drawing mode back to `Select` (except `AddKeypoint`,
+    // which stays in Keypoint mode so the user can rapidly drop
+    // several points without re-clicking the toolbar — the same
+    // behaviour as the legacy frontend's keypoint tool).
+    AddRect(p1, p2) => {
+      // Degenerate (a click with no drag) → no annotation, and leave
+      // the mode alone so the user isn't kicked out of Rect tool by
+      // an accidental click.
+      if rect_is_degenerate(p1, p2) {
+        (model, @moui.Effect::none())
+      } else {
+        let (tl, br) = normalize_rect_corners(p1, p2)
+        let ann : Annotation = {
+          id: next_annotation_id(model),
+          shape: Rect,
+          points: [tl, br],
+          class_id: default_class_id(model),
+        }
+        (
+          {
+            ..model,
+            annotations: model.annotations + [ann],
+            selectedId: Some(ann.id),
+            label: { raw_json: model.label.raw_json, dirty: true, },
+            mode: Select,
+            draftPoints: [],
+            staticLayerDirty: true,
+          },
+          @moui.Effect::none(),
+        )
+      }
+    }
+    AddPolygon(pts) => {
+      // A polygon needs 3 distinct-enough vertices to enclose area;
+      // fewer is a stray click or an in-progress draft.
+      if pts.length() < 3 {
+        (model, @moui.Effect::none())
+      } else {
+        let ann : Annotation = {
+          id: next_annotation_id(model),
+          shape: Polygon,
+          points: pts,
+          class_id: default_class_id(model),
+        }
+        (
+          {
+            ..model,
+            annotations: model.annotations + [ann],
+            selectedId: Some(ann.id),
+            label: { raw_json: model.label.raw_json, dirty: true, },
+            mode: Select,
+            draftPoints: [],
+            staticLayerDirty: true,
+          },
+          @moui.Effect::none(),
+        )
+      }
+    }
+    AddKeypoint(pt) => {
+      let ann : Annotation = {
+        id: next_annotation_id(model),
+        shape: Keypoint,
+        points: [pt],
+        class_id: default_class_id(model),
+      }
       (
         {
           ..model,
+          annotations: model.annotations + [ann],
+          selectedId: Some(ann.id),
           label: { raw_json: model.label.raw_json, dirty: true, },
-          staticLayerDirty: true,
-          mode: Select,
-          draftPoints: [],
-        },
-        @moui.Effect::none(),
-      )
-    AddPolygon(_pts) =>
-      (
-        {
-          ..model,
-          label: { raw_json: model.label.raw_json, dirty: true, },
-          staticLayerDirty: true,
-          mode: Select,
-          draftPoints: [],
-        },
-        @moui.Effect::none(),
-      )
-    AddKeypoint(_pt) =>
-      (
-        {
-          ..model,
-          label: { raw_json: model.label.raw_json, dirty: true, },
+          // Stay in Keypoint mode for rapid tagging.
           staticLayerDirty: true,
         },
         @moui.Effect::none(),
       )
-    AddBinding(_from_id, _pt) =>
-      (
-        { ..model, bindingFromId: None, mode: Select, staticLayerDirty: true, },
-        @moui.Effect::none(),
-      )
+    }
+    AddBinding(from_id, pt) => {
+      // The Msg carries the *point* the user clicked, not the target
+      // id — matching the frontend's two-step binding flow (click the
+      // source annotation to set `bindingFromId`, then click the
+      // target). Resolve the target by hit-test, ignoring the source
+      // itself so a click on the source can't create a self-loop.
+      let target : String? = match hit_test_body(
+        pt,
+        model.annotations,
+        body_hit_radius,
+      ) {
+        Some(id) => if id == from_id { None } else { Some(id) }
+        None => None
+      }
+      match target {
+        Some(to_id) => {
+          let b : Binding = {
+            id: next_binding_id(model),
+            from: from_id,
+            to: to_id,
+          }
+          (
+            {
+              ..model,
+              bindings: model.bindings + [b],
+              bindingFromId: None,
+              mode: Select,
+              label: { raw_json: model.label.raw_json, dirty: true, },
+              staticLayerDirty: true,
+            },
+            @moui.Effect::none(),
+          )
+        }
+        None =>
+          // No target under the cursor (or it was the source): cancel
+          // the pending binding rather than leaving the app in a
+          // half-armed state.
+          (
+            { ..model, bindingFromId: None, mode: Select, },
+            @moui.Effect::none(),
+          )
+      }
+    }
     BeginDraft(pt) =>
       (
-        { ..model, draftPoints: [pt], staticLayerDirty: true, },
+        {
+          ..model,
+          draftPoints: [pt],
+          // Phase 5.8 — the draft preview is drawn by the *dynamic*
+          // layer (`draw_draft_rect` / `draw_draft_polygon` in
+          // `draw_dynamic_layer`), so only the dynamic layer needs to
+          // repaint. The pre-5.8 handlers set `staticLayerDirty`,
+          // forcing a full background+image blit on every draft frame
+          // for a change that touches neither.
+          dynamicLayerDirty: true,
+        },
         @moui.Effect::none(),
       )
     PushDraft(pt) =>
@@ -604,10 +736,112 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         {
           ..model,
           draftPoints: model.draftPoints + [pt],
-          staticLayerDirty: true,
+          dynamicLayerDirty: true,
         },
         @moui.Effect::none(),
       )
+    UpdateDraft(pt) => {
+      // Phase 5.8 — the Rect tool's rubber-band. Contract:
+      // **grow the draft to 2 points, then move the second.**
+      //
+      // The grow-then-move split is load-bearing, and getting it
+      // wrong silently disables the whole tool: a pure
+      // "replace the last point" version leaves the draft at 1
+      // point forever after `BeginDraft`, so `CommitDraft`'s
+      // `>= 2` check never passes and no rect can ever be created.
+      // (That was the first implementation; the test
+      // "UpdateDraft — moves the last point, appends when empty"
+      // caught it.)
+      let n = model.draftPoints.length()
+      if n < 2 {
+        (
+          {
+            ..model,
+            draftPoints: model.draftPoints + [pt],
+            dynamicLayerDirty: true,
+          },
+          @moui.Effect::none(),
+        )
+      } else {
+        // Keep every point except the last, then move the last.
+        let pts : Array[Point] = []
+        let mut i = 0
+        while i < n - 1 {
+          pts.push(model.draftPoints[i])
+          i = i + 1
+        }
+        pts.push(pt)
+        (
+          {
+            ..model,
+            draftPoints: pts,
+            dynamicLayerDirty: true,
+          },
+          @moui.Effect::none(),
+        )
+      }
+    }
+    CommitDraft =>
+      // Phase 5.8 — turn the in-progress draft into a real
+      // annotation by dispatching the matching `Add*`. The length
+      // rules live here, not in the view closure, so they're
+      // testable and consistent across tools.
+      match model.mode {
+        Rect => {
+          if model.draftPoints.length() >= 2 {
+            (
+              model,
+              @moui.Effect::send(
+                AddRect(
+                  model.draftPoints[0],
+                  model.draftPoints[1],
+                ),
+              ),
+            )
+          } else {
+            // A click with no drag — drop the draft silently rather
+            // than leaving a 1px rect behind.
+            (
+              { ..model, draftPoints: [], },
+              @moui.Effect::none(),
+            )
+          }
+        }
+        Polygon => {
+          if model.draftPoints.length() >= 3 {
+            (
+              model,
+              @moui.Effect::send(AddPolygon(model.draftPoints)),
+            )
+          } else {
+            (model, @moui.Effect::none())
+          }
+        }
+        _ => (model, @moui.Effect::none())
+      }
+    DoubleTapped =>
+      // Phase 5.8 — overload double-tap per mode. Polygon commits
+      // (the vertex-click tool needs a separate gesture to close);
+      // every other mode keeps the Phase 5.19 wheel-zoom toggle.
+      // Selection is deliberately NOT re-run in Polygon mode —
+      // committing a polygon shouldn't also change what's selected.
+      match model.mode {
+        Polygon => {
+          if model.draftPoints.length() >= 3 {
+            (
+              model,
+              @moui.Effect::send(AddPolygon(model.draftPoints)),
+            )
+          } else {
+            (model, @moui.Effect::none())
+          }
+        }
+        _ =>
+          (
+            { ..model, zoomDragMode: !model.zoomDragMode, },
+            @moui.Effect::none(),
+          )
+      }
     PopDraft => {
       let n = model.draftPoints.length()
       if n <= 1 {
@@ -618,7 +852,11 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
           kept.push(model.draftPoints[i])
         }
         (
-          { ..model, draftPoints: kept, staticLayerDirty: true, },
+          {
+            ..model,
+            draftPoints: kept,
+            dynamicLayerDirty: true,
+          },
           @moui.Effect::none(),
         )
       }
@@ -1328,6 +1566,132 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
 // ─────────────────────────────────────────────────────────────────
 // Helpers — annotation mutation
 // ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.8 — the id prefix for user-created annotations. Matches
+/// the `ann-N` shape used throughout the app_moui tests and the
+/// canvas label-text renderer (which notes that short ids matter:
+/// "ann-1", "ann-23" etc. easily fit; long ids get clipped).
+///
+/// Deliberately NOT the production frontend's scheme —
+/// `frontend/src/main.js:1066` uses
+/// `newId(prefix) = prefix + "_" + random_base36_7`, e.g.
+/// `obj_ab12cd3`. Random ids are untestable and unbounded in
+/// length, which is the wrong trade for a native canvas that
+/// renders the id as on-canvas label text.
+pub let annotation_id_prefix : String = "ann-"
+
+///|
+/// Phase 5.8 — the id prefix for user-created bindings.
+pub let binding_id_prefix : String = "bind-"
+
+///|
+/// Phase 5.8 — smallest positive integer `n >= from` such that
+/// `prefix + n` is not present in `taken`. Returns `from` when
+/// every candidate is already used.
+///
+/// Used by `next_annotation_id` / `next_binding_id` so a deleted
+/// id is never handed out again to a *new* annotation while an
+/// older one still exists — e.g. with annotations `ann-1`, `ann-3`
+/// present, the next id is `ann-4` (not `ann-2`, which would be
+/// free but would break the "ids increase monotonically within a
+/// session" expectation that the label JSON round-trip relies on).
+fn first_free_suffix(
+  taken : Array[String],
+  prefix : String,
+  from : Int,
+) -> Int {
+  let n = taken.length()
+  let mut candidate = from
+  let mut searching = true
+  while searching {
+    let probe : String = prefix + candidate.to_string()
+    let mut used = false
+    let mut i = 0
+    while i < n {
+      if taken[i] == probe {
+        used = true
+      }
+      i = i + 1
+    }
+    if used {
+      candidate = candidate + 1
+    } else {
+      searching = false
+    }
+  }
+  candidate
+}
+
+///|
+/// Phase 5.8 — allocate an id for a new annotation. Deterministic
+/// (no RNG), so a given model state always yields the same id and
+/// the behaviour is unit-testable.
+fn next_annotation_id(model : Model) -> String {
+  let taken : Array[String] = []
+  for ann in model.annotations {
+    taken.push(ann.id)
+  }
+  annotation_id_prefix + first_free_suffix(
+    taken,
+    annotation_id_prefix,
+    1,
+  ).to_string()
+}
+
+///|
+/// Phase 5.8 — allocate an id for a new binding.
+fn next_binding_id(model : Model) -> String {
+  let taken : Array[String] = []
+  for b in model.bindings {
+    taken.push(b.id)
+  }
+  binding_id_prefix + first_free_suffix(taken, binding_id_prefix, 1).to_string()
+}
+
+///|
+/// Phase 5.8 — the `class_id` a newly created annotation gets: the
+/// first class flagged `is_default` in `model.classes`, or `""` when
+/// the project has no classes (or none marked default). `""` makes
+/// `class_lookup_name` fall back to rendering the annotation's own
+/// id as the on-canvas label, which is the same fallback the
+/// synthetic Phase 5.3 demo annotations rely on.
+fn default_class_id(model : Model) -> String {
+  for c in model.classes {
+    if c.is_default {
+      return c.id
+    }
+  }
+  ""
+}
+
+///|
+/// Phase 5.8 — normalise a rect's two corners to (top-left,
+/// bottom-right). The stored convention is `points[0] = TL,
+/// points[1] = BR`; Phase 5.7 established that the *rendering and
+/// hit-test* code tolerates either order, but storing the canonical
+/// order keeps the on-disk JSON stable and makes the eight handles
+/// index-meaningful.
+fn normalize_rect_corners(
+  a : Point,
+  b : Point,
+) -> (Point, Point) {
+  let tl : Point = { x: if a.x < b.x { a.x } else { b.x },
+                     y: if a.y < b.y { a.y } else { b.y } }
+  let br : Point = { x: if a.x > b.x { a.x } else { b.x },
+                     y: if a.y > b.y { a.y } else { b.y } }
+  (tl, br)
+}
+
+///|
+/// Phase 5.8 — a rect is only worth creating if it has real area.
+/// A click (press + release with no movement) yields a zero-size
+/// rect, which would render as a 1px sliver and leave an
+/// un-deletable speck in the label. Callers treat a degenerate rect
+/// as "no annotation drawn" and leave the model untouched.
+fn rect_is_degenerate(a : Point, b : Point) -> Bool {
+  a.x == b.x || a.y == b.y
+}
 
 ///|
 /// Phase 5.4 — pure helper that runs `f` against the annotation
