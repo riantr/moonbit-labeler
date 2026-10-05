@@ -4891,3 +4891,124 @@ test "fit_contain_rect — the demo image is centred in the real canvas (5.15)" 
     dst.origin.y + dst.size.height <= canvas.origin.y + canvas.size.height,
   )
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.16 — the mode-after-commit rule
+//
+// Phase 5.9 flagged "give the `Add*` handlers one shared
+// mode-after-commit rule instead of three hand-written `mode: Select`
+// lines" as the real fix for "drawing N rects costs N clicks". It
+// turned out worse than recorded: the three handlers expressed the
+// same contract three different ways, and `AddKeypoint` expressed it
+// by *omitting* the `mode` field entirely — i.e. inheriting
+// `model.mode`, which only produced the right answer because the
+// canvas dispatched it while the keypoint tool happened to be armed.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Every `Mode`, in toolbar order. Spelled out in a typed helper
+/// rather than inline because `Rect` and `Polygon` are variant names
+/// in **both** `Mode` and `Shape` — a bare `[Select, Rect, ...]`
+/// cannot be resolved to one of them. That name collision is also
+/// why `mode_after_commit` takes a `Shape` and callers say
+/// `mode_after_commit(Rect)` in a context that already knows the
+/// handler's shape, rather than reading the mode back off the model.
+fn every_mode() -> Array[Mode] {
+  [Select, Rect, Polygon, Keypoint, EditBinding]
+}
+
+///|
+/// Phase 5.16 — the rule itself, all three shapes. Keypoint stays
+/// armed for rapid tagging; the two drag/click shapes return to
+/// `Select`, matching the legacy frontend this port tracks.
+test "mode_after_commit — keypoint stays armed, rect and polygon return to Select (5.16)" {
+  assert_eq(mode_after_commit(Rect), Select)
+  assert_eq(mode_after_commit(Polygon), Select)
+  assert_eq(mode_after_commit(Keypoint), Keypoint)
+}
+
+///|
+/// Phase 5.16 — the rule takes the **shape**, not the current mode.
+/// The two coincide on every path the app has today, so this test
+/// cannot pass or fail on today's code; it exists to pin the
+/// contract for the next input path. If a future caller dispatches
+/// `AddRect` while the mode says `Keypoint`, the answer must still be
+/// `Select` — "whatever the mode was" would silently keep the
+/// keypoint tool armed after a rectangle.
+test "mode_after_commit — depends on the shape, not the mode that was active (5.16)" {
+  // Same shape, three different starting modes: one answer each.
+  for starting in every_mode() {
+    let armed : Model = { ..Model::new(), mode: starting, }
+    // Dispatch the real handler from that mode and check the mode it
+    // settles on is the rule's answer, not the starting mode.
+    let (after, _) = update(
+      armed,
+      AddRect({ x: 0.0, y: 0.0 }, { x: 20.0, y: 20.0 }),
+    )
+    assert_eq(after.mode, mode_after_commit(Rect))
+    assert_eq(after.mode, Select)
+  }
+}
+
+///|
+/// Phase 5.16 — every `Add*` handler agrees with the shared rule.
+/// This is the anti-drift test: it fails if anyone hand-writes
+/// `mode: Select` back into one handler, or restores `AddKeypoint`'s
+/// omit-the-field trick, because the handler and the rule would then
+/// disagree. Three shapes, three handlers, one contract.
+test "Add handlers all agree with mode_after_commit (5.16)" {
+  // Rect: dispatched from any mode, must land on the rule's answer.
+  for starting in every_mode() {
+    let (rect_model, _) = update(
+      { ..Model::new(), mode: starting, },
+      AddRect({ x: 4.0, y: 6.0 }, { x: 40.0, y: 50.0 }),
+    )
+    assert_eq(rect_model.mode, mode_after_commit(Rect))
+  }
+  // Polygon: needs 3 vertices or it is a no-op by design.
+  for starting in every_mode() {
+    let (poly_model, _) = update(
+      { ..Model::new(), mode: starting, },
+      AddPolygon([
+        { x: 10.0, y: 10.0 },
+        { x: 40.0, y: 12.0 },
+        { x: 25.0, y: 45.0 },
+      ]),
+    )
+    assert_eq(poly_model.mode, mode_after_commit(Polygon))
+  }
+  // Keypoint: the one that must stay armed. Dispatched from every
+  // starting mode, it still lands on Keypoint — this is the case
+  // that used to be expressed by not writing the field at all.
+  for starting in every_mode() {
+    let (kp_model, _) = update(
+      { ..Model::new(), mode: starting, },
+      AddKeypoint({ x: 12.0, y: 34.0 }),
+    )
+    assert_eq(kp_model.mode, mode_after_commit(Keypoint))
+    assert_eq(kp_model.mode, Keypoint)
+  }
+}
+
+///|
+/// Phase 5.16 — cancel is deliberately **not** the commit rule. A
+/// commit leaves the keypoint tool armed; a cancel must leave nothing
+/// armed, so Escape from Keypoint mode goes to `Select` even though
+/// `mode_after_commit(Keypoint)` says `Keypoint`. This is the
+/// asymmetry that keeps `CancelDraft` from calling the commit rule,
+/// and it would be invisible if the two rules were merged.
+test "cancel always disarms, even from keypoint (5.16)" {
+  let armed : Model = { ..Model::new(), mode: Keypoint, }
+  // Show that the commit rule really would have kept the tool armed.
+  assert_eq(mode_after_commit(Keypoint), Keypoint)
+  // Escape discards instead, so nothing stays armed.
+  let (cancelled, _) = update(armed, CancelDraft)
+  assert_eq(cancelled.mode, Select)
+  assert_eq(cancelled.draftPoints.length(), 0)
+  // And the draft-cancel path agrees.
+  let (p1, _) = update(armed, PushDraft({ x: 5.0, y: 5.0 }))
+  let (p2, _) = update(p1, PushDraft({ x: 9.0, y: 9.0 }))
+  let (finished, _) = update(p2, FinishDraft)
+  assert_eq(finished.mode, Select)
+  assert_eq(finished.draftPoints.length(), 0)
+}

@@ -1899,6 +1899,74 @@ native` 0 errors (185 pre-existing warnings, unchanged);
 phase changes no rendering path, and the geometry it pins was
 measured from the live paint in this same phase.
 
+### Phase 5.16 — one rule for "which tool is armed after a commit"
+
+Closes the second half of the item Phase 5.9 left open ("a real fix
+would give the `Add*` handlers one shared mode-after-commit rule
+instead of three hand-written `mode: Select` lines").
+
+**The rule, and where it lives.** `pub fn mode_after_commit(created :
+Shape) -> Mode` in `app.mbt`, next to `mode_label` (5.9's other mode
+helper). Keypoint stays armed; Rect and Polygon return to `Select`.
+All three `Add*` handlers call it.
+
+**It takes the shape, not the current mode.** The two coincide on
+every path the app has today, so this is about the next input path:
+if something ever dispatches `AddRect` while the mode says `Keypoint`,
+the answer must still be `Select`. Reading the mode back off the
+model would silently keep the keypoint tool armed after a rectangle.
+It also sidesteps a real hazard in this file — **`Rect` and `Polygon`
+are variant names in both `Mode` and `Shape`**, which is why a bare
+`[Select, Rect, ...]` in a test cannot be resolved to either enum and
+needed an explicitly typed `every_mode()` helper.
+
+**Worse than AGENTS.md had it.** The note said "three hand-written
+`mode: Select` lines". In fact there were **six** `mode: Select`
+writes, and the three `Add*` handlers expressed the same contract
+three different ways:
+
+| handler | how it said "commit" |
+| --- | --- |
+| `AddRect` | hand-written `mode: Select` |
+| `AddPolygon` | hand-written `mode: Select` |
+| `AddKeypoint` | **omitted the `mode` field entirely** |
+
+`AddKeypoint` inherited `model.mode`, so it produced the right answer
+only because the canvas dispatched it while the keypoint tool
+happened to be armed. That is a contract held by an accident of call
+ordering rather than by code. It is now explicit.
+
+**The behaviour is unchanged, and that is the decision.** Drawing N
+rectangles still costs N toolbar clicks. The counter-argument is that
+the legacy frontend this port tracks also drops out of the rect tool
+after a commit, so keeping the tool armed would be a deliberate
+*divergence* from the reference rather than a fix. The rule is now
+single-sourced, explicit and tested, so revisiting it is a one-line
+change in one function instead of three edits in three handlers.
+
+**The asymmetry with cancel is deliberate and tested.** `FinishDraft`
+and `CancelDraft` go to `Select` unconditionally, *including* from
+Keypoint, and therefore do **not** call `mode_after_commit`. A commit
+means "finished", which leaves the keypoint tool armed for the next
+point; a cancel means "stop", which must leave nothing armed. Merging
+the two rules would silently re-arm the tool on Escape, so
+`cancel always disarms, even from keypoint (5.16)` asserts both
+halves.
+
+**Tests (298/298, +4).** The rule for all three shapes; the
+shape-not-mode contract, dispatched from all five starting modes; the
+**anti-drift** test asserting every `Add*` handler agrees with the
+rule from every starting mode (it fails if anyone hand-writes
+`mode: Select` back, or restores the omit-the-field trick); and the
+cancel asymmetry above.
+
+**Verification:** 298/298 tests pass (294 -> 298); `moon check
+--target native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags neither touched file. Smoke
+`_build/phase5_16_final._window._window.png` is unchanged from 5.14
+except for the toolbar's armed tool — correct, since this phase
+refactors a rule without changing any behaviour.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

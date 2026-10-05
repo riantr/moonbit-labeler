@@ -46,6 +46,53 @@ pub fn mode_label(mode : Mode) -> String {
 }
 
 ///|
+/// Phase 5.16 — the one rule for "which tool is armed after the user
+/// finishes creating a shape".
+///
+/// It takes the **shape that was created**, not the mode the user
+/// happened to be in. Those coincide today, but the shape is the
+/// actual fact: if a future input path ever dispatches `AddRect`
+/// while the mode says `Keypoint`, the correct answer is still
+/// `Select`, not "whatever the mode was".
+///
+/// **The rule.** Keypoint stays armed; everything else returns to
+/// `Select`.
+///
+/// **Why Keypoint is the exception.** It is a one-click tool, and
+/// labelling a scan means dropping a point on every defect — dozens
+/// of them. Requiring a toolbar click between consecutive points is
+/// the difference between tagging a scan in a minute and not
+/// finishing. The legacy frontend's keypoint tool behaves this way,
+/// and that is the reference this port is tracking.
+///
+/// **Why Rect and Polygon do not stay armed** — and this is the part
+/// Phase 5.9 flagged as deserving a deliberate decision. It is
+/// genuinely annoying: drawing N rectangles costs N toolbar clicks,
+/// because each `AddRect` returns to `Select`. The counter-argument
+/// is that the same drop-out is what the legacy frontend does for
+/// both tools, and this is a port of it: keeping the tool armed would
+/// be a deliberate divergence from the reference, not a fix. So the
+/// behaviour is **unchanged** and the point of this phase is to make
+/// it single-sourced, explicit and tested rather than to change it.
+/// If the decision is ever revisited, this function is the one place
+/// it has to change, and `mode_after_commit` is covered by tests for
+/// all three shapes.
+///
+/// Note the asymmetry with the *cancel* paths (`FinishDraft`,
+/// `CancelDraft`, and `AddBinding`), which always go to `Select`
+/// **including from Keypoint**: cancelling is "stop what you were
+/// doing", not "finish what you were doing", so it must not leave a
+/// tool armed. Those handlers therefore do not call this function —
+/// see the comment on `CancelDraft`.
+pub fn mode_after_commit(created : Shape) -> Mode {
+  match created {
+    Keypoint => Keypoint
+    Rect => Select
+    Polygon => Select
+  }
+}
+
+///|
 pub(all) enum ClassType {
   Object
   Tag
@@ -673,7 +720,9 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
             annotations: model.annotations + [ann],
             selectedId: Some(ann.id),
             label: { raw_json: model.label.raw_json, dirty: true, },
-            mode: Select,
+            // Phase 5.16 — via the shared rule rather than a
+            // hand-written `mode: Select`. See `mode_after_commit`.
+            mode: mode_after_commit(Rect),
             draftPoints: [],
             staticLayerDirty: true,
           },
@@ -699,7 +748,8 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
             annotations: model.annotations + [ann],
             selectedId: Some(ann.id),
             label: { raw_json: model.label.raw_json, dirty: true, },
-            mode: Select,
+            // Phase 5.16 — shared rule; see `mode_after_commit`.
+            mode: mode_after_commit(Polygon),
             draftPoints: [],
             staticLayerDirty: true,
           },
@@ -720,7 +770,14 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
           annotations: model.annotations + [ann],
           selectedId: Some(ann.id),
           label: { raw_json: model.label.raw_json, dirty: true, },
-          // Stay in Keypoint mode for rapid tagging.
+          // Phase 5.16 — this used to be expressed by *omitting*
+          // `mode` and inheriting `model.mode`. That is the same
+          // rule as the other two handlers written a third way, and
+          // it only works because the canvas dispatches
+          // `AddKeypoint` while the keypoint tool is armed. It is
+          // now explicit, so the behaviour no longer depends on the
+          // caller having set the mode first.
+          mode: mode_after_commit(Keypoint),
           staticLayerDirty: true,
         },
         @moui.Effect::none(),
@@ -938,6 +995,16 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
     // `FinishDraft` above has the same latent shape; it is not bound
     // to any key and not dispatched from the view tree, so it is left
     // alone rather than changed untested.
+    //
+    // Phase 5.16 — note this uses the *cancel* rule, not
+    // `mode_after_commit`. Both `FinishDraft` and `CancelDraft` go to
+    // `Select` unconditionally, **including when the user was in
+    // Keypoint mode**. That is deliberate and is the asymmetry
+    // `mode_after_commit` documents: a commit means "I finished",
+    // which leaves the keypoint tool armed for the next point, while
+    // a cancel means "stop", which must leave nothing armed. The
+    // distinction is the whole reason these handlers do not call the
+    // commit rule.
     CancelDraft =>
       (
         {
