@@ -71,6 +71,15 @@ pub fn ImageCache::get(self : ImageCache, source : String) -> DecodedImage? {
 }
 
 ///|
+/// How many images are currently cached. Added in Phase 5.23 so the
+/// renderer can bound growth: every decoded image is a full RGBA8
+/// buffer (767 KB for the shipped 517×371 sample), so an unbounded
+/// cache means walking a 500-image folder costs hundreds of MB.
+pub fn ImageCache::size(self : ImageCache) -> Int {
+  self.entries.length()
+}
+
+///|
 /// Inject an already-decoded RGBA8 image into the cache. Called
 /// by tests (with hand-built RGBA bytes) and, eventually, by the
 /// Moui `HostImageSource` integration (which decodes off-thread

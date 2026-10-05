@@ -2136,22 +2136,20 @@ fn default_class_id(model : Model) -> String {
 /// half-drawn on the old image, or a keypoint tool still armed, means
 /// nothing on the new one.
 ///
-/// **Honesty note on `imageSource`.** The pixels are *not* reloaded
-/// here. This note used to say that was impossible — "`Effect::Task` is
-/// declared and counted in the effect-plan summary but never executed
-/// by the runtime, so there is no async path out of a sync `update` to
-/// read a file with." **That was a misreading and is now corrected**
-/// (see `disk_io.mbt`): `Effect::Task` *is* executed, and `x/fs` reads
-/// synchronously. The label half is therefore implemented as of 5.22 —
-/// `image_selected` loads it. The *pixel* half is still not: decoding
-/// an image is a second step after the read (`decode_image_bytes` plus
-/// an `ImageCache::load`, neither wired to a `SelectIndex`), and until
-/// that exists the previous image's pixels stay on screen.
+/// **Honesty note on `imageSource`.** This function does not reset it,
+/// and that is deliberate: a rubber-band half-drawn on the old image,
+/// or a keypoint tool still armed, must not follow the user, but stale
+/// pixels are *visibly* stale whereas misattributed annotations are
+/// silent, so keeping the old picture is the lesser evil.
 ///
-/// That is still the lesser evil — stale pixels are visibly stale,
-/// whereas misattributed *annotations* are silent — but it is now a
-/// plain unfinished feature rather than an impossibility, and the
-/// annotations are correct.
+/// **Phase 5.23 changed the follow-on, not the rule.** `image_selected`
+/// — the only caller that matters — now overwrites `imageSource` and
+/// `imageNaturalSize` with the selected file's own, after registering
+/// its decoded pixels (`image_pixels_loaded`). So the reset-then-load
+/// sequence ends with the correct picture, and this function's
+/// omission is an intermediate state that never reaches the user.
+/// A direct `state_for_image_change` call, by contrast, still leaves
+/// the previous pixels in place.
 pub fn state_for_image_change(model : Model, idx : Int) -> Model {
   let name : String = if idx >= 0 && idx < model.images.length() {
     model.images[idx].name
@@ -2219,6 +2217,30 @@ pub fn folder_loaded(
 }
 
 ///|
+/// Phase 5.23 — point the model at an image whose pixels are already
+/// in the renderer cache.
+///
+/// Split out from `read_label_into` because the two halves fail
+/// independently and the failures are not equally bad. A missing
+/// label leaves the canvas empty; a missing **decode** would leave the
+/// `DrawImage` resolving to the rasterizer's grey-X placeholder, so
+/// this half simply does not touch `imageSource` when the load fails
+/// and the previous image stays. The status line is where the user
+/// finds out.
+fn image_pixels_loaded(model : Model, image_path : String) -> Model {
+  match load_image_into_cache(image_path) {
+    Some((w, h)) =>
+      {
+        ..model,
+        imageSource: image_path,
+        imageNaturalSize: { x: w.to_double(), y: h.to_double(), },
+        staticLayerDirty: true,
+      }
+    None => { ..model, statusMessage: model.statusMessage + " (no pixels)", }
+  }
+}
+
+///|
 /// Phase 5.22 — load one image's label file off disk into the model.
 ///
 /// Pure in signature only: it reads, but it reads nothing mutable and
@@ -2281,10 +2303,17 @@ pub fn read_label_into(model : Model, image_path : String) -> Model {
 /// image's data, so the reset runs *first* and the load overwrites
 /// only what it owns. A bad index leaves the reset in place and loads
 /// nothing — there is no image to read a label for.
+///
+/// Phase 5.23 added the second half: the **pixels**, not just the
+/// label. The reset deliberately does not clear `imageSource` (5.18's
+/// reasoning: stale pixels are visibly stale, whereas misattributed
+/// annotations are silent), so the load has to overwrite it — which is
+/// what `image_pixels_loaded` does, and only on a successful decode.
 pub fn image_selected(model : Model, idx : Int) -> Model {
   let reset : Model = state_for_image_change(model, idx)
   if idx >= 0 && idx < reset.images.length() {
-    read_label_into(reset, reset.images[idx].path)
+    let with_label : Model = read_label_into(reset, reset.images[idx].path)
+    image_pixels_loaded(with_label, reset.images[idx].path)
   } else {
     reset
   }

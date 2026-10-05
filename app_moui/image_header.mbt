@@ -186,3 +186,97 @@ pub async fn probe_image_dimensions_path_async(path : String) -> (Int, Int)? {
   let bytes : Bytes = data_ref.binary()
   probe_image_dimensions(bytes)
 }
+
+///|
+/// Phase 5.23 — normalise any decoded `Image` into the RGBA8 layout
+/// that `ImageCache::load_bytes` requires: exactly `width * height * 4`
+/// bytes, row-major, R G B A per pixel.
+///
+/// `riantr/moonbit_image` has **no** public `to_rgba8` — its
+/// `transform` module offers only flip / rotate / crop / resize — so
+/// the widening happens here. All four `PixelFormat` arms are
+/// implemented even though the shipped sample decodes as RGB8: one
+/// folder is not evidence about the decoders, and a grayscale X-ray
+/// (the normal case for this domain) is `Gray8`.
+///
+/// Alpha is forced to 255 in the three widening arms. Those formats
+/// carry no alpha channel, and inventing transparency would let the
+/// canvas background show through an opaque scan.
+///
+/// **The pixel loops are clamped, not trusted.** Each arm iterates
+/// `min(width*height, data.length()/bytes_per_pixel)`, so a decoder
+/// that returned a short buffer produces a short result rather than an
+/// out-of-bounds panic. The shortfall is then caught downstream by
+/// `load_bytes`' own length check. Validation lives in one place
+/// instead of being re-implemented per arm.
+pub fn to_rgba8_bytes(img : @moonbit_image.Image) -> Bytes {
+  let pixels : Int = img.width * img.height
+  match img.format {
+    RGBA8 => img.data
+    RGB8 => widen_rgb8(img, pixels)
+    Gray8 => widen_gray8(img, pixels)
+    GrayA8 => widen_graya8(img, pixels)
+  }
+}
+
+///|
+/// RGB8 (3 bytes/px) -> RGBA8. See `to_rgba8_bytes` for the clamping
+/// and alpha policy.
+fn widen_rgb8(img : @moonbit_image.Image, pixels : Int) -> Bytes {
+  let data : Bytes = img.data
+  let available : Int = data.length() / 3
+  let count : Int = if pixels < available { pixels } else { available }
+  let out : Array[Byte] = []
+  let mut i : Int = 0
+  while i < count {
+    let s : Int = i * 3
+    out.push(data[s])
+    out.push(data[s + 1])
+    out.push(data[s + 2])
+    out.push((255).to_byte())
+    i = i + 1
+  }
+  Bytes::from_array(out)
+}
+
+///|
+/// Gray8 (1 byte/px) -> RGBA8 by replicating the sample into R, G and
+/// B. See `to_rgba8_bytes` for the clamping and alpha policy.
+fn widen_gray8(img : @moonbit_image.Image, pixels : Int) -> Bytes {
+  let data : Bytes = img.data
+  let count : Int = if pixels < data.length() { pixels } else { data.length() }
+  let out : Array[Byte] = []
+  let mut i : Int = 0
+  while i < count {
+    let g : Byte = data[i]
+    out.push(g)
+    out.push(g)
+    out.push(g)
+    out.push((255).to_byte())
+    i = i + 1
+  }
+  Bytes::from_array(out)
+}
+
+///|
+/// GrayA8 (2 bytes/px) -> RGBA8. The **existing** alpha is kept,
+/// unlike the other two widening arms: this format already carries
+/// one, and dropping it would discard information the encoder chose
+/// to write.
+fn widen_graya8(img : @moonbit_image.Image, pixels : Int) -> Bytes {
+  let data : Bytes = img.data
+  let available : Int = data.length() / 2
+  let count : Int = if pixels < available { pixels } else { available }
+  let out : Array[Byte] = []
+  let mut i : Int = 0
+  while i < count {
+    let s : Int = i * 2
+    let g : Byte = data[s]
+    out.push(g)
+    out.push(g)
+    out.push(g)
+    out.push(data[s + 1])
+    i = i + 1
+  }
+  Bytes::from_array(out)
+}

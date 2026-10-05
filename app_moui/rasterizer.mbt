@@ -514,8 +514,17 @@ fn paint_image(
     }
     None =>
       // Cache miss — render the placeholder so the UI shows
-      // a visual cue for the missing image. (Phase 14 will
-      // replace this with a synchronous disk load.)
+      // a visual cue for the missing image.
+      //
+      // Phase 14's note here said "will replace this with a
+      // synchronous disk load". That is done as of 5.23
+      // (`disk_io.mbt::load_image_into_cache`), so a miss now means
+      // something narrower: the file could not be read or decoded.
+      // `image_pixels_loaded` deliberately leaves `imageSource`
+      // untouched in that case rather than repointing it at an
+      // uncached path, so this placeholder is what a *deliberate*
+      // direct reference to an undecodable image draws — not the
+      // normal outcome of clicking a broken file.
       paint_image_placeholder(buf, run, clip, opacity)
   }
 }

@@ -2522,6 +2522,135 @@ sidebar, canvas annotations all intact); the full-screen capture came
 back black, which is the harness flakiness 5.21 recorded, and the
 sidebar rows are still outside the per-window capture's reach.
 
+### Phase 5.23 — the pixels, not just the labels
+
+5.22 left the app in a state that was worse than it looked. Selecting
+a real image loaded its **label** from disk, so the annotations and the
+status line were right — while the canvas kept showing the *previous*
+image's pixels. Correct annotations over the wrong picture is the worst
+of both, and no screenshot in 5.22 would have shown it, because 5.22
+never put a real image on screen.
+
+This phase closes the loop: read → decode → widen to RGBA8 → register
+in the renderer cache → repoint `imageSource` / `imageNaturalSize`.
+
+**`riantr/moonbit_image` has no `to_rgba8`.** Its `transform` module
+offers flip / rotate / crop / resize and nothing else, and
+`ImageCache::load_bytes` demands exactly `width*height*4` bytes. So
+`to_rgba8_bytes` in `image_header.mbt` widens all four `PixelFormat`
+arms. The shipped sample decodes as **RGB8** (517×371, 575,421 =
+517×371×3 bytes), but all four are implemented and tested: one folder
+is not evidence about the decoders, and a grayscale X-ray is `Gray8`,
+which is the *expected* case in this domain. `GrayA8` is the one arm
+that **keeps** the encoder's alpha; the other two force 255 because
+their formats carry none.
+
+Two details that are load-bearing rather than cosmetic:
+
+- **The wideners clamp, they do not trust.** Each arm iterates
+  `min(width*height, data.length() / bytes_per_pixel)`, so a decoder
+  that returned a short buffer produces a short result instead of an
+  out-of-bounds panic, and `load_bytes`' own length check is what
+  rejects it. Validation lives in one place instead of being
+  re-implemented per arm.
+- **Registration happens before `imageSource` moves.** The canvas
+  emits a `DrawImage` for any non-empty `imageSource`, and the
+  rasterizer's cache-miss fallback paints a grey X — so the other
+  order flashes the placeholder for a frame. For the same reason
+  `image_pixels_loaded` **leaves `imageSource` untouched** when the
+  decode fails: swapping a real picture for a grey X is a worse outcome
+  than the stale image the user already had, and the status line says
+  `no pixels` instead.
+
+**The cache is now bounded.** Every entry is a full RGBA8 buffer
+(767,228 bytes for the shipped sample), so walking a 500-image folder
+unbounded would cost ~380 MB and release none of it. `register_image_in_renderer`
+clears the map at 64 entries — deliberately **not** an LRU, and
+documented as such: it is the cheapest policy that makes the bound
+real, and a re-registration of an already-cached source is not growth
+so it does not trigger a clear. `image_in_renderer` is what makes
+re-selecting the current image free; the decode (~190k pixels to widen
+here) is the expensive half and is skipped on a hit.
+
+**This blocks, and that is a real cost.** The decode and widening are
+synchronous, on the thread running `update` — the UI thread. For the
+shipped 517×371 sample that is single-digit milliseconds; for a 4K scan
+it is ~8.3M pixels and ~33 MB of buffer, and the click will visibly
+hitch. The architecture offers no alternative: MoUI's `update` is sync,
+and `Effect::Task` is a *subscription* whose completion would still have
+to be marshalled back onto the UI thread. So the cost is acknowledged
+rather than solved, and mitigated by the cache.
+
+**`PixelFormat` cannot be constructed from outside the package.** It is
+a `pub enum`, not `pub(all)`, so its constructors are read-only and
+even upstream's own tests only ever *match* on it. A synthetic `Image`
+with a chosen format is therefore impossible, and the four arms are
+reached through **real encoded PNGs** instead — one per colour type,
+generated once and embedded as hex, with a guard test that each decodes
+to the dimensions and bytes-per-pixel its type implies.
+
+The first attempt at those fixtures was a hand-rolled builder emitting
+*stored* (uncompressed) deflate blocks with a hand-written CRC-32, and
+**all four arms failed to decode**. The CRC was the cause, and the
+reason is worth keeping: **MoonBit's `Int` is 32-bit signed**, so
+`0xFFFFFFFF` is `-1`, `0xEDB88320` is `-305424608`, and `>>` is an
+*arithmetic* shift — a state of `-1` shifts to `-1` forever, and the
+checksum returns a wrong negative number with no error anywhere. The
+published check value `0xCBF43926` does not fit a positive `Int`
+either, so the known-answer test had to assert `-873187034`. Upstream
+solves the same problem with `(v >> 1) & 0x7FFFFFFF` (`lsr1` in
+`moonbit_image/utils.mbt`); embedding a known-good file sidesteps the
+whole class of it.
+
+**The smoke demo now uses the real dataset.** `build_real_data_demo`
+tries `data/Image@skin` then `../data/Image@skin` and selects index 4 —
+the one image with a label — so the screenshot shows a real X-ray with
+its nine real annotations, exercising the entire path end to end. Two
+candidates rather than one because the harness sets the working
+directory to the repo root while `moon run` from `app_moui` would need
+the other form, and a hardcoded single path would work *by accident of
+the caller's cwd*. It returns `Model?` and falls back to the synthetic
+fixture when no candidate scans, so a checkout without `data/` still
+produces a working screenshot.
+
+**Not verified — and deliberately not guessed.** The smoke capture
+shows a narrow striped band along the image's left edge. The source
+data is *not* the cause: the shipped JPEG's first 8–9 columns are pure
+white at every sampled row (0, 100, 200, 300, 370), and the top of
+column 0 is a uniform ~252. So the decode is correct, and the artifact
+is in how the image reaches the screen. **I did not attribute it**,
+because the per-window capture is cropped and 5.15's rule is that
+positions get answered by `paint`, an inspector snapshot or a test —
+never by fitting numbers to pixels in a screenshot. It wants one
+instrumented `run.frame` dump. It is cosmetic and it does not affect
+any assertion in this phase.
+
+**What is still not done, honestly.** `LoadFolder` and `SaveLabel` have
+no UI trigger (there is no folder picker in the app); `ScanClasses`
+remains a no-op for the reason 5.22 gave — no class source in the
+dataset; `size_bytes` / `frame_count` are always 0 because `x/fs` has no
+stat call; VOC/YOLO export is unimplemented; and near-neighbour
+minification is still the sampler, so shrinking a detailed scan will
+alias.
+
+**Tests (361/361, +14).** The four widening arms against real PNGs
+(including that `GrayA8`'s alpha 128 survives and `RGBA8` is the
+identity rather than a rebuild); every colour type landing on exactly
+`w*h*4`; the fixture guard; the real shipped JPEG decoding to 517×371
+with a 767,228-byte buffer; a repeat load served from cache; a
+non-image file refused at every layer; and the handler wiring —
+`SelectIndex` moving `imageSource` / `imageNaturalSize`, pixels cached
+before the source points at them, and an undecodable image leaving the
+previous source alone.
+
+**Verification:** 361/361 tests pass (347 → 361); `moon check
+--target native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags none of the symbols this phase added. Smoke
+exits 0 and the per-window capture shows the real X-ray with the
+sidebar's six real filenames and the fifth row highlighted; the
+full-screen capture came back black, which is the harness flakiness
+5.21 recorded.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

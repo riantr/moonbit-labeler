@@ -52,6 +52,71 @@ let current_metrics : Ref[@core.SurfaceMetrics] = {
 let image_cache : Ref[ImageCache] = { val: ImageCache::new() }
 
 ///|
+/// Phase 5.23 — the cache cap, in entries.
+///
+/// A crude bound, chosen on purpose. Each entry is a full RGBA8
+/// buffer — 767,228 bytes for the shipped 517×371 sample — so 64 of
+/// them is ~49 MB, and a 500-image folder walked end to end would
+/// otherwise cost ~380 MB and never release any of it.
+///
+/// Clearing the whole map on overflow is *not* an LRU and does not
+/// pretend to be: it is the cheapest policy that makes the bound real.
+/// The cost is that revisiting a folder re-decodes, which is why 64
+/// is generous enough to cover a normal paging session. A real LRU
+/// needs per-entry recency tracking, which is not worth it until the
+/// cap is demonstrably too aggressive.
+let image_cache_max_entries : Int = 64
+
+///|
+/// Phase 5.23 — register a decoded image in the module-local cache
+/// under an arbitrary key.
+///
+/// This is the production path. `register_test_image_in_renderer`
+/// (below) is the same call with a name that was accurate when the
+/// cache only ever held fixtures; now that real files land here too,
+/// the general name is the one production code should reach for.
+pub fn register_image_in_renderer(
+  source : String,
+  width : Int,
+  height : Int,
+  bytes : Bytes,
+) -> Bool {
+  // Evict *before* inserting, so the entry being added survives. A
+  // re-registration of an already-cached source is not growth, so it
+  // must not trigger a clear — otherwise re-picking the current image
+  // would throw away everything else for nothing.
+  if image_cache.val.get(source) is None &&
+    image_cache.val.size() >= image_cache_max_entries {
+    image_cache.val.clear()
+  }
+  match image_cache.val.load_bytes(source, width, height, bytes) {
+    Some(_) => true
+    None => false
+  }
+}
+
+///|
+/// Phase 5.23 — is `source` already decoded in the cache?
+///
+/// The decode is the expensive half of loading an image (a 517×371
+/// JPEG is ~190k pixels to widen), and re-selecting the image that is
+/// already on screen must not pay it again. Callers check this first.
+pub fn image_in_renderer(source : String) -> Bool {
+  image_cache.val.get(source) is Some(_)
+}
+
+///|
+/// The dimensions of a cached image, or `None` if it is not cached.
+/// Paired with `image_in_renderer` so a cache hit can update
+/// `Model::imageNaturalSize` without re-probing the file's header.
+pub fn image_size_in_renderer(source : String) -> (Int, Int)? {
+  match image_cache.val.get(source) {
+    Some(d) => Some((d.width, d.height))
+    None => None
+  }
+}
+
+///|
 /// Phase 5.2 — register a pre-decoded RGBA8 image into the
 /// module-local image cache, keyed by `source`. Used by
 /// `main_native.mbt` to install a synthetic test fixture so
@@ -68,10 +133,7 @@ pub fn register_test_image_in_renderer(
   height : Int,
   bytes : Bytes,
 ) -> Bool {
-  match image_cache.val.load_bytes(source, width, height, bytes) {
-    Some(_) => true
-    None => false
-  }
+  register_image_in_renderer(source, width, height, bytes)
 }
 
 ///|

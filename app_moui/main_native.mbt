@@ -118,6 +118,20 @@ fn main {
       height=window_logical_height,
     ),
   }
+  // Phase 5.23 — prefer the real-dataset demo when the sample folder is
+  // reachable, so the smoke screenshot shows a real X-ray scan with its
+  // real annotations instead of the synthetic fixture. `build_demo_drag_model`
+  // above still supplies the viewport and is the fallback.
+  let init_model : Model = match build_real_data_demo() {
+    Some(real) => {
+      ..real,
+      viewport: @core.Size::new(
+        width=window_logical_width,
+        height=window_logical_height,
+      ),
+    }
+    None => init_model
+  }
   let program : @moui.Program[Model, Msg] = program_with_init(
     init_model,
   )
@@ -276,6 +290,47 @@ fn build_demo_drag_model() -> Model {
   // Same pattern as the mid-polygon demo state above.
   let (editing, _) = update(poly3, StartRenameClass("gun"))
   editing
+}
+
+///|
+/// Phase 5.23 — point the smoke demo at the **real** shipped dataset
+/// when it can be found, so the screenshot exercises the whole disk
+/// path end to end: real JPEG → decode → widen to RGBA8 → register in
+/// the renderer cache → `DrawImage` → blit → presenter, with the real
+/// label's nine annotations over it.
+///
+/// **Candidate paths, and why more than one.** The smoke harness
+/// (`_build/run_smoke.ps1`) sets the working directory to the repo
+/// root, so `data/Image@skin` is what resolves there; `moon run` from
+/// `app_moui` would need `../data/Image@skin`. Hardcoding either one
+/// would make the demo work *by accident of the caller's cwd*, which
+/// is exactly the kind of thing that looks fine in CI and breaks on a
+/// developer's machine.
+///
+/// **Falls back silently.** If no candidate scans to a non-empty image
+/// list, the caller keeps the synthetic-fixture demo, so a checkout
+/// without `data/` still produces a working screenshot instead of a
+/// blank one. That is why this returns `Model?`.
+fn build_real_data_demo() -> Model? {
+  let candidates : Array[String] = [
+    "data/Image@skin",
+    "../data/Image@skin",
+  ]
+  for folder in candidates {
+    match scan_folder(folder) {
+      Some(scan) =>
+        if scan.images.length() > 0 {
+          let (scanned, _) = update(Model::new(), LoadFolder(folder))
+          // Index 4 is the one image in the dataset that has a label
+          // file, so this shows a loaded annotation set rather than an
+          // empty canvas.
+          let (selected, _) = update(scanned, SelectIndex(4))
+          return Some(selected)
+        }
+      None => ()
+    }
+  }
+  None
 }
 
 ///|

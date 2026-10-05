@@ -409,3 +409,48 @@ pub fn load_label(
   let (annotations, bindings) = parse_label_text(text, classes)
   Some(({ raw_json: text, dirty: false, }, annotations, bindings))
 }
+
+///|
+/// Phase 5.23 — read an image off disk, decode it, and register it in
+/// the renderer cache under its own path. Returns the decoded
+/// dimensions, or `None` if any step failed.
+///
+/// **This blocks.** The decode and the RGB→RGBA widening are
+/// synchronous and run on whatever thread called it — in this app, the
+/// one running `update`, i.e. the UI thread. For the shipped 517×371
+/// sample that is ~190k pixels, single-digit milliseconds. For a 4K
+/// scan it is ~8.3M pixels and roughly 33 MB of buffer, and the UI
+/// will visibly hitch on the click. The architecture offers no
+/// alternative: MoUI's `update` is sync, and the only async escape
+/// (`Effect::Task`) is a *subscription* whose completion would still
+/// have to be marshalled back onto the UI thread. So the cost is
+/// acknowledged rather than solved, and the mitigation is
+/// `image_in_renderer`: a cache hit skips the whole thing, so
+/// re-selecting the current image is free and paging forward through a
+/// folder pays once per image.
+///
+/// Callers must register **before** pointing `Model::imageSource` at
+/// the path. The canvas emits a `DrawImage` for any non-empty
+/// `imageSource` and the rasterizer's cache-miss fallback paints a
+/// grey X, so setting the source first would flash that placeholder
+/// for a frame.
+pub fn load_image_into_cache(path : String) -> (Int, Int)? {
+  // Fast path: already decoded. Skips the file read *and* the decode.
+  if image_in_renderer(path) {
+    return image_size_in_renderer(path)
+  }
+  let bytes = @xfs.read_file_to_bytes(path) catch { _ => return None }
+  // `decode_image_bytes` already collapses the codec's raise into
+  // `None`, so there is nothing to catch here — just unwrap it.
+  let img = match decode_image_bytes(bytes) {
+    Some(i) => i
+    None => return None
+  }
+  let rgba : Bytes = to_rgba8_bytes(img)
+  let ok : Bool = register_image_in_renderer(path, img.width, img.height, rgba)
+  if ok {
+    Some((img.width, img.height))
+  } else {
+    None
+  }
+}
