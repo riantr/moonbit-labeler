@@ -5012,3 +5012,102 @@ test "cancel always disarms, even from keypoint (5.16)" {
   assert_eq(finished.mode, Select)
   assert_eq(finished.draftPoints.length(), 0)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.17 — the sidebar's rows are live controls
+//
+// From Phase 18.E until now the 4 folder rows and 6 class chips were
+// `@views.button`s with **no `on_click`**: rendered as pressable,
+// inert. 5.13 brought them into the visible window for the first
+// time, which turned "6 dead controls nobody could see" into "6 dead
+// controls on screen". Same failure 5.9 found on the toolbar's
+// `[File]`, diagnosed two phases before the fix became visible.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.17 — the row highlight: exactly one Primary, the rest
+/// Ghost. Same contract as `mode_button_variant` (5.9) and the reason
+/// it is a separate function: "the current row is distinguishable"
+/// is not a property of the handler.
+test "sidebar_row_variant — current row is Primary, others Ghost (5.17)" {
+  assert_eq(sidebar_row_variant(true), @style.ButtonVariant::Primary)
+  assert_eq(sidebar_row_variant(false), @style.ButtonVariant::Ghost)
+}
+
+///|
+/// Phase 5.17 — `SetActiveClass` records the choice, and it is what
+/// new annotations get. The second half is the part that matters:
+/// a sidebar click that sets state nobody reads would be exactly the
+/// same dead control wearing a `statusMessage`.
+test "SetActiveClass — records the class and new annotations get it (5.17)" {
+  let base : Model = Model::new()
+  // Nothing chosen yet: falls back to the project's own default,
+  // and with no classes loaded that is the empty id.
+  assert_eq(base.activeClassId, "")
+  let (gun, _) = update(base, SetActiveClass("gun"))
+  assert_eq(gun.activeClassId, "gun")
+  // The status line is the only feedback a Ghost row gives.
+  assert_true(gun.statusMessage.contains("gun"))
+  // And it is what a new annotation is tagged with — via the real
+  // handler, not by reading the field. `Model::new()` already
+  // carries three demo annotations with `class_id == ""`, so index
+  // from the count rather than from 0.
+  let before : Int = gun.annotations.length()
+  let (kp, _) = update(gun, AddKeypoint({ x: 30.0, y: 30.0 }))
+  assert_eq(kp.annotations[before].class_id, "gun")
+  // Switching class retargets the next annotation, and the first one
+  // keeps the class it was given.
+  let (batt, _) = update(kp, SetActiveClass("batt"))
+  let (kp2, _) = update(batt, AddKeypoint({ x: 40.0, y: 40.0 }))
+  assert_eq(kp2.annotations[before].class_id, "gun")
+  assert_eq(kp2.annotations[kp2.annotations.length() - 1].class_id, "batt")
+}
+
+///|
+/// Phase 5.17 — the class row is highlighted only when it is the
+/// active one, and the folder row only when it is the current image.
+/// Driven through the two real handlers so the pairing between a
+/// click and its highlight cannot drift.
+test "sidebar highlight follows the model state (5.17)" {
+  let base : Model = Model::new()
+  // Nothing selected: no row is current, so every row is Ghost.
+  assert_eq(
+    sidebar_row_variant(base.currentIndex == 0),
+    @style.ButtonVariant::Ghost,
+  )
+  assert_eq(
+    sidebar_row_variant(base.activeClassId == "gun"),
+    @style.ButtonVariant::Ghost,
+  )
+  // After the two sidebar clicks, exactly one of each is Primary.
+  let (img, _) = update(base, SelectIndex(2))
+  assert_eq(
+    sidebar_row_variant(img.currentIndex == 2),
+    @style.ButtonVariant::Primary,
+  )
+  assert_eq(
+    sidebar_row_variant(img.currentIndex == 0),
+    @style.ButtonVariant::Ghost,
+  )
+  let (cls, _) = update(img, SetActiveClass("gun"))
+  assert_eq(
+    sidebar_row_variant(cls.activeClassId == "gun"),
+    @style.ButtonVariant::Primary,
+  )
+  assert_eq(
+    sidebar_row_variant(cls.activeClassId == "knife"),
+    @style.ButtonVariant::Ghost,
+  )
+}
+
+///|
+/// Phase 5.17 — `SelectIndex` still clears the annotation selection.
+/// The folder rows now dispatch it, so a click that changes image
+/// must not leave a handle highlighted on the *previous* image's
+/// annotation.
+test "SelectIndex — switching image clears the annotation selection (5.17)" {
+  let selected : Model = { ..Model::new(), selectedId: Some("rect-1"), }
+  let (next, _) = update(selected, SelectIndex(1))
+  assert_eq(next.currentIndex, 1)
+  assert_true(next.selectedId is None)
+}

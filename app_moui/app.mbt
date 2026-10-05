@@ -219,6 +219,12 @@ pub(all) struct Model {
   mode : Mode
   classType : ClassType
   selectedId : String?
+  // Phase 5.17 — which class new annotations get. `""` means "not
+  // chosen", in which case `default_class_id` falls back to the first
+  // class flagged `is_default`. Kept as a plain id rather than
+  // reusing `ClassEntry::is_default` so the sidebar's *demo* class
+  // set (plain strings, no ClassEntry behind them) can drive it too.
+  activeClassId : String
   draftPoints : Array[Point]
   bindingFromId : String?
   classes : Array[ClassEntry]
@@ -288,6 +294,9 @@ pub fn Model::new() -> Model {
     mode: Select,
     classType: Object,
     selectedId: None,
+    // Phase 5.17 — no class chosen yet; `default_class_id` falls back
+    // to the first `is_default` class until the user picks one.
+    activeClassId: "",
     draftPoints: [],
     bindingFromId: None,
     classes: [],
@@ -424,6 +433,12 @@ pub(all) enum Msg {
   ScanClasses(String)
   ClassesLoaded(Array[ClassEntry])
   SelectIndex(Int)
+  // Phase 5.17 — the sidebar's class rows were `@views.button`s with
+  // no `on_click` at all: they rendered as pressable and did nothing.
+  // 5.13 finally brought them on screen (they had been clipped off
+  // the bottom of the window since 5.1), which turned 6 dead controls
+  // into 6 visible ones. This is the message they dispatch.
+  SetActiveClass(String)
   ReadLabelFor(String)
   LabelLoaded(Label, String, Bool)
   SaveLabel
@@ -682,6 +697,27 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         @moui.Effect::none(),
       )
     SetClassType(ct) => ({ ..model, classType: ct, }, @moui.Effect::none())
+    // Phase 5.17 — a click on a sidebar class row. The status message
+    // is not decoration: it is the only feedback a Ghost-variant
+    // sidebar row gives, and the class is otherwise invisible until
+    // the next annotation is drawn.
+    SetActiveClass(id) =>
+      (
+        {
+          ..model,
+          activeClassId: id,
+          statusMessage: "Class: " + id,
+          // The sidebar chip changes, and `dynamicLayerDirty` is what
+          // the canvas's dynamic layer (crosshair, handles) reacts
+          // to. The sidebar is part of the static layer's subtree, so
+          // it needs the static flag; both are cheap and neither
+          // re-blits the image for a class change on its own — the
+          // static layer is cached and its key does not include the
+          // sidebar, so this only repaints the chrome.
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     SelectAnnotation(id) =>
       (
         { ..model, selectedId: id, staticLayerDirty: true, },
@@ -1795,13 +1831,16 @@ fn next_binding_id(model : Model) -> String {
 }
 
 ///|
-/// Phase 5.8 — the `class_id` a newly created annotation gets: the
-/// first class flagged `is_default` in `model.classes`, or `""` when
-/// the project has no classes (or none marked default). `""` makes
-/// `class_lookup_name` fall back to rendering the annotation's own
-/// id as the on-canvas label, which is the same fallback the
-/// synthetic Phase 5.3 demo annotations rely on.
+/// Phase 5.8 — the `class_id` a newly created annotation gets. Since
+/// 5.17 an explicit choice made in the sidebar wins: if the user has
+/// clicked a class row, `model.activeClassId` is that class, and it
+/// outranks the project's own `is_default` flag. Before this the
+/// flag was the *only* source, which is why the sidebar's class rows
+/// had nothing to dispatch — there was no state for a click to set.
 fn default_class_id(model : Model) -> String {
+  if model.activeClassId != "" {
+    return model.activeClassId
+  }
   for c in model.classes {
     if c.is_default {
       return c.id

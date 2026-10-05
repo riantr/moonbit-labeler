@@ -679,6 +679,14 @@ fn shortcut_row(theme : @core.Theme) -> @moui.View[Msg] {
 /// rasterizer (they were no-ops in Phase 11 / 18.B), so the
 /// Ghost-variant background paints with the resolved brush
 /// color and the label text reads against it.
+///
+/// Phase 5.17 — these rows now dispatch `SelectIndex(i)`. They were
+/// `@views.button`s with **no `on_click` at all** from Phase 18.E
+/// until now — rendered as pressable, doing nothing. 5.13 brought
+/// them on screen for the first time (they had been clipped off the
+/// bottom of the window since 5.1), so this is the same dead-control
+/// problem 5.9 fixed for `[File]`, except that here the fix only
+/// became visible two phases after the diagnosis.
 fn sidebar_folder_rows(
   model : Model,
   theme : @core.Theme,
@@ -693,13 +701,16 @@ fn sidebar_folder_rows(
     ["CARS.Part.01", "CARS.Body.01", "BAGS.Xray.01", "TNT.Lab.01"]
   }
   let rows : Array[@moui.View[Msg]] = []
-  for folder in folders {
+  for i = 0; i < folders.length(); i = i + 1 {
+    let index = i
+    let folder = folders[i]
     rows.push(
       @views.frame(
         @views.button(
           "> " + folder,
+          on_click=SelectIndex(index),
           theme~,
-          variant=@style.ButtonVariant::Ghost,
+          variant=sidebar_row_variant(index == model.currentIndex),
           width=180.0,
           height=16.0,
         ),
@@ -711,6 +722,24 @@ fn sidebar_folder_rows(
   rows
 }
 
+/// Phase 5.17 — the highlight for a sidebar row.
+///
+/// Same shape as `mode_button_variant` (5.9), for the same reason: a
+/// row that dispatches something must also *show* that it is the
+/// current one, or the click has no visible result. `Primary` for the
+/// current row, `Ghost` for the rest.
+///
+/// Split out as a pure function for the same reason too — a
+/// Ghost-vs-Primary choice is not something a unit test can see until
+/// it is a one-line boolean.
+pub fn sidebar_row_variant(is_current : Bool) -> @style.ButtonVariant {
+  if is_current {
+    @style.ButtonVariant::Primary
+  } else {
+    @style.ButtonVariant::Ghost
+  }
+}
+
 ///|
 /// Build class-row widgets. Uses model.classes if populated,
 /// else a demo set. Phase 18.E — same Ghost-button pattern as
@@ -718,6 +747,27 @@ fn sidebar_folder_rows(
 /// `@views.frame` to clamp the intrinsic height back to 16 px).
 /// Phase 18.B had these as plain text because the button widget
 /// was invisible (its `FillRoundedRectBrush` was a no-op).
+///
+/// Phase 5.17 — these rows now dispatch `SetActiveClass`, and the
+/// active one is highlighted, or the click would have no visible
+/// result.
+///
+/// **The row string is used as both the label and the class id**, and
+/// that is not a simplification I chose for convenience — it is
+/// forced by the current state of the app. `ScanClasses` is still a
+/// no-op stub and nothing dispatches `ClassesLoaded`, so
+/// `model.classes` is always empty at runtime and the demo fallback
+/// below is the only reachable branch. A demo class has no
+/// `ClassEntry` behind it, so its name *is* its id, and that stays
+/// consistent end to end: `default_class_id` returns it, the
+/// annotation records it, and `class_lookup_name` renders an
+/// unresolvable `class_id` verbatim.
+///
+/// When `ScanClasses` is implemented, this needs one change: a real
+/// `ClassEntry` carries `id` and `name` as separate fields, and the
+/// annotation wants the **id**. Carrying both through would need a
+/// second parallel array (or a record); a pair type was tried and
+/// `Array[(String, String)]` does not resolve in this package.
 fn sidebar_class_rows(
   model : Model,
   theme : @core.Theme,
@@ -737,8 +787,9 @@ fn sidebar_class_rows(
       @views.frame(
         @views.button(
           "# " + cls,
+          on_click=SetActiveClass(cls),
           theme~,
-          variant=@style.ButtonVariant::Ghost,
+          variant=sidebar_row_variant(cls == model.activeClassId),
           width=180.0,
           height=16.0,
         ),

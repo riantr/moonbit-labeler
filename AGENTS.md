@@ -1967,6 +1967,77 @@ cancel asymmetry above.
 except for the toolbar's armed tool — correct, since this phase
 refactors a rule without changing any behaviour.
 
+### Phase 5.17 — the sidebar rows are live controls
+
+**What was broken.** Since Phase 18.E the sidebar's 4 folder rows and
+6 class chips have been `@views.button`s with **no `on_click` at
+all** — rendered with a Ghost background, looking pressable, and
+inert. The same dead-control failure 5.9 found on the toolbar's
+`[File]`, except that here the fix only became *visible* two phases
+after the diagnosis: 5.13 brought the rows into the window for the
+first time (they had been clipped off the bottom since 5.1), which
+turned "6 dead controls nobody could see" into "6 dead controls on
+screen".
+
+**What landed.**
+
+- Folder rows dispatch `SelectIndex(i)` — already implemented, just
+  never called.
+- Class rows dispatch a new `SetActiveClass(String)`.
+- `Model::activeClassId : String` is the state they set. It had to
+  be new: `default_class_id` read only `ClassEntry::is_default`, so
+  there was **no state for a class click to set** — which is why
+  these rows could not be wired at all until now. `default_class_id`
+  now prefers `activeClassId` when set, and falls back to the
+  project flag as before.
+- `pub fn sidebar_row_variant(is_current : Bool)` gives the active
+  row a `Primary` background, same shape as 5.9's
+  `mode_button_variant`. Without it the clicks would work and be
+  invisible.
+- `SetActiveClass` writes a status line, which for a Ghost row is
+  the only feedback available.
+
+**The row string is both the label and the class id** — not a
+simplification but what the app's current state forces. `ScanClasses`
+is still a no-op stub and nothing dispatches `ClassesLoaded`, so
+`model.classes` is always empty and the demo fallback is the only
+reachable branch; a demo class has no `ClassEntry` behind it, so its
+name *is* its id, consistently end to end. When `ScanClasses` is
+implemented this needs a second parallel array (a real `ClassEntry`
+carries `id` and `name` separately, and the annotation wants the
+**id**). A pair type was tried first and `Array[(String, String)]`
+does not resolve in this package.
+
+**Tests (302/302, +4).** The variant function; `SetActiveClass`
+recording the class *and* the new annotation actually receiving it
+(driven through the real handler, and checking that switching class
+retargets only the next annotation); the highlight following model
+state through both real handlers; and `SelectIndex` clearing
+`selectedId`, which matters now that a folder click changes image —
+a stale handle highlight on the previous image's annotation would be
+a new bug introduced by making the row live.
+
+**A build note worth keeping.** The first version of this change
+failed `moon test` with `Package "moui" not found in the loaded
+packages` pointing at an untouched line, while `moon check --target
+native` passed. That message is a **cascade from a parse failure
+elsewhere in the file**, not a real package-resolution problem — and
+the bisect that found it (`moon check` vs `moon test`, then revert
+one file) is the only reason it was identified rather than guessed
+at. Two false leads came first: `Array[(String, String)]` as the
+cause, and CRLF line endings (the file had genuinely drifted to CRLF
+at one point, and fixing that did *not* fix the error).
+
+**Verification:** 302/302 tests pass (298 -> 302); `moon check
+--target native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags none of the 3 touched files. Smoke
+`_build/phase5_17_final._window._window.png` is unchanged from 5.16,
+which is the correct result: the cold-start model has
+`currentIndex == -1` and `activeClassId == ""`, so **no** row is
+current and every row stays Ghost. The highlight only appears after
+a click, which is a behaviour no screenshot of a cold start can
+show.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as
