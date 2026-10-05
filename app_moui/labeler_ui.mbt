@@ -783,11 +783,18 @@ fn sidebar_class_rows(
   }
   let rows : Array[@moui.View[Msg]] = []
   for cls in classes {
+    // Phase 5.19 — clicking the row that is already active clears the
+    // session choice (`SetActiveClass("")`), which drops back to the
+    // project's `is_default` class. Without this the "not chosen"
+    // state was unreachable: `activeClassId` starts empty but nothing
+    // could return it to empty, so the first class the user clicked
+    // was permanent for the rest of the session.
+    let target : String = if cls == model.activeClassId { "" } else { cls }
     rows.push(
       @views.frame(
         @views.button(
           "# " + cls,
-          on_click=SetActiveClass(cls),
+          on_click=SetActiveClass(target),
           theme~,
           variant=sidebar_row_variant(cls == model.activeClassId),
           width=180.0,

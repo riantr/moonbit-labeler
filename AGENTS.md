@@ -2106,6 +2106,89 @@ working around it with a `match` in the test.
 `_build/phase5_18_final._window._window.png` is unchanged from 5.17 —
 correct, since the demo model never switches images.
 
+### Phase 5.19 — the class list was half-built
+
+> **Second numbering collision.** The older roadmap also numbered a
+> phase 5.19 (zoom-drag), which shipped in 5.6/5.7. As with 5.10, the
+> number here is kept for chronological continuity with 5.18 and the
+> per-file comments are the tie-breaker.
+
+**What was broken.** The class list could be **added to** but not
+otherwise managed: `AddClass` appended an entry, and
+`UpdateClass`, `DeleteClass` and `SetDefaultClass` were all
+one-line no-op stubs. Unlike `ReadLabelFor` / `LoadFolder` /
+`ScanClasses` — blocked because `Effect::Task` is never executed by
+the runtime, so a sync `update` cannot read a file (5.18) — these
+three are **pure model edits**. There was never a reason for them to
+be inert.
+
+**What landed.** All three, plus one gap they exposed.
+
+- `SetDefaultClass` — flips `is_default` across the class list so
+  exactly one class carries it. Two classes carrying the flag makes
+  `default_class_id` order-dependent, which is not a default at all.
+- `UpdateClass` — renames the **display name** and nothing else.
+  That is deliberate and is the point of the id/name split: an
+  annotation stores the class **id**, and `class_lookup_name`
+  resolves it through `model.classes` at draw time, so every
+  on-canvas label follows the rename with **no annotation being
+  touched**. The first draft of the handler rewrote every
+  `ann.class_id` as `id -> id` — a no-op dressed as work — and it
+  was removed rather than kept as decoration. A test asserts the
+  absence of annotation churn, because that is the only way to catch
+  it next time.
+- `DeleteClass` — removes the class **and clears `class_id` on every
+  annotation that referenced it**, plus the session choice. A
+  surviving reference would render the annotation's own raw id on
+  the canvas (`class_lookup_name`'s unresolvable fallback) and
+  persist that into the label JSON.
+
+**A bug the tests caught.** `SetDefaultClass("does-not-exist")`
+originally flipped the whole list, which *unset the existing
+default* — so "set the default to a class that doesn't exist" meant
+"there is no default". It is now a no-op that reports the unknown id,
+and `SetDefaultClass` is the only one of the three that leaves
+`label.dirty` alone when nothing matched.
+
+**The two "active class" layers, now both real and distinct.**
+
+| | scope | cleared by |
+| --- | --- | --- |
+| `ClassEntry::is_default` | the **project**, persisted with the classes | `SetDefaultClass` |
+| `Model::activeClassId` | the **session**, set by clicking a sidebar row (5.17) | a second click on the active row |
+
+`default_class_id` prefers the session choice and falls back to the
+project default. Keeping both is not redundancy: a session choice
+should not silently rewrite the project default, and it must be
+clearable without touching what the project says. That
+clearability was missing — `activeClassId` started empty but **no
+input could return it to empty**, so the first class the user clicked
+was permanent for the session. A second click on the already-active
+row now dispatches `SetActiveClass("")`.
+
+**Reachable, or not.** `SetActiveClass`'s toggle is on the sidebar and
+user-reachable. The other three are **not** reachable from the UI
+yet: there is no rename/delete affordance, and app_moui does not even
+link the labeler backend (`app_moui/moon.pkg` imports no
+`riantr/moonbit_labeler/labeler`), so the `OpResult` path that would
+carry them from a real `UpdateClasses` op does not exist here. They
+are model operations with no user-facing trigger — which is a
+different and much less harmful state than a *stub that lies*, but
+it is not "shipped", and the UI affordance is the obvious follow-up.
+
+**Tests (311/311, +5).** The default being exclusive; the two layers
+and clearing falling back to the project default rather than to
+empty; a rename moving the name while annotations stay bit-identical;
+a delete clearing every reference including `activeClassId`; and all
+three handlers reporting an unknown id instead of faking success.
+
+**Verification:** 311/311 tests pass (306 -> 311); `moon check
+--target native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags none of the 3 touched files. Smoke
+`_build/phase5_19_final._window._window.png` is unchanged from 5.18 —
+correct: the demo model has no classes loaded, so the class rows are
+the fallback demo set and no row is active.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

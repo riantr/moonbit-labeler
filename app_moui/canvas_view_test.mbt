@@ -5220,3 +5220,142 @@ test "SelectIndex — out-of-range index is safe and says so (5.18)" {
   assert_eq(past.currentIndex, 9999)
   assert_eq(past.statusMessage, "No image")
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.19 — the class list was half-built
+//
+// `AddClass` appended an entry; rename / delete / set-default were
+// all no-op stubs. None of them need I/O, so unlike `ReadLabelFor` /
+// `LoadFolder` / `ScanClasses` (blocked: `Effect::Task` is never
+// executed by the runtime, so a sync `update` cannot read a file)
+// there was never a reason for them to be inert.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.19 — `SetDefaultClass` is the **project** default and must
+/// be exclusive. Two classes carrying `is_default` makes
+/// `default_class_id` return whichever it reaches first, which is
+/// order-dependent and therefore not a default at all.
+test "SetDefaultClass — exactly one class is the default (5.19)" {
+  let loaded : Model = {
+    ..Model::new(),
+    classes: [
+      { id: "c1", name: "knife", is_default: false, },
+      { id: "c2", name: "gun", is_default: true, },
+      { id: "c3", name: "batt", is_default: false, },
+    ],
+  }
+  let (next, _) = update(loaded, SetDefaultClass("c3"))
+  let defaults = next.classes.filter(c => c.is_default)
+  assert_eq(defaults.length(), 1)
+  assert_eq(defaults[0].id, "c3")
+  // And it is what a new annotation gets with no session override.
+  let (kp, _) = update(next, AddKeypoint({ x: 4.0, y: 4.0 }))
+  assert_eq(kp.annotations[kp.annotations.length() - 1].class_id, "c3")
+}
+
+///|
+/// Phase 5.19 — the two "active class" layers are distinct and the
+/// session one wins. A session choice must not rewrite the project
+/// default, and clearing it must fall back to that default rather
+/// than to "nothing".
+test "SetDefaultClass vs SetActiveClass — session wins, clearing falls back (5.19)" {
+  let loaded : Model = {
+    ..Model::new(),
+    classes: [
+      { id: "c1", name: "knife", is_default: true, },
+      { id: "c2", name: "gun", is_default: false, },
+    ],
+  }
+  // Session override.
+  let (over, _) = update(loaded, SetActiveClass("c2"))
+  assert_eq(over.activeClassId, "c2")
+  // The project default is untouched by a session choice.
+  assert_true(over.classes[0].is_default)
+  // Session wins for new annotations.
+  let (a, _) = update(over, AddKeypoint({ x: 1.0, y: 1.0 }))
+  assert_eq(a.annotations[a.annotations.length() - 1].class_id, "c2")
+  // Clearing the session choice (what a second click on the active row
+  // dispatches) falls back to the project default, not to empty.
+  let (cleared, _) = update(over, SetActiveClass(""))
+  assert_eq(cleared.activeClassId, "")
+  let (b, _) = update(cleared, AddKeypoint({ x: 2.0, y: 2.0 }))
+  assert_eq(b.annotations[b.annotations.length() - 1].class_id, "c1")
+}
+
+///|
+/// Phase 5.19 — a rename touches only the display name, and that is
+/// exactly right: annotations store the class **id**, and
+/// `class_lookup_name` resolves it through `model.classes` at draw
+/// time. The test asserts the *absence* of annotation churn as well
+/// as the presence of the rename, because the first draft of the
+/// handler rewrote every `ann.class_id` (as `id -> id`, a no-op) and
+/// the only way to notice that is to check the annotations are
+/// untouched.
+test "UpdateClass — renames the display name and leaves annotations alone (5.19)" {
+  let tagged : Model = {
+    ..Model::new(),
+    classes: [{ id: "c1", name: "knife", is_default: true, }],
+  }
+  let (with_ann, _) = update(tagged, AddKeypoint({ x: 6.0, y: 6.0 }))
+  let before_id = with_ann.annotations[with_ann.annotations.length() - 1].class_id
+  assert_eq(before_id, "c1")
+  let (renamed, _) = update(with_ann, UpdateClass("c1", "blade"))
+  assert_eq(renamed.classes[0].name, "blade")
+  // The id is the stable key, so the annotation is bit-identical.
+  let after_id = renamed.annotations[renamed.annotations.length() - 1].class_id
+  assert_eq(after_id, "c1")
+  assert_eq(renamed.annotations.length(), with_ann.annotations.length())
+  // A rename is a label edit even though no geometry moved.
+  assert_true(renamed.label.dirty)
+}
+
+///|
+/// Phase 5.19 — a delete must not leave a dangling `class_id`.
+/// `class_lookup_name` renders the annotation's **own id** when its
+/// class cannot be resolved, so a surviving reference would paint a
+/// raw id on the canvas and persist it into the label JSON. The
+/// session choice must not outlive the class it points at either.
+test "DeleteClass — removes the class and clears every reference to it (5.19)" {
+  let loaded : Model = {
+    ..Model::new(),
+    classes: [
+      { id: "c1", name: "knife", is_default: true, },
+      { id: "c2", name: "gun", is_default: false, },
+    ],
+    activeClassId: "c2",
+  }
+  let (with_ann, _) = update(loaded, AddKeypoint({ x: 7.0, y: 7.0 }))
+  assert_eq(with_ann.annotations[with_ann.annotations.length() - 1].class_id, "c2")
+  let (next, _) = update(with_ann, DeleteClass("c2"))
+  assert_eq(next.classes.length(), 1)
+  assert_eq(next.classes[0].id, "c1")
+  // No annotation may still point at the deleted class.
+  assert_true(next.annotations.every(ann => ann.class_id != "c2"))
+  // Nor may the session choice.
+  assert_eq(next.activeClassId, "")
+  assert_true(next.label.dirty)
+}
+
+///|
+/// Phase 5.19 — all three handlers are honest about an unknown id
+/// rather than reporting success. A `DeleteClass` for a class that is
+/// not there must not mark the label dirty, and a rename must not
+/// invent an entry.
+test "class handlers — an unknown id is reported, not faked (5.19)" {
+  let loaded : Model = {
+    ..Model::new(),
+    classes: [{ id: "c1", name: "knife", is_default: true, }],
+  }
+  let (del, _) = update(loaded, DeleteClass("nope"))
+  assert_eq(del.classes.length(), 1)
+  assert_true(!del.label.dirty)
+  assert_true(del.statusMessage.contains("nope"))
+  let (ren, _) = update(loaded, UpdateClass("nope", "x"))
+  assert_eq(ren.classes.length(), 1)
+  assert_eq(ren.classes[0].name, "knife")
+  assert_true(!ren.label.dirty)
+  let (dflt, _) = update(loaded, SetDefaultClass("nope"))
+  assert_true(dflt.classes[0].is_default)
+  assert_true(dflt.statusMessage.contains("nope"))
+}

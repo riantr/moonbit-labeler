@@ -1360,9 +1360,129 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         },
         @moui.Effect::none(),
       )
-    UpdateClass(_id, _new_name) => (model, @moui.Effect::none())
-    DeleteClass(_id) => (model, @moui.Effect::none())
-    SetDefaultClass(_id) => (model, @moui.Effect::none())
+    // Phase 5.19 — the class list was half-built: `AddClass` appended
+    // an entry, and rename / delete / set-default were all no-op
+    // stubs. None of them need I/O — they are pure model edits, so
+    // unlike `ReadLabelFor` / `LoadFolder` / `ScanClasses` (blocked:
+    // `Effect::Task` is never executed by the runtime, so a sync
+    // `update` cannot read a file) there was never a reason for them
+    // to be inert.
+    //
+    // Two layers of "which class is active", deliberately distinct:
+    //
+    //   - `ClassEntry::is_default` — the **project** default, persisted
+    //     with the classes. This handler.
+    //   - `Model::activeClassId` — the **session** choice made by
+    //     clicking a sidebar row (5.17). It wins, and `default_class_id`
+    //     falls back here when it is empty.
+    //
+    // Keeping both is not redundancy: the session choice should not
+    // silently rewrite the project default, and it must be
+    // clearable without touching what the project says.
+    SetDefaultClass(id) => {
+      let known : Bool = model.classes.iter().any(c => c.id == id)
+      if !known {
+        // A no-op that reports itself. Flipping across the list for an
+        // id that is not in it would silently *unset* the current
+        // default — "set the default to a class that doesn't exist"
+        // must not mean "there is no default".
+        (
+          {
+            ..model,
+            statusMessage: "No such class: " + id,
+          },
+          @moui.Effect::none(),
+        )
+      } else {
+        // Exactly one class carries the flag. Flipping across the
+        // whole list is what makes it a *default* rather than another
+        // boolean.
+        let flipped : Array[ClassEntry] = model.classes.map(c => {
+          ..c,
+          is_default: c.id == id,
+        })
+        (
+          {
+            ..model,
+            classes: flipped,
+            statusMessage: "Default class: " + id,
+            staticLayerDirty: true,
+          },
+          @moui.Effect::none(),
+        )
+      }
+    }
+    // Rename moves only the display name — and that is the whole
+    // point of the id/name split. An annotation stores the class
+    // **id**, and `class_lookup_name` resolves it through
+    // `model.classes` at draw time, so every on-canvas label follows
+    // the rename with no annotation being touched at all. A handler
+    // that also rewrote `ann.class_id` here would be a no-op
+    // (`id -> id`); the first draft of this arm had exactly that, and
+    // it is removed rather than kept as decoration.
+    UpdateClass(id, new_name) => {
+      let renamed : Array[ClassEntry] = model.classes.map(c => {
+        ..c,
+        name: if c.id == id { new_name } else { c.name },
+      })
+      let known : Bool = model.classes.iter().any(c => c.id == id)
+      (
+        {
+          ..model,
+          classes: renamed,
+          statusMessage: if known {
+            "Renamed class: " + new_name
+          } else {
+            "No such class: " + id
+          },
+          // A rename is a label edit: the on-disk name changed, so the
+          // label is no longer clean even though no geometry did.
+          label: {
+            raw_json: model.label.raw_json,
+            dirty: model.label.dirty || known,
+          },
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    }
+    // Delete must not leave a dangling reference. `class_lookup_name`
+    // falls back to rendering the annotation's **own id** when its
+    // class cannot be resolved, so a surviving `class_id` pointing at
+    // a class that no longer exists shows the raw id on the canvas.
+    // Clearing it keeps every annotation renderable and honest.
+    DeleteClass(id) => {
+      let kept : Array[ClassEntry] = model.classes.filter(c => c.id != id)
+      let existed : Bool = kept.length() != model.classes.length()
+      let cleared : Array[Annotation] = model.annotations.map(ann => {
+        ..ann,
+        class_id: if ann.class_id == id { "" } else { ann.class_id },
+      })
+      (
+        {
+          ..model,
+          classes: kept,
+          annotations: cleared,
+          // The session choice cannot point at a class that is gone.
+          activeClassId: if model.activeClassId == id {
+            ""
+          } else {
+            model.activeClassId
+          },
+          statusMessage: if existed {
+            "Deleted class: " + id
+          } else {
+            "No such class: " + id
+          },
+          label: {
+            raw_json: model.label.raw_json,
+            dirty: model.label.dirty || existed,
+          },
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
+    }
     SetSettingOpacity(v) =>
       (
         { ..model, statusMessage: "Opacity: " + v.to_string(), },
