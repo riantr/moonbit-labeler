@@ -2266,6 +2266,99 @@ repeatedly on one specific block in `labeler_ui.mbt` (now worked
 around with smaller, uniquely-anchored edits) for reasons never
 diagnosed.
 
+### Phase 5.21 — the rename session
+
+5.20 left `UpdateClass` implemented and tested but with no UI,
+because rename needs text entry. This phase builds that input.
+
+**Model + messages.** `editingClassId` and `renameBuffer`, plus four
+messages: `StartRenameClass(String)`, `RenameInput(String)`,
+`CommitRename`, `CancelRename`. The mode flag is the point: without
+somewhere for a half-typed name to live, `CancelRename` has nothing
+to undo, and a rename cannot be abandoned at all.
+
+Three decisions in the transitions:
+
+- **Entering seeds the buffer with the class's current name.** A
+  rename that opens on an empty box is a "retype it", not a "rename
+  it" — and the seed is what makes the field's text match the row it
+  replaced.
+- **Committing an empty buffer cancels.** An empty class name renders
+  as a label with nothing in it, and once the text is gone the UI has
+  no way to express "leave it alone".
+- **The messages are total.** Commit with nothing in flight, and
+  starting an edit on a class that is not there, are both no-ops that
+  say so. The last case that matters: if the class is **deleted while
+  its edit is open**, committing releases the mode and renames
+  nothing — a dead edit session cannot survive a delete.
+
+`UpdateClass` and `CommitRename` now both delegate to one pure
+helper, `renamed_class(model, id, name)`, so the message and the
+sidebar button are the same operation reached two ways.
+
+**Sidebar.** Each class row gains a `>` trigger that starts the
+session. While a row is being renamed, its name button is replaced by
+a controlled `@views.text_field(value=renameBuffer,
+on_input=RenameInput, on_submit=CommitRename)` and the `>` trigger is
+**dropped** — its absence is what marks the row busy. The view only
+forwards Msgs; every decision is in `update`, which is the rule the
+whole tree follows.
+
+Two MoonBit details worth writing down, because both are errors you
+only get once:
+
+- `on_input` is a **function**, not a Msg, so a bare constructor is
+  rejected: *"Using constructors as higher order function directly is
+  forbidden"*. It needs `fn(text) { RenameInput(text) }`.
+- `on_submit` is `Msg?`, and a bare constructor is not a `Msg` value
+  either — it needs `Some(CommitRename)`.
+
+**What is verified, and what is not.** The state machine is fully
+tested (+4). The **widget** is verified by the inspector rather than
+by eye, because the per-window capture does not reach the class rows
+(5.14/5.15) and the full-desktop capture came back entirely black on
+both attempts this phase — a harness flake, since the same command
+produced a good desktop capture in 5.20. Dumped from inside
+`render_frame`, the live tree shows:
+
+```
+86  TextField   x=0     y=257.5  96x16   paint_bounds non-empty
+87  ...         x=98    y=257.5  20x16   (*)
+90  ...         x=120   y=257.5  20x16   (x)
+```
+
+So the field is in the tree, on the right row, at the size the view
+asked for, and it **produced paint output** rather than being a
+silently empty node. The row's `>` trigger is absent while editing,
+exactly as intended.
+
+**Not verified: how the field looks.** Glyphs, caret, background and
+click-to-focus are untested by anything here, and this is the app's
+first text-input widget — nothing else in the codebase exercises
+MoUI's text editing path. That is the one thing to eyeball on the
+next interactive run. Note that keyboard focus for the field is a
+separate question from the three toolbar shortcuts wired in 5.10:
+those are `View::keyboard_shortcut` (global, no focus needed, 5.10's
+finding), whereas a text field needs real focus, and nothing in this
+phase grants it.
+
+The demo state also leaves the second class row mid-rename, for the
+same reason the polygon demo stops mid-draft in 5.11: a cold start
+never renders the field, so without it the new widget gets no visual
+coverage at all.
+
+**Tests (318/318, +4).** Seeding the buffer; the round trip
+(type → submit → name moved, id unmoved, label dirty); cancel and
+empty-commit both leaving the class untouched and the label clean;
+and the total-message cases including delete-during-edit.
+
+**Verification:** 318/318 tests pass (314 -> 318); `moon check
+--target native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags none of the 4 touched files. Smoke exits 0
+and the app boots and renders; the screenshot cannot reach the
+sidebar rows, so the field's appearance is the acknowledged gap
+above.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

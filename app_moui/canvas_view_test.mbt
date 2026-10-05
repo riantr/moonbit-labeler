@@ -5463,3 +5463,106 @@ test "sidebar — project default and session choice are independent (5.20)" {
     @style.ButtonVariant::Ghost,
   )
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.21 — the rename session
+//
+// 5.20 left `UpdateClass` implemented and tested but with no UI,
+// because rename needs text entry. MoUI has a controlled
+// `@views.text_field(value, on_input~, on_submit?)`, so the only
+// thing missing was a place for a half-typed name to live: a mode
+// flag plus a buffer. Without those, `CancelRename` has nothing to
+// undo.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.21 — starting a rename seeds the buffer with the class's
+/// current **name**. A rename that opens on an empty box is a
+/// "retype it", not a "rename it", and the seed is also what makes
+/// the on-screen text differ from a blank field.
+test "StartRenameClass — seeds the buffer with the current name (5.21)" {
+  let base : Model = Model::new()
+  let gun = base.classes[1].id
+  assert_eq(base.editingClassId, "")
+  let (editing, _) = update(base, StartRenameClass(gun))
+  assert_eq(editing.editingClassId, gun)
+  assert_eq(editing.renameBuffer, "gun")
+  // The class list itself is untouched by merely entering edit mode.
+  assert_eq(editing.classes.length(), base.classes.length())
+}
+
+///|
+/// Phase 5.21 — the full round trip, through the messages the text
+/// field dispatches: type, submit, and the name has moved. Asserting
+/// the end state rather than a `TextRun` is deliberate — a controlled
+/// field's value lives in the Model, so `renameBuffer` *is* the
+/// contract, and that is what the view reads.
+test "rename round trip — type, submit, name changed (5.21)" {
+  let base : Model = Model::new()
+  let gun = base.classes[1].id
+  let (a, _) = update(base, StartRenameClass(gun))
+  let (b, _) = update(a, RenameInput("rifle"))
+  assert_eq(b.renameBuffer, "rifle")
+  assert_eq(b.editingClassId, gun)
+  let (c, _) = update(b, CommitRename)
+  // Edit mode is over and the buffer is released.
+  assert_eq(c.editingClassId, "")
+  assert_eq(c.renameBuffer, "")
+  // The name moved; the id did not, so every annotation that points
+  // at this class keeps resolving.
+  assert_eq(c.classes[1].name, "rifle")
+  assert_eq(c.classes[1].id, gun)
+  assert_true(c.label.dirty)
+}
+
+///|
+/// Phase 5.21 — cancelling is a real escape hatch, and so is
+/// committing an empty buffer. Both must leave the class exactly as
+/// it was: a rename that vanishes is worse than one that was never
+/// started.
+test "rename — cancel and empty-commit both leave the class alone (5.21)" {
+  let base : Model = Model::new()
+  let gun = base.classes[1].id
+  // Typed, then cancelled.
+  let (a, _) = update(base, StartRenameClass(gun))
+  let (b, _) = update(a, RenameInput("rifle"))
+  let (cancelled, _) = update(b, CancelRename)
+  assert_eq(cancelled.editingClassId, "")
+  assert_eq(cancelled.renameBuffer, "")
+  assert_eq(cancelled.classes[1].name, "gun")
+  // An empty buffer cancels too, rather than renaming to blank.
+  let (d, _) = update(b, RenameInput(""))
+  let (empty, _) = update(d, CommitRename)
+  assert_eq(empty.editingClassId, "")
+  assert_eq(empty.classes[1].name, "gun")
+  // Neither path dirties a label that nothing changed.
+  assert_true(!cancelled.label.dirty)
+  assert_true(!empty.label.dirty)
+}
+
+///|
+/// Phase 5.21 — the messages are total. Committing with nothing in
+/// flight, renaming a class that is not there, and starting an edit
+/// on one that is not there are all no-ops that say so, rather than
+/// half-handled.
+test "rename — out-of-flight and unknown-id messages are no-ops that say so (5.21)" {
+  let base : Model = Model::new()
+  // Commit with no edit in progress.
+  let (c, _) = update(base, CommitRename)
+  assert_eq(c.editingClassId, "")
+  assert_eq(c.classes.length(), base.classes.length())
+  // Start on a class that is not there.
+  let (s, _) = update(base, StartRenameClass("nope"))
+  assert_eq(s.editingClassId, "")
+  assert_true(s.statusMessage.contains("nope"))
+  // Commit an edit for a class that was deleted mid-edit. The buffer
+  // is released and nothing is renamed; the "no such class" report
+  // comes from `renamed_class` and then the mode is cleared, so a
+  // dead edit session cannot survive a delete.
+  let gun = base.classes[1].id
+  let (a, _) = update(base, StartRenameClass(gun))
+  let (deleted, _) = update(a, DeleteClass(gun))
+  let (d, _) = update(deleted, CommitRename)
+  assert_eq(d.editingClassId, "")
+  assert_true(d.classes.every(c => c.id != gun))
+}

@@ -225,6 +225,13 @@ pub(all) struct Model {
   // reusing `ClassEntry::is_default` so the sidebar's *demo* class
   // set (plain strings, no ClassEntry behind them) can drive it too.
   activeClassId : String
+  // Phase 5.21 — the rename-in-progress session. `editingClassId` is
+  // the class being renamed and `renameBuffer` is the text field's
+  // controlled value. `""` means "not renaming", and that mode flag is
+  // what makes a rename *abandonable*: without somewhere for a
+  // half-typed name to live, `CancelRename` has nothing to undo.
+  editingClassId : String
+  renameBuffer : String
   draftPoints : Array[Point]
   bindingFromId : String?
   classes : Array[ClassEntry]
@@ -297,6 +304,8 @@ pub fn Model::new() -> Model {
     // Phase 5.17 — no class chosen yet; `default_class_id` falls back
     // to the first `is_default` class until the user picks one.
     activeClassId: "",
+    editingClassId: "",
+    renameBuffer: "",
     draftPoints: [],
     bindingFromId: None,
     classes: default_demo_classes(),
@@ -475,6 +484,15 @@ pub(all) enum Msg {
   // the bottom of the window since 5.1), which turned 6 dead controls
   // into 6 visible ones. This is the message they dispatch.
   SetActiveClass(String)
+  // Phase 5.21 — the rename-in-progress session. 5.19 implemented
+  // `UpdateClass` and 5.20 gave the row a `*` and an `x`; rename was
+  // the one left unreachable because it needs text entry. These four
+  // messages are that input, modelled as a state machine so the whole
+  // flow is testable without a widget.
+  StartRenameClass(String)
+  RenameInput(String)
+  CommitRename
+  CancelRename
   ReadLabelFor(String)
   LabelLoaded(Label, String, Bool)
   SaveLabel
@@ -1396,6 +1414,85 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         },
         @moui.Effect::none(),
       )
+    // Phase 5.21 — the rename session. Four messages, all pure state
+    // transitions, so the flow is testable without a text field ever
+    // being rendered.
+    //
+    // Entering seeds the buffer with the class's current **name**,
+    // because a rename that starts from an empty box is a "retype it",
+    // not a "rename it". Committing an empty buffer cancels rather
+    // than renaming to blank: an empty class name renders as a label
+    // with nothing in it, and the UI has no way to say "leave it
+    // alone" once the text is gone.
+    StartRenameClass(id) => {
+      let hit = model.classes.filter(c => c.id == id)
+      if hit.length() == 0 {
+        (
+          { ..model, statusMessage: "No such class: " + id, },
+          @moui.Effect::none(),
+        )
+      } else {
+        (
+          {
+            ..model,
+            editingClassId: id,
+            renameBuffer: hit[0].name,
+            statusMessage: "Renaming " + id,
+            staticLayerDirty: true,
+          },
+          @moui.Effect::none(),
+        )
+      }
+    }
+    RenameInput(text) =>
+      (
+        {
+          ..model,
+          renameBuffer: text,
+        },
+        @moui.Effect::none(),
+      )
+    CommitRename => {
+      let id = model.editingClassId
+      if id == "" {
+        // Nothing in flight. The field only renders while editing, so
+        // this is unreachable from the UI; it is here so the message
+        // is total rather than half-handled.
+        (model, @moui.Effect::none())
+      } else if model.renameBuffer == "" {
+        (
+          {
+            ..model,
+            editingClassId: "",
+            renameBuffer: "",
+            statusMessage: "Rename cancelled (empty name)",
+            staticLayerDirty: true,
+          },
+          @moui.Effect::none(),
+        )
+      } else {
+        let renamed = renamed_class(model, id, model.renameBuffer)
+        (
+          {
+            ..renamed,
+            editingClassId: "",
+            renameBuffer: "",
+            staticLayerDirty: true,
+          },
+          @moui.Effect::none(),
+        )
+      }
+    }
+    CancelRename => (
+      {
+        ..model,
+        editingClassId: "",
+        renameBuffer: "",
+        statusMessage: "Rename cancelled",
+        staticLayerDirty: true,
+      },
+      @moui.Effect::none(),
+    )
     // Phase 5.19 — the class list was half-built: `AddClass` appended
     // an entry, and rename / delete / set-default were all no-op
     // stubs. None of them need I/O — they are pure model edits, so
@@ -1456,32 +1553,7 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
     // that also rewrote `ann.class_id` here would be a no-op
     // (`id -> id`); the first draft of this arm had exactly that, and
     // it is removed rather than kept as decoration.
-    UpdateClass(id, new_name) => {
-      let renamed : Array[ClassEntry] = model.classes.map(c => {
-        ..c,
-        name: if c.id == id { new_name } else { c.name },
-      })
-      let known : Bool = model.classes.iter().any(c => c.id == id)
-      (
-        {
-          ..model,
-          classes: renamed,
-          statusMessage: if known {
-            "Renamed class: " + new_name
-          } else {
-            "No such class: " + id
-          },
-          // A rename is a label edit: the on-disk name changed, so the
-          // label is no longer clean even though no geometry did.
-          label: {
-            raw_json: model.label.raw_json,
-            dirty: model.label.dirty || known,
-          },
-          staticLayerDirty: true,
-        },
-        @moui.Effect::none(),
-      )
-    }
+    UpdateClass(id, new_name) => (renamed_class(model, id, new_name), @moui.Effect::none())
     // Delete must not leave a dangling reference. `class_lookup_name`
     // falls back to rendering the annotation's **own id** when its
     // class cannot be resolved, so a surviving `class_id` pointing at
@@ -2063,6 +2135,36 @@ pub fn state_for_image_change(model : Model, idx : Int) -> Model {
     statusMessage: if name == "" { "No image" } else { "Image: " + name },
     staticLayerDirty: true,
     dynamicLayerDirty: true,
+  }
+}
+
+///|
+/// Phase 5.21 — rename a class: move the display name, nothing else.
+///
+/// Pure and total, so both entry points (`UpdateClass` and
+/// `CommitRename` from the sidebar) share it and cannot drift.
+///
+/// Annotations store the class **id** and `class_lookup_name` resolves
+/// it through `model.classes` at draw time, so every on-canvas label
+/// follows the rename with **no annotation being touched**. A rename
+/// is still a label edit — the on-disk name changed — so
+/// `label.dirty` is set, but only when the class exists: renaming
+/// something that is not there must not dirty a label, or the user
+/// gets an unsaved-changes prompt for nothing.
+pub fn renamed_class(model : Model, id : String, new_name : String) -> Model {
+  if !model.classes.iter().any(c => c.id == id) {
+    return { ..model, statusMessage: "No such class: " + id, }
+  }
+  let renamed : Array[ClassEntry] = model.classes.map(c => {
+    ..c,
+    name: if c.id == id { new_name } else { c.name },
+  })
+  {
+    ..model,
+    classes: renamed,
+    statusMessage: "Renamed class: " + new_name,
+    label: { raw_json: model.label.raw_json, dirty: true, },
+    staticLayerDirty: true,
   }
 }
 

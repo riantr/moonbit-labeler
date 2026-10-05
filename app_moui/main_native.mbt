@@ -267,7 +267,15 @@ fn build_demo_drag_model() -> Model {
     poly2,
     CursorMoved({ x: 95.0, y: 25.0 }, { x: 95.0, y: 25.0 }),
   )
-  poly3
+  // Phase 5.21 — also leave the second class row mid-rename, so the
+  // smoke screenshot shows a live `@views.text_field`. A cold start
+  // has `editingClassId == ""`, so without this the field is never
+  // rendered and the one widget this phase introduces would be
+  // visually unverified — which is how the blank-canvas and
+  // mis-centred-image bugs in 5.13/5.14 got as far as they did.
+  // Same pattern as the mid-polygon demo state above.
+  let (editing, _) = update(poly3, StartRenameClass("gun"))
+  editing
 }
 
 ///|

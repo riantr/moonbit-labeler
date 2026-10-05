@@ -788,58 +788,103 @@ fn sidebar_class_rows(
     // could return it to empty, so the first class the user clicked
     // was permanent for the rest of the session.
     let target : String = if cls.id == model.activeClassId { "" } else { cls.id }
+    // Phase 5.21 — while this row is the one being renamed, the name
+    // button becomes a controlled text field. `on_input` types into
+    // `renameBuffer` and `on_submit` commits, so the view only ever
+    // forwards Msgs and every decision stays in `update` — the same
+    // rule the whole view tree follows. The `>` trigger is dropped
+    // while editing: re-triggering an edit already in progress has
+    // no meaning, and its absence is what marks the row as busy.
+    let editing : Bool = cls.id == model.editingClassId
+    let head : @moui.View[Msg] = if editing {
+      @views.frame(
+        @views.text_field(
+          model.renameBuffer,
+          // `on_input` is a function, not a Msg, so the constructor
+          // has to be wrapped — MoonBit rejects using an enum
+          // constructor directly as a higher-order function.
+          on_input=fn(text) { RenameInput(text) },
+          on_submit=Some(CommitRename),
+          placeholder=cls.name,
+          theme~,
+          width=96.0,
+          height=16.0,
+        ),
+        width=96.0,
+        height=16.0,
+      )
+    } else {
+      @views.frame(
+        @views.button(
+          "# " + cls.name,
+          on_click=SetActiveClass(target),
+          theme~,
+          variant=sidebar_row_variant(cls.id == model.activeClassId),
+          width=96.0,
+          height=16.0,
+        ),
+        width=96.0,
+        height=16.0,
+      )
+    }
+    let star : @moui.View[Msg] = @views.frame(
+      @views.button(
+        "*",
+        on_click=SetDefaultClass(cls.id),
+        theme~,
+        variant=sidebar_row_variant(cls.is_default),
+        width=20.0,
+        height=16.0,
+      ),
+      width=20.0,
+      height=16.0,
+    )
+    // Delete (5.19's DeleteClass), which also clears every
+    // annotation's reference to the class and the session choice if
+    // it pointed here.
+    let cross : @moui.View[Msg] = @views.frame(
+      @views.button(
+        "x",
+        on_click=DeleteClass(cls.id),
+        theme~,
+        variant=@style.ButtonVariant::Ghost,
+        width=20.0,
+        height=16.0,
+      ),
+      width=20.0,
+      height=16.0,
+    )
+    // The `>` trigger leads the row only when not editing; while
+    // editing it is dropped, and that absence is what marks the row
+    // as busy. `head` is the name button or the text field.
+    let parts : Array[@moui.View[Msg]] = if editing {
+      [head, star, cross]
+    } else {
+      [
+        // Phase 5.21 — enter the rename session. Seeded from the
+        // current name by `StartRenameClass`, so this is a rename and
+        // not a retype.
+        @views.frame(
+          @views.button(
+            ">",
+            on_click=StartRenameClass(cls.id),
+            theme~,
+            variant=@style.ButtonVariant::Ghost,
+            width=20.0,
+            height=16.0,
+          ),
+          width=20.0,
+          height=16.0,
+        ),
+        head,
+        star,
+        cross,
+      ]
+    }
     rows.push(
       @views.frame(
-        @views.row(
-          [
-            // The class name — selects it for this session.
-            @views.frame(
-              @views.button(
-                "# " + cls.name,
-                on_click=SetActiveClass(target),
-                theme~,
-                variant=sidebar_row_variant(cls.id == model.activeClassId),
-                width=120.0,
-                height=16.0,
-              ),
-              width=120.0,
-              height=16.0,
-            ),
-            // Project default (5.19's SetDefaultClass). Filled when
-            // this class carries `is_default`, so the two "active"
-            // notions stay distinguishable: the star is the
-            // project's, the name button is the session's.
-            @views.frame(
-              @views.button(
-                "*",
-                on_click=SetDefaultClass(cls.id),
-                theme~,
-                variant=sidebar_row_variant(cls.is_default),
-                width=24.0,
-                height=16.0,
-              ),
-              width=24.0,
-              height=16.0,
-            ),
-            // Delete (5.19's DeleteClass), which also clears every
-            // annotation's reference to the class and the session
-            // choice if it pointed here.
-            @views.frame(
-              @views.button(
-                "x",
-                on_click=DeleteClass(cls.id),
-                theme~,
-                variant=@style.ButtonVariant::Ghost,
-                width=24.0,
-                height=16.0,
-              ),
-              width=24.0,
-              height=16.0,
-            ),
-          ],
-          spacing=2.0,
-        ),
-        width=172.0,
+        @views.row(parts, spacing=2.0),
+        width=160.0,
         height=16.0,
       ),
     )
