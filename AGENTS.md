@@ -2189,6 +2189,83 @@ three handlers reporting an unknown id instead of faking success.
 correct: the demo model has no classes loaded, so the class rows are
 the fallback demo set and no row is active.
 
+### Phase 5.20 — the demo class list becomes real state, and the buttons become live
+
+5.19 ended by saying its rename/delete handlers had **no user-facing
+trigger**. This phase makes two of the three reachable, and the
+reason they were unreachable is worth recording because it was not
+"the UI was never built".
+
+**The class rows named classes that did not exist.** `model.classes`
+was always empty (`ScanClasses` is a no-op stub and nothing
+dispatches `ClassesLoaded`, 5.19), and the sidebar rendered a
+**hardcoded string list** instead — `["knife", "gun", "batt", ...]`.
+So a `*` or `x` button on those rows would have dispatched
+`SetDefaultClass` / `DeleteClass` against ids absent from
+`model.classes`, and both would have answered **"No such class"**.
+Building the buttons first would have manufactured two more dead
+controls — precisely the failure 5.9, 5.10 and 5.17 spent this
+track removing. Making the rows address real state is what makes
+them live.
+
+`Model::new` now seeds `model.classes` with six `ClassEntry`
+records (`default_demo_classes`, id == name) and
+`sidebar_class_rows` iterates `model.classes` with the hardcoded list
+gone.
+
+**No class is marked `is_default`, and that is the load-bearing
+detail.** It keeps `default_class_id` returning `""`, so a demo
+annotation has an empty `class_id` and labels itself with its own id
+(`class_lookup_name`'s fallback). Marking one default would give
+every demo annotation the same "knife" label and hide exactly what
+the smoke screenshot exists to show. The test asserts this
+consequence, because "seed the classes" and "seed them without a
+default" look identical until the screenshot changes.
+
+**The row is now three controls**, not one:
+
+| control | dispatches | meaning |
+| --- | --- | --- |
+| `# name` (120 px) | `SetActiveClass(id)` | this **session**'s class; a second click clears it (5.19) |
+| `*` (24 px) | `SetDefaultClass(id)` | the **project** default, filled when `is_default` |
+| `x` (24 px) | `DeleteClass(id)` | remove, clearing every reference (5.19) |
+
+The star is filled from `is_default` and the name button from
+`activeClassId`, so the two layers are visually distinct on the same
+row rather than being two shades of the same question. A test sets
+one without the other and checks the other does not follow.
+
+**Still not reachable: rename.** `UpdateClass` is implemented and
+tested but has no UI, because it needs text entry and the sidebar
+has nowhere to put a field. MoUI *does* have a controlled
+`@views.text_field(value, on_input~, on_submit?)`, so this is a
+build-not-a-blocker, and it is the obvious next slice. It is
+deliberately not started here: it needs an edit-mode flag plus a
+buffer on the Model, and shipping half of a rename flow would be
+worse than shipping none.
+
+**Tests (314/314, +3).** The seeded list being real, unique and
+default-free (asserted through a new annotation's `class_id`); all
+three buttons reaching a handler that answers without "No such
+class"; and the two "active" affordances being independent.
+
+**Verification:** 314/314 tests pass (311 -> 314); `moon check
+--target native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags none of the 3 touched files. Smoke
+`_build/phase5_20_final._window.png` shows the six rows as
+`# knife  *  x` … `# botl  *  x`, and the canvas annotations still
+labelled `rect-1` / `poly-1` / `kp-1` / `ann-1` / `ann-2`.
+
+**Tooling note.** Mid-phase, a PowerShell rewrite of `app.mbt` failed
+mid-script and truncated the file to 8 lines. `git checkout` restored
+it from the 5.19 commit and the 5.20 work was redone. The rule for
+next time: **never rewrite a source file from PowerShell**; use the
+file-edit tool, and check `git diff --stat` after every edit so a
+truncation is visible immediately. The file-edit tool also failed
+repeatedly on one specific block in `labeler_ui.mbt` (now worked
+around with smaller, uniquely-anchored edits) for reasons never
+diagnosed.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

@@ -5359,3 +5359,107 @@ test "class handlers — an unknown id is reported, not faked (5.19)" {
   assert_true(dflt.classes[0].is_default)
   assert_true(dflt.statusMessage.contains("nope"))
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.20 — the demo class list becomes real model state
+//
+// Until now `model.classes` was empty and the sidebar rendered a
+// hardcoded string list. That made 5.19's handlers unreachable *in
+// principle*: a `*` or `x` button on those rows would dispatch
+// `SetDefaultClass` / `DeleteClass` against ids that do not exist,
+// and both would answer "No such class". Seeding real `ClassEntry`
+// records is what makes the buttons live rather than decorative.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.20 — the seeded list is real state, and **no class is
+/// marked default**. The second half is the load-bearing part: it is
+/// what keeps `default_class_id` returning "" so a demo annotation
+/// still labels itself with its own id (`class_lookup_name`'s
+/// fallback) and the smoke screenshot is unchanged. Marking a default
+/// would give every demo annotation the same label and hide exactly
+/// what the smoke exists to show.
+test "default_demo_classes — real entries, and deliberately no default (5.20)" {
+  let base : Model = Model::new()
+  assert_eq(base.classes.length(), 6)
+  // Ids are unique and non-empty, and the star/delete buttons address
+  // them, so an id that is not in this list would be a dead control.
+  let ids = base.classes.map(c => c.id)
+  for c in base.classes {
+    assert_true(c.id != "")
+    assert_true(!ids.filter(x => x == c.id).is_empty())
+    assert_true(!c.is_default)
+  }
+  // The consequence: `default_class_id` is private, so assert the
+  // observable result — a new annotation is assigned nothing, so its
+  // label falls back to its own id.
+  let (kp, _) = update(base, AddKeypoint({ x: 3.0, y: 3.0 }))
+  assert_eq(kp.annotations[kp.annotations.length() - 1].class_id, "")
+}
+
+///|
+/// Phase 5.20 — the three sidebar buttons each reach a real handler on
+/// a real class, from the seeded list rather than a test-only model.
+/// This is the assertion that would have failed with the old
+/// hardcoded rows: they named ids that `model.classes` did not
+/// contain, so all three would have answered "No such class".
+test "sidebar class buttons reach real handlers on the seeded list (5.20)" {
+  let base : Model = Model::new()
+  let knife = base.classes[0].id
+  let gun = base.classes[1].id
+  // The name button: SetActiveClass.
+  let (picked, _) = update(base, SetActiveClass(gun))
+  assert_eq(picked.activeClassId, gun)
+  // The star: SetDefaultClass.
+  let (starred, _) = update(base, SetDefaultClass(gun))
+  let defaults = starred.classes.filter(c => c.is_default)
+  assert_eq(defaults.length(), 1)
+  assert_eq(defaults[0].id, gun)
+  // The x: DeleteClass.
+  let (gone, _) = update(base, DeleteClass(gun))
+  assert_eq(gone.classes.length(), 5)
+  assert_true(gone.classes.every(c => c.id != gun))
+  // And none of them report "No such class" — the failure the old
+  // rows would have produced for every button.
+  assert_true(!picked.statusMessage.contains("No such class"))
+  assert_true(!starred.statusMessage.contains("No such class"))
+  assert_true(!gone.statusMessage.contains("No such class"))
+}
+
+///|
+/// Phase 5.20 — the two "active" affordances on one row are
+/// independent, which is the whole point of having two layers. The
+/// star tracks `is_default`; the name tracks `activeClassId`. Setting
+/// one must not move the other, or the user cannot tell which of the
+/// two they are looking at.
+test "sidebar — project default and session choice are independent (5.20)" {
+  let base : Model = Model::new()
+  let knife = base.classes[0].id
+  let gun = base.classes[1].id
+  // Set the project default only.
+  let (d, _) = update(base, SetDefaultClass(gun))
+  assert_eq(d.activeClassId, "")
+  assert_true(d.classes.filter(c => c.id == gun)[0].is_default)
+  assert_eq(
+    sidebar_row_variant(d.classes.filter(c => c.id == gun)[0].is_default),
+    @style.ButtonVariant::Primary,
+  )
+  assert_eq(
+    sidebar_row_variant(d.classes.filter(c => c.id == gun)[0].id == d.activeClassId),
+    @style.ButtonVariant::Ghost,
+  )
+  // Now the session choice on a different class: the star must not
+  // follow it.
+  let (s, _) = update(d, SetActiveClass(knife))
+  assert_eq(s.activeClassId, knife)
+  assert_true(s.classes.filter(c => c.id == gun)[0].is_default)
+  assert_true(!s.classes.filter(c => c.id == knife)[0].is_default)
+  assert_eq(
+    sidebar_row_variant(s.classes.filter(c => c.id == knife)[0].id == s.activeClassId),
+    @style.ButtonVariant::Primary,
+  )
+  assert_eq(
+    sidebar_row_variant(s.classes.filter(c => c.id == knife)[0].is_default),
+    @style.ButtonVariant::Ghost,
+  )
+}

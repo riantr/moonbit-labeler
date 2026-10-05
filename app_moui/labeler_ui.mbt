@@ -772,35 +772,74 @@ fn sidebar_class_rows(
   model : Model,
   theme : @core.Theme,
 ) -> Array[@moui.View[Msg]] {
-  let classes : Array[String] = if model.classes.length() > 0 {
-    let names : Array[String] = []
-    for cls in model.classes {
-      names.push(cls.name)
-    }
-    names
-  } else {
-    ["knife", "gun", "batt", "liq", "botl", "bomb"]
-  }
+  // Phase 5.20 — the hardcoded demo list is gone. `Model::new`
+  // seeds `model.classes` with real `ClassEntry` records, so these
+  // rows address classes that actually exist and the two action
+  // buttons have something to act on. Rendering ids that are not in
+  // `model.classes` would make every one of them answer "No such
+  // class" — two more dead controls, which is the failure mode this
+  // track has been removing since 5.9.
   let rows : Array[@moui.View[Msg]] = []
-  for cls in classes {
+  for cls in model.classes {
     // Phase 5.19 — clicking the row that is already active clears the
     // session choice (`SetActiveClass("")`), which drops back to the
     // project's `is_default` class. Without this the "not chosen"
     // state was unreachable: `activeClassId` starts empty but nothing
     // could return it to empty, so the first class the user clicked
     // was permanent for the rest of the session.
-    let target : String = if cls == model.activeClassId { "" } else { cls }
+    let target : String = if cls.id == model.activeClassId { "" } else { cls.id }
     rows.push(
       @views.frame(
-        @views.button(
-          "# " + cls,
-          on_click=SetActiveClass(target),
-          theme~,
-          variant=sidebar_row_variant(cls == model.activeClassId),
-          width=180.0,
-          height=16.0,
+        @views.row(
+          [
+            // The class name — selects it for this session.
+            @views.frame(
+              @views.button(
+                "# " + cls.name,
+                on_click=SetActiveClass(target),
+                theme~,
+                variant=sidebar_row_variant(cls.id == model.activeClassId),
+                width=120.0,
+                height=16.0,
+              ),
+              width=120.0,
+              height=16.0,
+            ),
+            // Project default (5.19's SetDefaultClass). Filled when
+            // this class carries `is_default`, so the two "active"
+            // notions stay distinguishable: the star is the
+            // project's, the name button is the session's.
+            @views.frame(
+              @views.button(
+                "*",
+                on_click=SetDefaultClass(cls.id),
+                theme~,
+                variant=sidebar_row_variant(cls.is_default),
+                width=24.0,
+                height=16.0,
+              ),
+              width=24.0,
+              height=16.0,
+            ),
+            // Delete (5.19's DeleteClass), which also clears every
+            // annotation's reference to the class and the session
+            // choice if it pointed here.
+            @views.frame(
+              @views.button(
+                "x",
+                on_click=DeleteClass(cls.id),
+                theme~,
+                variant=@style.ButtonVariant::Ghost,
+                width=24.0,
+                height=16.0,
+              ),
+              width=24.0,
+              height=16.0,
+            ),
+          ],
+          spacing=2.0,
         ),
-        width=180.0,
+        width=172.0,
         height=16.0,
       ),
     )

@@ -299,7 +299,7 @@ pub fn Model::new() -> Model {
     activeClassId: "",
     draftPoints: [],
     bindingFromId: None,
-    classes: [],
+    classes: default_demo_classes(),
     // Phase 5.13 — default viewport. `main_native.mbt` overwrites
     // this on the cold-start model with the size it asks the
     // runtime for, so the view and the window cannot disagree. The
@@ -355,6 +355,42 @@ pub fn Model::new() -> Model {
     toastKind: Info,
     statusMessage: "Ready",
   }
+}
+
+///|
+/// Phase 5.20 — the demo class list, as **real model state**.
+///
+/// Until now `model.classes` was always empty and the sidebar
+/// rendered a hardcoded string list instead (knife / gun / batt / liq
+/// / botl / bomb). That made the class-management handlers added in
+/// 5.19 unreachable *in principle*, not just without a UI: a
+/// `★` or `×` button on those rows would dispatch `SetDefaultClass`
+/// or `DeleteClass` against ids that do not exist in
+/// `model.classes`, and both would answer "No such class". Adding
+/// the buttons would have created two more dead controls — the exact
+/// failure 5.9, 5.10 and 5.17 spent this track removing. Seeding
+/// real `ClassEntry` records is what makes them live.
+///
+/// **No class is marked `is_default`.** That is deliberate and it is
+/// what keeps the smoke screenshot unchanged: `default_class_id`
+/// falls through to `""`, and an annotation with an empty
+/// `class_id` renders its own id as its label
+/// (`class_lookup_name`'s fallback). Marking one default would give
+/// every demo annotation the same "knife" label and hide the
+/// per-annotation ids the smoke exists to show.
+///
+/// The id equals the name, which is what the demo rows already
+/// assumed and what keeps the chip the user clicks identical to the
+/// label that would land on the canvas. When `ScanClasses` is
+/// implemented this is replaced wholesale by the project's real
+/// class list; nothing else needs to change.
+pub fn default_demo_classes() -> Array[ClassEntry] {
+  let names = ["knife", "gun", "batt", "liq", "botl", "bomb"]
+  let out : Array[ClassEntry] = []
+  for n in names {
+    out.push({ id: n, name: n, is_default: false, })
+  }
+  out
 }
 
 ///|
