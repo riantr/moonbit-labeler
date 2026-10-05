@@ -755,17 +755,32 @@ pub fn sidebar_row_variant(is_current : Bool) -> @style.ButtonVariant {
 /// **The row string is used as both the label and the class id**, and
 /// that is not a simplification I chose for convenience — it is
 /// forced by the current state of the app. `ScanClasses` is still a
-/// no-op stub and nothing dispatches `ClassesLoaded`, so
-/// `model.classes` is always empty at runtime and the demo fallback
-/// below is the only reachable branch. A demo class has no
-/// `ClassEntry` behind it, so its name *is* its id, and that stays
+/// no-op stub and nothing dispatches `ClassesLoaded`, so the only
+/// `ClassEntry` list in play is the one `Model::new` seeds
+/// (`default_demo_classes`, since Phase 5.20). A demo class has no
+/// real identity behind it, so its name *is* its id, and that stays
 /// consistent end to end: `default_class_id` returns it, the
 /// annotation records it, and `class_lookup_name` renders an
 /// unresolvable `class_id` verbatim.
 ///
-/// When `ScanClasses` is implemented, this needs one change: a real
-/// `ClassEntry` carries `id` and `name` as separate fields, and the
-/// annotation wants the **id**. Carrying both through would need a
+/// Phase 5.22 sharpened what a real class list would mean: a label
+/// read off disk resolves its `type` through `model.classes`, and the
+/// handler test proves both halves — "object" resolves to `c-obj` when
+/// that class exists, and stays empty (falling back to the annotation
+/// id) when it does not. So the moment `ScanClasses` finds the
+/// project's real classes, the id/name split in `ClassEntry` starts
+/// mattering and the row string stops being the id.
+///
+/// Why `ScanClasses` is still deferred, now that disk reads work:
+/// there is **no class source in the shipped dataset**. `data/Label@skin`
+/// contains one `.json` and no `classes.txt`, so there is no on-disk
+/// convention to recover. Deriving classes by scanning every label's
+/// distinct `type` values is a plausible design, but inventing a
+/// convention and presenting it as the recovered one would be worse
+/// than leaving it visibly unimplemented.
+///
+/// A real `ClassEntry` carries `id` and `name` as separate fields, and
+/// the annotation wants the **id**. Carrying both through would need a
 /// second parallel array (or a record); a pair type was tried and
 /// `Array[(String, String)]` does not resolve in this package.
 fn sidebar_class_rows(

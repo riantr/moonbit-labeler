@@ -23,6 +23,7 @@ import {
   "wzzc-dev/moui/backend/windows",
   "moonbitlang/async/fs",
   "moonbitlang/async/io",
+  "moonbitlang/x/fs" @xfs,
   "riantr/moonbit_image",
   "moonbitlang/core/env",
   "moonbitlang/core/math",

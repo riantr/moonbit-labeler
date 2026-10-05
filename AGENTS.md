@@ -2070,11 +2070,19 @@ everything" is the obvious wrong implementation.
 **`imageSource` is NOT reset, and that is a stated limitation.** The
 pixels are not reloaded, because nothing in MoUI 0.1.12 can:
 
-> `Effect::Task` is declared (`Effect::task`) and counted in the
-> effect-plan summary (`program_plan_summary.mbt:273`), and it is
-> **never executed anywhere in the tree** — those three are the only
-> occurrences. There is therefore no async path out of a sync
-> `update` to read a file with.
+> **CORRECTED IN PHASE 5.22 — this reasoning was wrong.** `Effect::Task`
+> *is* executed: `runtime/runtime.mbt:46-49` calls `start_task(...)`,
+> which reaches `runtime/program_runtime_effect_tasks.mbt:22` and
+> calls `start(...)`. The three occurrences counted here are the
+> *diagnostic summary pass*, not the execution path — I read a counter
+> as a verdict. Separately, a sync `update` **can** read a file:
+> `moonbitlang/x/fs` is a synchronous API, importable all along. Disk
+> reads are implemented in 5.22.
+>
+> What is still true: `imageSource` is not reset, and the *pixels*
+> still do not reload — but for the ordinary reason that decoding an
+> image into the `ImageCache` is a second unwired step, not because I/O
+> is impossible. See "Phase 5.22".
 
 That is a sharper statement than the one in `image_header.mbt`, which
 attributes the blockage to MoonBit's language (no sync→async bridge,
@@ -2117,10 +2125,10 @@ correct, since the demo model never switches images.
 otherwise managed: `AddClass` appended an entry, and
 `UpdateClass`, `DeleteClass` and `SetDefaultClass` were all
 one-line no-op stubs. Unlike `ReadLabelFor` / `LoadFolder` /
-`ScanClasses` — blocked because `Effect::Task` is never executed by
-the runtime, so a sync `update` cannot read a file (5.18) — these
-three are **pure model edits**. There was never a reason for them to
-be inert.
+`ScanClasses` — which 5.22 showed were **not** I/O-blocked at all (see
+"Phase 5.22"; the blocker this paragraph cites was a misreading) —
+these three are **pure model edits**. There was never a reason for
+them to be inert.
 
 **What landed.** All three, plus one gap they exposed.
 
@@ -2358,6 +2366,161 @@ and the total-message cases including delete-during-edit.
 and the app boots and renders; the screenshot cannot reach the
 sidebar rows, so the field's appearance is the acknowledged gap
 above.
+
+### Phase 5.22 — the file-I/O blocker was a phantom
+
+5.13 concluded that this app **cannot** read files, and every phase
+since cited that as the reason `ReadLabelFor` / `LoadFolder` /
+`ScanClasses` were inert stubs. Both halves of that conclusion were
+wrong, both were cheap to check, and neither was checked for nine
+phases. This phase removes the blocker and corrects the record.
+
+**The two wrong claims.**
+
+1. *"`Effect::Task` is never executed."* I had grepped MoUI for
+   `Effect::Task`, found the constructor plus a counter at
+   `runtime/program_plan_summary.mbt:273`, and generalised "counted
+   but never run". The execution lives in a **different file**:
+   `runtime/runtime.mbt:46-49` calls `start_task(...)`, which lands in
+   `runtime/program_runtime_effect_tasks.mbt:22` and calls `start(...)`.
+   The summary counter is a parallel diagnostic pass, not the
+   execution path.
+2. *"There is no sync→async bridge, so a sync `update` cannot read a
+   file."* True of `moonbitlang/async` — and irrelevant, because
+   `moonbitlang/x/fs` is a **synchronous** filesystem API that was
+   importable the entire time. It was one `moon.mod` line away.
+
+The shared failure is worth more than either bug: **a search that
+finds one instance of something and concludes the category is absent.**
+Claim 1 read a counter as a verdict; claim 2 read "the async package
+can't do it" as "the toolchain can't do it" without asking whether a
+synchronous package existed. Upstream already answered that question —
+MoUI's own `backend/common/services/native/moon.pkg` imports
+`moonbitlang/x/fs` with `supported_targets = "native"`. Sync disk I/O
+on Windows is supported, not a workaround.
+
+**Two environment traps, neither guessable.**
+
+- `app_moui` is its **own module** (`riantr/moonbit_labeler/app_moui`,
+  own `moon.mod`), not a package of the repo-root module. Adding the
+  dependency to the root `moon.mod` changes nothing here; the error
+  even says "its containing module is not imported by
+  riantr/moonbit_labeler/app_moui".
+- `moonbitlang/async/fs` and `moonbitlang/x/fs` both want the bare
+  alias `fs`, and MoonBit rejects the collision outright ("Conflicting
+  import alias"). It needs an explicit `"moonbitlang/x/fs" @xfs`.
+- The `moonbitlang/x` version must **match MoUI's own pin** (`0.5.1`).
+  Forcing a newer `0.5.5` fails in *MoUI's* code, not ours:
+  `backend/common/services/native/filesystem_services.mbt:53`
+  annotates `@fs.read_dir` as `Array[String]` while 0.5.5 returns
+  `ArrayView[String]`. A version bump that looks like your bug and is
+  not.
+
+**What landed.** New `app_moui/disk_io.mbt`: `extension_of`,
+`media_kind`, `join_path`, `strip_extension`, `label_path_for`,
+`sibling_label_folder`, `name_less`, `scan_folder`, `read_label_text`,
+`write_label_text`, `load_label`. Wired into `LoadFolder`,
+`FolderLoaded`, `ReadLabelFor`, `SaveLabel` and — the part that makes
+it *reachable* — `SelectIndex`, which the sidebar's image rows already
+dispatch since 5.17. `probe_image_dimensions_path` is now a real
+synchronous read too, replacing a stub that unconditionally returned
+`None`.
+
+**Decisions worth recording.**
+
+- **The label path convention was recovered, not guessed.** The shipped
+  dataset pairs `Image@skin/BIOMEDICA_P0_JCAS-4-2-g001.jpg` with
+  `Label@skin/BIOMEDICA_P0_JCAS-4-2-g001.json` — extension stripped,
+  *not* `.jpg.json` appended. There is a test asserting exactly these
+  filenames.
+- **Saving targets `model.labelPath`, not a re-derived path.**
+  `labelPath` is empty until an image has actually been read, so Save
+  before that cannot invent a filename and drop a stray JSON into the
+  working directory. There is a test for the refusal.
+- **Missing label ≠ empty label.** No file resets the canvas and says
+  "no label"; a file that exists but fails to parse returns `Some`
+  with its `raw_json` intact, so a re-save cannot destroy a label this
+  build cannot read. An un-annotated image is a normal outcome, not a
+  red toast.
+- **Parent directories are not auto-created.** Writing into a
+  `Label@...` folder that does not exist is a layout error worth
+  surfacing.
+
+**MoonBit's `String.<` is length-first, not lexicographic.** Measured,
+not assumed: `"bb" < "ccc"` is `true`. This was found by a failing
+index assertion — sorting the shipped dataset put
+`BIOMEDICA_P0_JCAS-4-2-g001.jpg` (30 chars) ahead of the `2-` series
+(31 chars). `name_less` is therefore an explicit lexicographic
+comparator. **Neither order is universally right**: length-first is
+better for numbered filenames (`img1, img2, img10`), lexicographic for
+series names, and this dataset is series-named. There is a test pinning
+MoonBit's behaviour so nobody re-derives it; if a future toolchain
+makes `<` lexicographic that test fails loudly, which is when
+`name_less` can be deleted.
+
+**`media_kind` returns `MediaKind?`, not a third `Other` variant.**
+`MediaKind` already existed in `app.mbt` and is matched exhaustively,
+so widening it to carry a non-media case would force every one of those
+matches to grow a dead arm. "There is no media kind" and "the kind is
+`Other`" are different claims and only the first is true.
+
+**What is still not done, honestly.**
+
+- **Image pixels still do not load.** The *label* half works; the
+  *pixel* half is a second step after the read (`decode_image_bytes`
+  plus an `ImageCache::load`) and neither is wired to `SelectIndex`. So
+  selecting a real image updates annotations and the status line while
+  the canvas keeps showing the previous pixels.
+- **`ScanClasses` is still a no-op — for a real reason now.** There is
+  no class source in the shipped dataset: `data/Label@skin` holds one
+  `.json` and no `classes.txt`, so there is no on-disk convention to
+  recover. Deriving classes from the distinct `type` values across
+  labels is a plausible design, but shipping it as though it were the
+  recovered convention would misrepresent it.
+- **`LoadFolder` has no UI trigger.** There is no folder picker in this
+  app (the `[File]` button was removed in 5.9 as a dead control), so
+  scanning is currently reachable programmatically only. `SaveLabel`
+  likewise has no toolbar button yet — the handler works and is
+  tested, but nothing dispatches it.
+- **`ImageEntry.size_bytes` / `VideoEntry.frame_count` are always 0.**
+  `x/fs` exposes no stat or size call, and inventing a number the UI
+  could display would be worse than reporting none.
+- **VOC/YOLO export remains unimplemented.**
+
+**The screenshot is not the evidence here.** This phase changes the
+data layer only — the view tree is untouched — so the smoke capture
+cannot show it either way. Per the 5.15 rule the evidence is the test
+suite, and it is unusually strong: the folder scan, the label parse
+(9 annotations from the real shipped JSON), the image-header probe, and
+the select→load round trip all run against `data/`. A synthetic
+fixture written by the same code under test would have agreed with it
+by construction, which is exactly what it would not have proved.
+
+One test-authoring lesson from this phase, because it cost a cycle: a
+guard-less `annotations[0]` **panics**, and a panic kills the whole
+blackbox executable — silently discarding the results of every test
+that ran before it. An earlier draft reported "1 failed" while five
+tests had actually failed, because the run died before printing a
+summary. Every index in the new tests is length-guarded now.
+
+**Tests (347/347, +29).** Pure helpers (extension parsing incl.
+dotfiles and double extensions, case folding, path joining, the
+`Image@`/`Label@` sibling rule); disk round-trips (write→read,
+unwritable target, missing file vs unreadable directory); the shipped
+`data/Image@skin` scan and `data/Label@skin` JSON parse; the real-image
+header probe; and the handler wiring end to end — `LoadFolder` on the
+real folder, `SelectIndex` loading the real label, the no-label row
+staying clean, 5.18's no-carry-over invariant surviving the load, class
+id resolution both ways, `SaveLabel` writing and re-parsing, and Save
+refusing without a known path.
+
+**Verification:** 347/347 tests pass (318 → 347); `moon check
+--target native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags none of the touched files. Smoke exits 0 and
+the per-window capture shows the UI unchanged (toolbar, shortcut row,
+sidebar, canvas annotations all intact); the full-screen capture came
+back black, which is the harness flakiness 5.21 recorded, and the
+sidebar rows are still outside the per-window capture's reach.
 
 ## Stdio JSON-RPC bridge
 

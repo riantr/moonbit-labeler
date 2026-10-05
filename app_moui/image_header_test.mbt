@@ -294,21 +294,15 @@ test "probe_image_dimensions — PNG with wrong chunk type returns None" {
 // ─────────────────────────────────────────────────────────────────
 
 ///|
-/// Phase 5.6.x — the sync wrapper returns `None` on a
-/// non-existent path. This documents the contract: the sync
-/// path is the contract surface that `LoadImage(path)`'s
-/// `Effect::task.start` callback invokes. Until MoonBit ships
-/// a public sync→async bridge, the wrapper always returns
-/// `None` (the `app.mbt` handler treats this as a
-/// LoadImageFailed with a clear error message — the user sees
-/// a clean error, not a crash).
+/// Phase 5.22 — the sync wrapper returns `None` on a non-existent
+/// path. Still true, and still the contract: a missing file is an
+/// ordinary outcome the caller reports, not a crash.
 ///
-/// When a real path is provided (e.g. a known-good file in the
-/// repo's `data/` dir), the wrapper still returns `None` because
-/// the internal sync helper can't actually run the async
-/// `@fs.read_file` — see `image_header.mbt` doc for the three
-/// paths forward (async update fn / public coroutine.spawn /
-/// documented Pointer FFI).
+/// The old comment here said more than that — it claimed the wrapper
+/// returned `None` for *every* path, because "the internal sync helper
+/// can't actually run the async `@fs.read_file`". That was wrong.
+/// `moonbitlang/x/fs` is a synchronous fs API; see `disk_io.mbt` and
+/// the test below, which reads a real image from `data/`.
 test "probe_image_dimensions_path — non-existent path returns None" {
   let result : (Int, Int)? = probe_image_dimensions_path(
     "/this/path/definitely/does/not/exist.jpg",
@@ -317,11 +311,34 @@ test "probe_image_dimensions_path — non-existent path returns None" {
 }
 
 ///|
-/// Phase 5.6.x — sync wrapper is callable from a sync context
-/// (this is the entire point of the 5.6.x effort: bridge the
-/// MoUI sync `Effect::task.start` callback into the async I/O
-/// world). The test verifies the function compiles + runs
-/// without raising, even when it returns None.
+/// Phase 5.22 — **the sync probe works on a real file.** This is the
+/// replacement for the claim that it always returned `None`: it reads
+/// the bytes off disk synchronously and parses a real JPEG header.
+///
+/// Run against the shipped `data/Image@skin` sample. A synthetic
+/// header built by this same test file could not distinguish "reads
+/// the file" from "parsed the bytes I just handed it" — the read is
+/// the part under test, so the file has to already be on disk.
+test "probe_image_dimensions_path — reads a real image off disk (5.22)" {
+  let path = "../data/Image@skin/BIOMEDICA_P0_JCAS-4-2-g001.jpg"
+  match probe_image_dimensions_path(path) {
+    None => assert_true(false)
+    Some((w, h)) => {
+      // A real scan thumbnail, not a 1x1 placeholder: the whole point
+      // is that these came from the file's SOF marker.
+      assert_true(w > 100)
+      assert_true(h > 100)
+    }
+  }
+}
+
+///|
+/// Phase 5.22 — the sync wrapper is callable from a sync context and
+/// degrades cleanly on a path that does not exist. This used to be
+/// the *whole* of what the 5.6.x effort demonstrated, because the
+/// function could not do anything else; now that it really reads
+/// (`test "probe_image_dimensions_path — reads a real image off disk"`),
+/// this one only has to confirm it still does not raise.
 test "probe_image_dimensions_path — sync call returns cleanly" {
   let result : (Int, Int)? = probe_image_dimensions_path("dummy.jpg")
   inspect(result, content="None")

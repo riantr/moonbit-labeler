@@ -22,17 +22,32 @@
 //   caller responsibility: the app reads the header itself and
 //   dispatches `ImageLoaded(path, w, h)` once it knows the size.
 //
-// Phase 5.6.x notes (async→sync bridge investigation):
-//   MoUI's `Effect::task.start` callback is sync AND the update fn
-//   is sync. MoonBit 0.21.x doesn't expose a public sync→async
-//   bridge — the `coroutine.spawn` helper lives in
-//   `moonbitlang/async/internal/coroutine` which can't be imported
-//   externally (internal packages are not part of the public
-//   surface). External "C" FFI to libc `fopen`/`fread`/`fclose`
-//   is theoretically possible but MoonBit 0.1.20260904's native
-//   FFI type namespace rejects `Pointer` / `@ffi.Pointer` / bare
-//   aliases as "type undefined" — the docs for the FFI builtin
-//   types haven't shipped yet.
+// Phase 5.6.x notes (async→sync bridge investigation) —
+//   **CORRECTED IN PHASE 5.22. The investigation below reached the
+//   wrong answer, and the way it reached it is the interesting part.**
+//
+//   What it established, correctly: MoUI's `Effect::task.start`
+//   callback is sync, `update` is sync, and MoonBit exposes no public
+//   sync→async bridge — `coroutine.spawn` lives in
+//   `moonbitlang/async/internal/coroutine`, and internal packages are
+//   not importable externally. The `extern "C"` Pointer idea was also
+//   genuinely a dead end in this toolchain.
+//
+//   Where it went wrong: it concluded the file read was impossible, so
+//   it never questioned whether the *premise* was right — that a
+//   synchronous fs read had to come from the async package. It does
+//   not. `moonbitlang/x/fs` is synchronous, and MoUI itself already
+//   depends on it on this exact platform
+//   (`backend/common/services/native/moon.pkg` imports it with
+//   `supported_targets = "native"`). It was one `moon.mod` line away
+//   the whole time.
+//
+//   The load-bearing mistake: **a search that finds one instance of
+//   something and concludes the category is absent.** The same
+//   failure made `Effect::Task` look dead (found only a counter, in
+//   the diagnostic summary pass, not the execution path). Both were
+//   re-checked in 5.22 and both were wrong. Details and the two
+//   environment traps are in `disk_io.mbt`.
 //
 //   Pragmatic call: `probe_image_dimensions_path` uses `try?` to
 //   wrap `@fs.read_file` — even though that's "calling async from
@@ -123,16 +138,13 @@ pub fn decode_image_metadata(data : Bytes) -> (Int, Int, Int, String)? {
 /// found, permission denied, malformed header, unrecognised
 /// format).
 ///
-/// Implementation note: `@fs.read_file` is `async fn` and we're
-/// calling it from a sync context. In MoonBit 0.1.20260904 the
-/// pattern `try? @fs.read_file(path)` from inside a sync fn is
-/// accepted at check time and resolves at runtime via the libuv
-/// threadpool's sync fast-path for regular files. The MoUI
-/// `Effect::task.start` callback invokes this synchronously
-/// (which is the only signature MoUI exposes), so any minor
-/// blocking I/O latency is absorbed by the task lifecycle —
-/// the dispatch returns ImageLoaded / LoadImageFailed through
-/// the standard `send` channel.
+/// Implementation note: **rewritten in Phase 5.22 — the note that used
+/// to live here was wrong.** It claimed `try? @fs.read_file(path)`
+/// from a sync fn "resolves at runtime via the libuv threadpool's sync
+/// fast-path for regular files". That is not a thing; the pattern is
+/// calling an `async fn` from sync code. The real answer was a
+/// different package entirely (`moonbitlang/x/fs`, synchronous, see
+/// `disk_io.mbt`), not a clever use of the async one.
 ///
 /// 5.6.x: this stays the implementation until one of these lands:
 ///
@@ -145,23 +157,22 @@ pub fn decode_image_metadata(data : Bytes) -> (Int, Int, Int, String)? {
 ///       and bare alias names; all rejected at check time with
 ///       "type undefined").
 pub fn probe_image_dimensions_path(path : String) -> (Int, Int)? {
-  // 5.6.x: this sync wrapper exists to satisfy MoUI's
-  // sync Effect::task.start signature. The `@fs.read_file` call
-  // here is async — we can't directly invoke it from sync code in
-  // MoonBit 0.1.20260904. The pragmatic workaround is to launch a
-  // short-lived sync probe that uses a blocking syscall via the
-  // moon runtime's C runtime — but the FFI Pointer type is not
-  // yet documented for `extern "C"` declarations. So we ship the
-  // async helper as the only path, and the sync wrapper is a
-  // documented stub that always returns None — the LoadImage
-  // dispatch in app.mbt catches this and reports
-  // LoadImageFailed so the user sees a clean error rather than a
-  // crash.
-  //
-  // Once one of (a/b/c) in the doc comment above lands, this
-  // function is the only line that needs to change.
-  ignore(path)
-  None
+  // Phase 5.22 — this is a real implementation now. It used to be a
+  // documented stub that unconditionally returned `None`, on the
+  // theory that a sync function could not read a file. That theory
+  // was half right and half nonsense: `moonbitlang/async` really does
+  // lack a public sync->async bridge, but `moonbitlang/x/fs` is a
+  // **synchronous** filesystem API and was importable the whole time
+  // — it just was not on the dependency surface, because nobody
+  // added it. See `disk_io.mbt` for the full correction, the `@xfs`
+  // alias collision, and the `moonbitlang/x` version pin that has to
+  // match MoUI's own.
+  // `try ... catch`, not `match`: matching a Result needs the
+  // enclosing function to raise, and bare `Ok` / `Err` in this
+  // package resolve to MoUI's `OpResult` constructors, not the
+  // builtin ones.
+  let bytes = @xfs.read_file_to_bytes(path) catch { _ => return None }
+  probe_image_dimensions(bytes)
 }
 
 ///|

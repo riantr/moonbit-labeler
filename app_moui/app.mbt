@@ -17,7 +17,7 @@
 pub(all) enum MediaKind {
   Image
   Video
-} derive(Debug)
+} derive(Debug, Eq)
 
 ///|
 pub(all) enum Mode {
@@ -104,7 +104,7 @@ pub(all) enum ToastKind {
   Info
   Warn
   Error
-} derive(Debug)
+} derive(Debug, Eq)
 
 ///|
 pub(all) enum Layer {
@@ -320,7 +320,7 @@ pub fn Model::new() -> Model {
     // screenshot demonstrates the full annotation rendering
     // pipeline (image + annotation bodies + binding arrows +
     // label text) without requiring a real .json label file
-    // + a working sync→async file-read bridge. The synthetic
+    // to be read at startup. The synthetic
     // annotations cover all 3 shapes (Rect, Polygon, Keypoint)
     // + 1 binding between the Rect and Keypoint so the binding
     // arrow + dashed-centroid-line render is exercised too.
@@ -336,9 +336,9 @@ pub fn Model::new() -> Model {
     // default lets the smoke screenshot demonstrate the full
     // `imageSource → DrawImage → cache hit → paint_image →
     // window presenter` pipeline on first paint, without
-    // needing a real image file on disk + a working
-    // sync→async file-read bridge (both still blocked —
-    // see image_header.mbt doc).
+    // needing the image to be decoded from disk first (the
+    // decode-to-cache step is still unwired — see
+    // image_header.mbt).
     //
     // Set imageSource back to "" to see the Phase 5.2
     // placeholder StrokeRect instead (imageSource == "").
@@ -408,8 +408,7 @@ pub fn default_demo_classes() -> Array[ClassEntry] {
 /// rendering pipeline (Rect fill+stroke, Polygon fill+stroke+vertex
 /// dots, Keypoint fill+stroke, label text at centroid) in the
 /// smoke screenshot without needing a real .json label file on
-/// disk + a working sync→async file-read bridge (both still
-/// blocked in moon 0.1.20260904 — see image_header.mbt doc).
+/// disk to be loaded at startup.
 ///
 /// Coordinates are in image-natural space (the synthetic
 /// 200×200 magenta test image from Phase 5.2). IDs match
@@ -700,22 +699,39 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
       } else {
         ({ ..model, folder: path, }, @moui.Effect::none())
       }
-    LoadFolder(_path) => (model, @moui.Effect::none())
+    // Phase 5.22 — really scans the folder. Was a no-op stub on the
+    // (wrong) theory that `Effect::Task` never runs; it does, and
+    // `moonbitlang/x/fs` reads the directory synchronously anyway, so
+    // nothing async is needed. See `disk_io.mbt` for the full
+    // correction.
+    LoadFolder(path) =>
+      match scan_folder(path) {
+        None =>
+          (
+            {
+              ..model,
+              toastMessage: Some("Folder load failed: " + path),
+              toastKind: Error,
+            },
+            @moui.Effect::none(),
+          )
+        Some(scan) =>
+          (
+            folder_loaded(
+              model,
+              scan.images,
+              scan.videos,
+              path,
+              scan.label_folder,
+            ),
+            @moui.Effect::none(),
+          )
+      }
+    // Delegated so the programmatic route and the scan route cannot
+    // drift: both go through `folder_loaded`.
     FolderLoaded(images, videos, folder, label_folder) =>
       (
-        {
-          ..model,
-          folder,
-          labelFolder: label_folder,
-          images,
-          videos,
-          currentIndex: if images.length() > 0 {
-            0
-          } else {
-            -1
-          },
-          statusMessage: "Loaded",
-        },
+        folder_loaded(model, images, videos, folder, label_folder),
         @moui.Effect::none(),
       )
     LoadFolderFailed(_path, err) =>
@@ -727,6 +743,15 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         },
         @moui.Effect::none(),
       )
+    // Phase 5.22 — still a no-op, and now for an honest reason rather
+    // than a false one. It used to be "I/O is impossible"; disk reads
+    // work fine now. The actual blocker is that **there is no class
+    // source in the dataset** — `data/Label@skin` holds one .json and
+    // no classes file, so there is no on-disk convention to recover.
+    // Deriving classes from the distinct `type` values across every
+    // label is a reasonable design, but it is a *choice*, and shipping
+    // it as though it were the recovered convention would misrepresent
+    // it. Deferred deliberately.
     ScanClasses(_path) => (model, @moui.Effect::none())
     ClassesLoaded(classes) => ({ ..model, classes, }, @moui.Effect::none())
     SetMode(mode) =>
@@ -1496,10 +1521,15 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
     // Phase 5.19 — the class list was half-built: `AddClass` appended
     // an entry, and rename / delete / set-default were all no-op
     // stubs. None of them need I/O — they are pure model edits, so
-    // unlike `ReadLabelFor` / `LoadFolder` / `ScanClasses` (blocked:
-    // `Effect::Task` is never executed by the runtime, so a sync
-    // `update` cannot read a file) there was never a reason for them
-    // to be inert.
+    // there was never a reason for them to be inert.
+    //
+    // The comment here used to say that unlike `ReadLabelFor` /
+    // `LoadFolder` / `ScanClasses` these were not "blocked: Effect::Task
+    // is never executed by the runtime, so a sync update cannot read a
+    // file". **That blocker was a misreading** — see `disk_io.mbt`.
+    // The I/O ops are implemented as of 5.22; the class ops were
+    // simply never I/O-bound, which was the real and much milder
+    // reason.
     //
     // Two layers of "which class is active", deliberately distinct:
     //
@@ -1623,8 +1653,12 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         @moui.Effect::none(),
       )
     DismissToast => ({ ..model, toastMessage: None, }, @moui.Effect::none())
-    SelectIndex(idx) => (state_for_image_change(model, idx), @moui.Effect::none())
-    ReadLabelFor(_path) => (model, @moui.Effect::none())
+    // Phase 5.22 — was `state_for_image_change(model, idx)`. Selecting an
+    // image now also reads its label off disk, which is what makes the
+    // disk layer reachable at all: this is the message the sidebar's
+    // image rows dispatch (Phase 5.17).
+    SelectIndex(idx) => (image_selected(model, idx), @moui.Effect::none())
+    ReadLabelFor(path) => (read_label_into(model, path), @moui.Effect::none())
     LabelLoaded(label, path, ok) =>
       (
         {
@@ -1636,7 +1670,18 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         },
         @moui.Effect::none(),
       )
-    SaveLabel => (model, @moui.Effect::none())
+    // Phase 5.22 — really writes the file. Was a no-op stub.
+    SaveLabel => {
+      let (path, ok) = save_label_to_disk(model)
+      (
+        {
+          ..model,
+          label: { raw_json: model.label.raw_json, dirty: false, },
+          statusMessage: if ok { "Saved " + path } else { "Save failed" },
+        },
+        @moui.Effect::none(),
+      )
+    }
     LabelSaved(path, ok) =>
       (
         {
@@ -1672,16 +1717,13 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
       )
     LoadImage(path) =>
       // Phase 5.6.x — dispatch an Effect::task that probes the
-      // image header. Currently the sync wrapper
-      // probe_image_dimensions_path returns None because MoonBit
-      // 0.1.20260904 + MoUI 0.1.12 don't expose a public
-      // sync→async bridge (see image_header.mbt doc for the
-      // three paths forward: async update fn, public
-      // coroutine.spawn, or documented Pointer FFI). Until one
-      // of those lands, LoadImage dispatches a transient
-      // LoadImageFailed so the user sees a clean error rather
-      // than a crash, and the loadable image path goes through
-      // LoadTestImage (still supported as a deprecated shim).
+      // image header. Phase 5.22: `probe_image_dimensions_path` is a
+      // real synchronous implementation now (it was a stub that
+      // always returned `None`), so the header probe no longer needs
+      // a coroutine. What is still missing is the *next* step —
+      // decoding the pixels into the `ImageCache` — so the task
+      // below still reports `LoadImageFailed` rather than pretending
+      // to load. See `image_header.mbt` and `disk_io.mbt`.
       (
         { ..model, statusMessage: "Loading " + path + "...", },
         @moui.Effect::task(key="image-header-probe:" + path, start=fn(send) {
@@ -2095,16 +2137,21 @@ fn default_class_id(model : Model) -> String {
 /// nothing on the new one.
 ///
 /// **Honesty note on `imageSource`.** The pixels are *not* reloaded
-/// here, because nothing in MoUI 0.1.12 can: `Effect::Task` is
+/// here. This note used to say that was impossible — "`Effect::Task` is
 /// declared and counted in the effect-plan summary but never executed
-/// by the runtime, so there is no async path out of a sync `update`
-/// to read a file with. The previous image therefore stays on screen.
-/// That is the lesser evil — stale pixels are visibly stale, whereas
-/// misattributed *annotations* are silent — but it is a limitation,
-/// not a working feature, and it is why this function resets the data
-/// but not the source. Fixing it means implementing `ReadLabelFor` /
-/// `LoadFolder` (both still no-op stubs) once a sync->async bridge
-/// exists.
+/// by the runtime, so there is no async path out of a sync `update` to
+/// read a file with." **That was a misreading and is now corrected**
+/// (see `disk_io.mbt`): `Effect::Task` *is* executed, and `x/fs` reads
+/// synchronously. The label half is therefore implemented as of 5.22 —
+/// `image_selected` loads it. The *pixel* half is still not: decoding
+/// an image is a second step after the read (`decode_image_bytes` plus
+/// an `ImageCache::load`, neither wired to a `SelectIndex`), and until
+/// that exists the previous image's pixels stay on screen.
+///
+/// That is still the lesser evil — stale pixels are visibly stale,
+/// whereas misattributed *annotations* are silent — but it is now a
+/// plain unfinished feature rather than an impossibility, and the
+/// annotations are correct.
 pub fn state_for_image_change(model : Model, idx : Int) -> Model {
   let name : String = if idx >= 0 && idx < model.images.length() {
     model.images[idx].name
@@ -2136,6 +2183,129 @@ pub fn state_for_image_change(model : Model, idx : Int) -> Model {
     staticLayerDirty: true,
     dynamicLayerDirty: true,
   }
+}
+
+///|
+/// Phase 5.22 — apply a folder scan to the model. Shared by
+/// `LoadFolder` (which scans) and `FolderLoaded` (which receives an
+/// already-scanned result), so the two cannot disagree about what
+/// "loaded" means.
+///
+/// `currentIndex` becomes 0 for a non-empty folder and **-1** for an
+/// empty one. -1 is the sentinel `state_for_image_change` and the
+/// sidebar already treat as "no image selected", so an empty folder
+/// does not leave row 0 falsely highlighted.
+pub fn folder_loaded(
+  model : Model,
+  images : Array[ImageEntry],
+  videos : Array[VideoEntry],
+  folder : String,
+  label_folder : String,
+) -> Model {
+  let n : Int = images.length()
+  let loaded = state_for_image_change(model, if n > 0 { 0 } else { -1 })
+  {
+    ..loaded,
+    folder,
+    labelFolder: label_folder,
+    images,
+    videos,
+    statusMessage: "Loaded " +
+    n.to_string() +
+    " images, " +
+    videos.length().to_string() +
+    " videos",
+  }
+}
+
+///|
+/// Phase 5.22 — load one image's label file off disk into the model.
+///
+/// Pure in signature only: it reads, but it reads nothing mutable and
+/// returns the whole new Model, so every branch is still assertable.
+/// Both the "there is a file" and "there is no file" paths are
+/// ordinary outcomes — an un-annotated image has no label file, and
+/// treating that as an error would put a red toast on screen every
+/// time a user clicks an unlabelled scan.
+///
+/// **Missing file is not the same as empty file.** No file resets the
+/// canvas and says "No label"; a file that exists but fails to parse
+/// arrives through `load_label`'s `Some` arm with its `raw_json`
+/// intact, so the text is still there to be re-saved rather than
+/// silently overwritten with an empty annotation set.
+pub fn read_label_into(model : Model, image_path : String) -> Model {
+  let path : String = label_path_for(image_path, model.labelFolder)
+  let image_name : String = path_basename(image_path)
+  match load_label(path, model.classes) {
+    None =>
+      {
+        ..model,
+        label: { raw_json: "{}", dirty: false, },
+        labelPath: path,
+        loadedFromDisk: false,
+        annotations: [],
+        bindings: [],
+        selectedId: None,
+        dragState: None,
+        staticLayerDirty: true,
+        dynamicLayerDirty: true,
+        statusMessage: image_name + ": no label",
+      }
+    Some((label, annotations, bindings)) =>
+      {
+        ..model,
+        label,
+        labelPath: path,
+        loadedFromDisk: true,
+        annotations,
+        bindings,
+        selectedId: None,
+        dragState: None,
+        staticLayerDirty: true,
+        dynamicLayerDirty: true,
+        statusMessage: image_name +
+        ": " +
+        annotations.length().to_string() +
+        " annotations",
+      }
+  }
+}
+
+///|
+/// Phase 5.22 — selecting an image loads its label. This is what
+/// makes the disk read **reachable**: `SelectIndex` is already wired
+/// to the sidebar's image rows (Phase 5.17), so without this the read
+/// code would be correct and unreachable.
+///
+/// 5.18 established that switching images must not carry the previous
+/// image's data, so the reset runs *first* and the load overwrites
+/// only what it owns. A bad index leaves the reset in place and loads
+/// nothing — there is no image to read a label for.
+pub fn image_selected(model : Model, idx : Int) -> Model {
+  let reset : Model = state_for_image_change(model, idx)
+  if idx >= 0 && idx < reset.images.length() {
+    read_label_into(reset, reset.images[idx].path)
+  } else {
+    reset
+  }
+}
+
+///|
+/// Phase 5.22 — write the current label back to disk.
+///
+/// Returns `(path, ok)` so the caller can report precisely. Saves to
+/// `model.labelPath`, the path `read_label_into` resolved — **not** to
+/// a freshly derived one. That is the safety property: `labelPath` is
+/// empty until an image has actually been read, so pressing Save
+/// before that cannot invent a filename and drop a stray JSON into the
+/// working directory.
+pub fn save_label_to_disk(model : Model) -> (String, Bool) {
+  if model.labelPath.length() == 0 {
+    return ("", false)
+  }
+  let path : String = model.labelPath
+  let ok : Bool = write_label_text(path, serialize_label_text(model))
+  (path, ok)
 }
 
 ///|

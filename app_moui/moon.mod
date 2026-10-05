@@ -6,6 +6,7 @@ import {
   "wzzc-dev/moui@0.1.12",
   "moonbitlang/async@0.22.4",
   "riantr/moonbit_image@0.3.5",
+  "moonbitlang/x@0.5.1",
 }
 
 readme = "README.mbt.md"

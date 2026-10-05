@@ -58,9 +58,7 @@ let image_cache : Ref[ImageCache] = { val: ImageCache::new() }
 /// the smoke screenshot demonstrates the full
 /// `model.imageSource → DrawImage → cache hit → blit →
 /// windows_skia presenter → pixels on screen` pipeline
-/// without needing a real image file on disk + a working
-/// sync→async file-read bridge (both still blocked in moon
-/// 0.1.20260904 — see image_header.mbt doc).
+/// without needing a real image file pre-injected into the cache.
 ///
 /// Returns `true` on success, `false` if the cache rejected
 /// the bytes (mismatched length, zero width/height, etc).
