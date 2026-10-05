@@ -2038,6 +2038,74 @@ current and every row stays Ghost. The highlight only appears after
 a click, which is a behaviour no screenshot of a cold start can
 show.
 
+### Phase 5.18 — switching images must not carry the previous image's data
+
+**The bug 5.17 introduced.** 5.17 made the sidebar's folder rows
+dispatch `SelectIndex`, which turned a latent bug into the first thing
+a user does. The handler moved `currentIndex` and cleared
+`selectedId` — nothing else. So **the previous image's annotations,
+bindings and label stayed on screen under the new image's name**, and
+in a labelling tool those annotations would be saved against the new
+file. Annotations belong to an image, not to the application.
+
+**What landed.** `pub fn state_for_image_change(model, idx) -> Model`
+in `app.mbt`, which `SelectIndex` now delegates to. It resets:
+
+- per-image **data** — `annotations`, `bindings`, `label`,
+  `labelPath`, `loadedFromDisk`;
+- work in progress on the old image — `draftPoints`,
+  `bindingFromId`, `mode`, `selectedId`, both cursor positions;
+- the **viewport** — `pan`, `zoom`, `fitMode`. A zoom into one scan is
+  meaningless on the next, and carrying it over reads as a rendering
+  fault.
+
+And it deliberately **keeps** the project-level state: `folder`,
+`images`, `videos`, `labelFolder`, `classes`, `activeClassId`,
+`classType`. The class list is a property of the project, and 5.17
+gave the user a way to pick a class one phase earlier — dropping
+`activeClassId` on every image switch would regress a feature a week
+old. There is a test for exactly that half, because "reset
+everything" is the obvious wrong implementation.
+
+**`imageSource` is NOT reset, and that is a stated limitation.** The
+pixels are not reloaded, because nothing in MoUI 0.1.12 can:
+
+> `Effect::Task` is declared (`Effect::task`) and counted in the
+> effect-plan summary (`program_plan_summary.mbt:273`), and it is
+> **never executed anywhere in the tree** — those three are the only
+> occurrences. There is therefore no async path out of a sync
+> `update` to read a file with.
+
+That is a sharper statement than the one in `image_header.mbt`, which
+attributes the blockage to MoonBit's language (no sync→async bridge,
+FFI pointer types rejected). Both are true, but the MoUI-side one is
+the binding constraint and it is the one worth knowing. It also
+settles the question for `ReadLabelFor`, `LoadFolder` and
+`ScanClasses` — all three are no-op stubs, and all three are blocked
+for the same reason, so no amount of cleverness in `update` will wire
+them.
+
+Stale pixels are the lesser evil: they are visibly the same image,
+whereas misattributed *annotations* are silent.
+
+**Tests (306/306, +4).** Per-image data cleared (the "cleared"
+assertions are real — `Model::new()` already ships three demo
+annotations, so this would have failed before); in-progress drawing
+state and viewport reset; project-level state surviving; and an
+out-of-range or `-1` index being safe and reporting `"No image"`
+rather than claiming a file that is not there.
+
+**Incidental.** `ClassType` gained `derive(Eq)`, so the survival test
+can assert on it. It is a fieldless enum like `Mode` and `Shape`, both
+of which already derived `Eq`; this brings it in line rather than
+working around it with a `match` in the test.
+
+**Verification:** 306/306 tests pass (302 -> 306); `moon check
+--target native` 0 errors (185 pre-existing warnings, unchanged);
+`moon fmt --check` flags neither touched file. Smoke
+`_build/phase5_18_final._window._window.png` is unchanged from 5.17 —
+correct, since the demo model never switches images.
+
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as

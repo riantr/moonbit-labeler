@@ -97,7 +97,7 @@ pub(all) enum ClassType {
   Object
   Tag
   Binding
-} derive(Debug)
+} derive(Debug, Eq)
 
 ///|
 pub(all) enum ToastKind {
@@ -1395,17 +1395,7 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         @moui.Effect::none(),
       )
     DismissToast => ({ ..model, toastMessage: None, }, @moui.Effect::none())
-    SelectIndex(idx) =>
-      (
-        {
-          ..model,
-          currentIndex: idx,
-          selectedId: None,
-          staticLayerDirty: true,
-          dynamicLayerDirty: true,
-        },
-        @moui.Effect::none(),
-      )
+    SelectIndex(idx) => (state_for_image_change(model, idx), @moui.Effect::none())
     ReadLabelFor(_path) => (model, @moui.Effect::none())
     LabelLoaded(label, path, ok) =>
       (
@@ -1847,6 +1837,77 @@ fn default_class_id(model : Model) -> String {
     }
   }
   ""
+}
+
+///|
+/// Phase 5.18 — what switching to a different image means.
+///
+/// Phase 5.17 made the sidebar's folder rows dispatch `SelectIndex`,
+/// which turned a latent bug into the first thing a user does. The
+/// handler only moved `currentIndex` and cleared `selectedId`, so
+/// **the previous image's annotations, bindings and label stayed on
+/// screen under the new image's name**. In a labelling tool that is
+/// the expensive kind of wrong: those annotations would be saved
+/// against the new file.
+///
+/// Annotations belong to an image, not to the application, so this is
+/// the only correct answer. Note what is deliberately **kept**:
+///
+///  - `folder`, `images`, `videos`, `labelFolder` — the project's
+///    file list.
+///  - `classes`, `activeClassId`, `classType` — the class list is a
+///    property of the project, not of an image, and 5.17 just gave
+///    the user a way to pick one. Losing that on every image switch
+///    would regress a feature one phase old.
+///  - `imageSource` — see the honesty note below.
+///
+/// The in-progress drawing state (`draftPoints`, `bindingFromId`,
+/// `mode`, the cursor, the viewport) is reset too: a rubber-band
+/// half-drawn on the old image, or a keypoint tool still armed, means
+/// nothing on the new one.
+///
+/// **Honesty note on `imageSource`.** The pixels are *not* reloaded
+/// here, because nothing in MoUI 0.1.12 can: `Effect::Task` is
+/// declared and counted in the effect-plan summary but never executed
+/// by the runtime, so there is no async path out of a sync `update`
+/// to read a file with. The previous image therefore stays on screen.
+/// That is the lesser evil — stale pixels are visibly stale, whereas
+/// misattributed *annotations* are silent — but it is a limitation,
+/// not a working feature, and it is why this function resets the data
+/// but not the source. Fixing it means implementing `ReadLabelFor` /
+/// `LoadFolder` (both still no-op stubs) once a sync->async bridge
+/// exists.
+pub fn state_for_image_change(model : Model, idx : Int) -> Model {
+  let name : String = if idx >= 0 && idx < model.images.length() {
+    model.images[idx].name
+  } else {
+    ""
+  }
+  {
+    ..model,
+    currentIndex: idx,
+    // Per-image data — must not follow the user to another file.
+    annotations: [],
+    bindings: [],
+    label: { raw_json: "{}", dirty: false, },
+    labelPath: "",
+    loadedFromDisk: false,
+    // Work in progress on the previous image.
+    selectedId: None,
+    mode: Select,
+    draftPoints: [],
+    bindingFromId: None,
+    cursorImgPt: None,
+    cursorCanvasPt: None,
+    // Viewport is per-image: a zoom into one scan is meaningless on
+    // the next, and carrying it over reads as a rendering fault.
+    pan: { x: 0.0, y: 0.0, },
+    zoom: 1.0,
+    fitMode: @core.ImageFit::Contain,
+    statusMessage: if name == "" { "No image" } else { "Image: " + name },
+    staticLayerDirty: true,
+    dynamicLayerDirty: true,
+  }
 }
 
 ///|

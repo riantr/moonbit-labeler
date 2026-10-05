@@ -5111,3 +5111,112 @@ test "SelectIndex — switching image clears the annotation selection (5.17)" {
   assert_eq(next.currentIndex, 1)
   assert_true(next.selectedId is None)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Phase 5.18 — switching images must not carry the previous image's
+// data
+//
+// Phase 5.17 made the sidebar folder rows dispatch `SelectIndex`,
+// which turned a latent bug into the first thing a user does: the
+// handler moved `currentIndex` and nothing else, so the previous
+// image's annotations stayed on screen under the new image's name.
+// ─────────────────────────────────────────────────────────────────
+
+///|
+/// Phase 5.18 — per-image data does not follow the user to another
+/// file. Built by giving image 0 a full set of state, then switching.
+/// `Model::new()` already ships three demo annotations, so the
+/// "cleared" assertions are real and would have failed before.
+test "SelectIndex — the previous image's annotations and label do not follow (5.18)" {
+  let base : Model = Model::new()
+  assert_true(base.annotations.length() > 0)
+  let (next, _) = update(
+    { ..base, label: { raw_json: "{\"a\":1}", dirty: true, }, labelPath: "x.json", loadedFromDisk: true, },
+    SelectIndex(1),
+  )
+  assert_eq(next.currentIndex, 1)
+  assert_eq(next.annotations.length(), 0)
+  assert_eq(next.bindings.length(), 0)
+  assert_eq(next.label.raw_json, "{}")
+  assert_true(!next.label.dirty)
+  assert_eq(next.labelPath, "")
+  assert_true(!next.loadedFromDisk)
+}
+
+///|
+/// Phase 5.18 — in-progress work on the previous image is dropped:
+/// a half-drawn draft, an armed binding, a selected annotation, a
+/// zoom/pan and a cursor position all describe the old image and mean
+/// nothing on the new one.
+test "SelectIndex — in-progress drawing state and viewport reset (5.18)" {
+  let busy : Model = {
+    ..Model::new(),
+    mode: Keypoint,
+    selectedId: Some("rect-1"),
+    draftPoints: [{ x: 1.0, y: 2.0 }, { x: 3.0, y: 4.0 }],
+    bindingFromId: Some("rect-1"),
+    cursorImgPt: Some({ x: 9.0, y: 9.0 }),
+    cursorCanvasPt: Some({ x: 8.0, y: 8.0 }),
+    pan: { x: 30.0, y: 40.0, },
+    zoom: 3.5,
+  }
+  let (next, _) = update(busy, SelectIndex(1))
+  assert_eq(next.mode, Select)
+  assert_true(next.selectedId is None)
+  assert_eq(next.draftPoints.length(), 0)
+  assert_true(next.bindingFromId is None)
+  assert_true(next.cursorImgPt is None)
+  assert_true(next.cursorCanvasPt is None)
+  assert_eq(next.pan.x, 0.0)
+  assert_eq(next.pan.y, 0.0)
+  assert_eq(next.zoom, 1.0)
+}
+
+///|
+/// Phase 5.18 — project-level state **survives** an image switch. The
+/// class list belongs to the project, and 5.17 gave the user a way to
+/// pick a class one phase earlier; dropping `activeClassId` on every
+/// image switch would regress that. This is the half of the contract
+/// that a "reset everything" implementation gets wrong.
+test "SelectIndex — project-level state survives the switch (5.18)" {
+  let images : Array[ImageEntry] = [
+    { name: "a.png", path: "a.png", size_bytes: 10, },
+    { name: "b.png", path: "b.png", size_bytes: 20, },
+  ]
+  let loaded : Model = {
+    ..Model::new(),
+    folder: "data/Image@demo",
+    labelFolder: "data/Label@demo",
+    images,
+    classes: [{ id: "c1", name: "knife", is_default: true, }],
+    activeClassId: "gun",
+    classType: Tag,
+  }
+  let (next, _) = update(loaded, SelectIndex(1))
+  // Kept: the file list and the class configuration.
+  assert_eq(next.folder, "data/Image@demo")
+  assert_eq(next.labelFolder, "data/Label@demo")
+  assert_eq(next.images.length(), 2)
+  assert_eq(next.classes.length(), 1)
+  assert_eq(next.activeClassId, "gun")
+  assert_eq(next.classType, Tag)
+  // The status line names the newly selected image.
+  assert_true(next.statusMessage.contains("b.png"))
+}
+
+///|
+/// Phase 5.18 — an out-of-range or "no image" index must not panic
+/// and must not claim a file that is not there. The sidebar can
+/// dispatch `SelectIndex` for any row it renders, and the demo folder
+/// list is longer than a freshly loaded project's could be.
+test "SelectIndex — out-of-range index is safe and says so (5.18)" {
+  let base : Model = Model::new()
+  // -1 is the "no image" value Model::new / FolderLoaded use.
+  let (none_sel, _) = update(base, SelectIndex(-1))
+  assert_eq(none_sel.currentIndex, -1)
+  assert_eq(none_sel.statusMessage, "No image")
+  // Past the end of a list that exists.
+  let (past, _) = update(base, SelectIndex(9999))
+  assert_eq(past.currentIndex, 9999)
+  assert_eq(past.statusMessage, "No image")
+}
