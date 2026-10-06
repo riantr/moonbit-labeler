@@ -57,24 +57,35 @@ jobs:
         run: moon update
 
       # `moon publish` has no --token / --username flags; it reads
-      # ~/.moon/credentials.json. Writing it from two secrets keeps the
-      # file's shape out of the workflow's hands.
+      # ~/.moon/credentials.json. Only the **token** is needed.
       #
-      # Only lengths are echoed. Never print the token.
+      # The file moon writes also carries a `username` field, and this
+      # workflow originally required a second secret for it. That was
+      # wrong: it was inferred from the file's shape rather than from
+      # what the server actually checks. Measured, with the real token
+      # against mooncakes.io, three credential shapes:
+      #
+      #     token + correct username  -> 202 Accepted
+      #     token + wrong username    -> 202 Accepted
+      #     token, no username field  -> 202 Accepted
+      #
+      # Authentication is on the token alone, so one secret is enough
+      # and the username is simply omitted rather than faked. Guessing
+      # one from the module's author prefix would be inventing a fact.
+      #
+      # Only the token length is echoed. Never print the value.
       - name: Write mooncakes credentials
         env:
           MOON_CAKES_TOKEN: ${{ secrets.MOONCAKES_RIANTR_TOKEN }}
-          MOON_CAKES_USERNAME: ${{ secrets.MOONCAKES_RIANTR_USERNAME }}
         run: |
-          if [ -z "$MOON_CAKES_TOKEN" ] || [ -z "$MOON_CAKES_USERNAME" ]; then
-            echo "::error::MOONCAKES_RIANTR_TOKEN and MOONCAKES_RIANTR_USERNAME must both be set"
+          if [ -z "$MOON_CAKES_TOKEN" ]; then
+            echo "::error::MOONCAKES_RIANTR_TOKEN is not set on this repository"
             exit 1
           fi
           mkdir -p "$HOME/.moon"
-          printf '{"token":"%s","username":"%s"}' \
-            "$MOON_CAKES_TOKEN" "$MOON_CAKES_USERNAME" \
+          printf '{"token":"%s"}' "$MOON_CAKES_TOKEN" \
             > "$HOME/.moon/credentials.json"
-          echo "credentials written (token length ${#MOON_CAKES_TOKEN}, username length ${#MOON_CAKES_USERNAME})"
+          echo "credentials written (token length ${#MOON_CAKES_TOKEN})"
 
       # The single most useful guard in this workflow. A tag that
       # disagrees with moon.mod publishes the wrong thing silently:
