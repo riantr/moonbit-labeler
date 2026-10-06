@@ -1,0 +1,134 @@
+name: publish
+
+# Publishes the root module (riantr/moonbit_labeler) to mooncakes.io.
+#
+# Triggered two ways on purpose:
+#
+#   - `push` on a `v*` tag — the ordinary path.
+#   - `workflow_dispatch` with an explicit version — for a tag that was
+#     pushed before this workflow existed. v0.2.12 is that case: the tag
+#     is already on github and will never re-fire a tag-push trigger, so
+#     publishing it means dispatching this workflow by hand rather than
+#     deleting and re-pushing a tag that other people may have already
+#     fetched.
+#
+# This is deliberately NOT gated on the CI workflow passing. A tag push
+# is itself the release authorisation, and gating on CI would mean a
+# repository whose tests are currently red can never ship at all — the
+# two concerns should be fixed independently.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version already set in moon.mod, e.g. 0.2.12"
+        required: true
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Least privilege: this job only reads the repo. It does not push,
+    # tag, or create releases.
+    permissions:
+      contents: read
+    # One publish at a time. `cancel-in-progress: false` matters —
+    # cancelling a half-finished publish would leave the registry in a
+    # state we cannot reason about.
+    concurrency:
+      group: mooncakes-publish
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install moon
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      # A cold runner has an empty registry index and `.mooncakes/` is
+      # gitignored, so dependency resolution fails until this runs.
+      # Same reason the ci.yml jobs need it.
+      - name: Fetch registry index
+        run: moon update
+
+      # `moon publish` has no --token / --username flags; it reads
+      # ~/.moon/credentials.json. Writing it from two secrets keeps the
+      # file's shape out of the workflow's hands.
+      #
+      # Only lengths are echoed. Never print the token.
+      - name: Write mooncakes credentials
+        env:
+          MOON_CAKES_TOKEN: ${{ secrets.MOONCAKES_RIANTR_TOKEN }}
+          MOON_CAKES_USERNAME: ${{ secrets.MOONCAKES_RIANTR_USERNAME }}
+        run: |
+          if [ -z "$MOON_CAKES_TOKEN" ] || [ -z "$MOON_CAKES_USERNAME" ]; then
+            echo "::error::MOONCAKES_RIANTR_TOKEN and MOONCAKES_RIANTR_USERNAME must both be set"
+            exit 1
+          fi
+          mkdir -p "$HOME/.moon"
+          printf '{"token":"%s","username":"%s"}' \
+            "$MOON_CAKES_TOKEN" "$MOON_CAKES_USERNAME" \
+            > "$HOME/.moon/credentials.json"
+          echo "credentials written (token length ${#MOON_CAKES_TOKEN}, username length ${#MOON_CAKES_USERNAME})"
+
+      # The single most useful guard in this workflow. A tag that
+      # disagrees with moon.mod publishes the wrong thing silently:
+      # moon publishes whatever version moon.mod says, and the tag is
+      # just a label nobody checks against it. That mismatch is exactly
+      # how a release ends up tagged v0.2.12 while the registry gets
+      # 0.2.11 again.
+      - name: Resolve and check the release version
+        id: version
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            release="$DISPATCH_VERSION"
+          else
+            release="${REF_NAME#v}"
+          fi
+          actual=$(grep -E '^version' moon.mod | head -1 | cut -d'"' -f2)
+          echo "release requested : $release"
+          echo "moon.mod says     : $actual"
+          if [ "$release" != "$actual" ]; then
+            echo "::error::Tag/dispatch version '$release' does not match moon.mod '$actual'. Fix moon.mod before tagging — the registry publishes moon.mod's value, not the tag's."
+            exit 1
+          fi
+          echo "version=$release" >> "$GITHUB_OUTPUT"
+
+      # `moon publish --dry-run` really authenticates (a bad token
+      # yields "Server status: 401 Unauthorized, detail: Invalid API
+      # token") but has no registry side effects, so a credential
+      # failure is caught here rather than half way through a publish.
+      # Note the exit code is NOT a reliable signal — a successful dry
+      # run can still exit non-zero — so only a clean run to this point
+      # counts.
+      - name: Verify credentials (dry run)
+        run: moon publish --dry-run --verbose
+
+      - name: Publish
+        run: moon publish --verbose
+
+      # The publish command's exit code is not proof that anything
+      # landed. `moon view --versions` reads the live registry with no
+      # credentials at all, so this is the actual evidence.
+      - name: Verify the version is on the registry
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "published versions of riantr/moonbit_labeler:"
+          moon view riantr/moonbit_labeler --versions
+          if moon view riantr/moonbit_labeler --versions | grep -q "$VERSION"; then
+            echo "::notice::$VERSION is live on mooncakes.io"
+          else
+            echo "::error::$VERSION does not appear in the registry listing above"
+            exit 1
+          fi
