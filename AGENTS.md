@@ -153,12 +153,25 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   After any change under `frontend/src/`, re-run `npm run build` (or let `proton_cli dev`
   rebuild) before the change is visible in the packaged binary.
 - CEF runtime, Proton native prebuilts, `target/`, and `_build/` are all gitignored. The
-  documented target is **Proton 0.3.3 + CEF 150.0.19**; if `.proton/runtime.json` shows an
-  older Proton version (e.g. 0.1.12 or 0.2.5 from a previous install), re-run `proton_cli cef setup`
-  to pull the 0.3.3 runtime. Both 0.2.5 and 0.3.3 share the same CEF 150.0.19 archive
-  (per `cef_requirements.generated.mjs`), so a 0.2.5 CEF already on disk is reused as-is
-  and no new CEF download is triggered. Older local installs keep the project working
-  but don't match the documented target until upgraded.
+  documented target is **Proton 0.3.3 + CEF 150.0.19**.
+- **Proton 0.3.3 moved the CEF install out of the repo.** The old
+  `.proton/runtimes/` layout (Proton 0.1.12 / 0.2.5) is gone. 0.3.3's
+  `proton/build.mjs` resolves the SDK to
+  `~/.proton/store/<platform>/cef-<sha256>-layout-<n>/sdk`
+  (override the root with an absolute `PROTON_RUNTIME_STORE`), passes it
+  via `-I<sdk>`, and the native stubs `#include "include/capi/cef_*_capi.h"`
+  relative to that. The SDK alone is **~445 MB**; the whole store with
+  two platform entries measured ~1.7 GB. Populate it with
+  `proton_cli cef setup`. A stale `.proton/runtime.json` still reading
+  `proton_version: 0.2.5` means the repo-local 0.2.5-era layout is what is
+  on disk and the 0.3.3 store may be missing entirely — check
+  `~/.proton/store`, not `.proton/runtimes`.
+- **A warm `_build/` hides missing build prerequisites.** Reused `.obj`
+  files mean the C compiler is never re-invoked, so a developer machine
+  can pass `moon test` / `moon build` while a clean checkout fails
+  immediately. This is the single reason several CI-only failures here
+  went undiagnosed for 28 runs. When something builds locally and fails
+  in CI, check the clean-build path before suspecting the code.
 - **Do not reintroduce the old WebSocket app runtime route.** All IPC goes through
   `@proton_contract.Command` ops (`ext:labeler/<op>`, registered via
   `@proton_extension.typed(...)` in `extensions/labeler/extension.mbt`) or the headless

@@ -31,6 +31,8 @@ jobs:
           path: |
             .mooncakes
             .moon-agent-cache
+            .proton
+            ~/.proton/store
           key: moon-cache-${{ runner.os }}-${{ hashFiles('moon.mod', 'app_moui/moon.mod') }}
           restore-keys: moon-cache-${{ runner.os }}-
 
@@ -80,6 +82,8 @@ jobs:
           path: |
             .mooncakes
             .moon-agent-cache
+            .proton
+            ~/.proton/store
           key: moon-cache-${{ runner.os }}-${{ hashFiles('moon.mod', 'app_moui/moon.mod') }}
           restore-keys: moon-cache-${{ runner.os }}-
 
@@ -89,18 +93,46 @@ jobs:
       - name: Fetch registry index
         run: moon update
 
+      # Proton's module prebuild (proton/build.mjs) unconditionally runs
+      # `pkg-config --cflags gtk+-3.0 x11` on Linux and throws if either
+      # package is missing. A stock ubuntu runner has neither, which is
+      # what produced:
+      #   Error: Package gtk+-3.0 was not found in the pkg-config search path
+      #   Failed to run prebuild script for module moonbit-community/proton
+      #
+      # This prebuild is **module-level**: it runs for any `moon test` /
+      # `moon build` in this module. Scoping the test to specific
+      # packages with -p does NOT avoid it, and the lint job needs
+      # neither this nor the SDK below because `moon fmt --check` does
+      # not build.
+      - name: Install Proton's Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev
+
+      # Populates the CEF SDK store that the same prebuild points at with
+      # -I flags: ~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk.
+      # The SDK alone is ~445 MB, which is why the cache paths above
+      # include the store — otherwise every run re-downloads it.
+      - name: Fetch the Proton CEF SDK
+        run: proton_cli cef setup
+
       - name: moon check
         run: moon check --target native --diagnostic-limit 40
 
       # Scoped to the two packages that hold every test (55 of them:
       # the root package's blackbox drivers plus extensions/labeler's
-      # suite). The `app/` package is excluded on purpose — it is the
-      # Proton/CEF executable, and its native stubs cannot be compiled
-      # from a cold checkout. Verified: this exact invocation runs
-      # 55/55 locally, the same count as an unscoped `moon test`.
+      # suite). `app/` is the Proton/CEF executable and contributes no
+      # tests, so excluding it just keeps the test build smaller.
+      # Verified: this exact invocation runs 55/55 locally, the same
+      # count as an unscoped `moon test`.
       #
-      # See the "Proton CEF packaging" note further down for why the
-      # unscoped form cannot work on a fresh runner.
+      # Correction to an earlier claim in this file: the scoping does
+      # NOT avoid the Proton CEF work. That is a **module-level**
+      # prebuild, so it runs for any `moon test` / `moon build` in this
+      # module no matter which packages are selected — which is why the
+      # ubuntu job needed the GTK packages and the CEF SDK step above,
+      # and why the windows job needs the SDK step.
       - name: moon test
         run: >-
           moon test
@@ -149,6 +181,23 @@ jobs:
       - name: Fetch registry index
         run: moon update
 
+      # The Windows half of the CEF SDK problem. proton/build.mjs adds
+      # -I<sdk> where <sdk> is
+      #   %USERPROFILE%\.proton\store\win32-x64\cef-<sha>-layout-<n>\sdk
+      # and the native stubs #include "include/capi/cef_*_capi.h"
+      # relative to it. Without this step that store is empty and the
+      # build dies with
+      #   C1083: Cannot open include file: 'include/capi/cef_browser_capi.h'
+      #
+      # Worth stating plainly: the headers are NOT missing from the
+      # published proton package. They live in this SDK, which is what
+      # `proton_cli cef setup` downloads. It is a missing setup step, not
+      # an upstream packaging defect.
+      #
+      # Also module-level: no -p selection avoids it.
+      - name: Fetch the Proton CEF SDK
+        run: proton_cli cef setup
+
       - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
@@ -169,30 +218,11 @@ jobs:
           -p riantr/moonbit_labeler/extensions/labeler
           --target native --diagnostic-limit 40
 
-      # ── KNOWN BLOCKER, not a config mistake ──────────────────────────
-      # `moon build` and `proton_cli package` below build the `app/`
-      # package, which imports moonbit-community/proton. That package
-      # ships internal/native/ffi/include/proton_native.h and *not*
-      # the include/capi/cef_*_capi.h headers its own native stubs
-      # #include, so compiling them on a fresh runner dies with
-      #   C1083: Cannot open include file: 'include/capi/cef_browser_capi.h'
-      # This is an upstream packaging defect in proton@0.3.3, and no
-      # change to this workflow can conjure the missing headers.
-      #
-      # It is invisible on a developer machine: a warm `_build/` reuses
-      # cached .obj files and never re-invokes the C compiler. On this
-      # repository that cache also predates the 0.2.5 -> 0.3.3 Proton
-      # migration (.proton/runtime.json still records proton 0.2.5), so
-      # the objects were built against a layout that still had them.
-      #
-      # `proton_cli cef setup` does NOT fix this: it installs the CEF
-      # runtime and subprocess helper (bin/, Resources/,
-      # cef_process.exe), not the development headers.
-      #
-      # Until Proton ships those headers, the release exe can only be
-      # built on a machine with a warm cache, i.e. locally via
-      # `_build/package-app.bat`. Publishing to mooncakes is unaffected
-      # — `moon publish` runs check, not build.
+      # `moon build` and `proton_cli package` build the `app/` package
+      # in full, so unlike the scoped test step above they compile every
+      # Proton native stub. They are expected to work now that the
+      # "Fetch the Proton CEF SDK" step above has populated the SDK
+      # store the prebuild points -I at.
       - name: moon build
         run: moon build --target native
 
