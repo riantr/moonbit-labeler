@@ -92,8 +92,21 @@ jobs:
       - name: moon check
         run: moon check --target native --diagnostic-limit 40
 
+      # Scoped to the two packages that hold every test (55 of them:
+      # the root package's blackbox drivers plus extensions/labeler's
+      # suite). The `app/` package is excluded on purpose — it is the
+      # Proton/CEF executable, and its native stubs cannot be compiled
+      # from a cold checkout. Verified: this exact invocation runs
+      # 55/55 locally, the same count as an unscoped `moon test`.
+      #
+      # See the "Proton CEF packaging" note further down for why the
+      # unscoped form cannot work on a fresh runner.
       - name: moon test
-        run: moon test --target native --diagnostic-limit 40
+        run: >-
+          moon test
+          -p riantr/moonbit_labeler
+          -p riantr/moonbit_labeler/extensions/labeler
+          --target native --diagnostic-limit 40
 
   # Windows run builds the CEF/Proton exe + verifies the smoke
   # pipeline (frontend build + staging + CDP screenshot).
@@ -148,9 +161,38 @@ jobs:
       - name: moon check
         run: moon check --target native --diagnostic-limit 40
 
+      # Scoped, for the same reason as the ubuntu job's test step.
       - name: moon test
-        run: moon test --target native --diagnostic-limit 40
+        run: >-
+          moon test
+          -p riantr/moonbit_labeler
+          -p riantr/moonbit_labeler/extensions/labeler
+          --target native --diagnostic-limit 40
 
+      # ── KNOWN BLOCKER, not a config mistake ──────────────────────────
+      # `moon build` and `proton_cli package` below build the `app/`
+      # package, which imports moonbit-community/proton. That package
+      # ships internal/native/ffi/include/proton_native.h and *not*
+      # the include/capi/cef_*_capi.h headers its own native stubs
+      # #include, so compiling them on a fresh runner dies with
+      #   C1083: Cannot open include file: 'include/capi/cef_browser_capi.h'
+      # This is an upstream packaging defect in proton@0.3.3, and no
+      # change to this workflow can conjure the missing headers.
+      #
+      # It is invisible on a developer machine: a warm `_build/` reuses
+      # cached .obj files and never re-invokes the C compiler. On this
+      # repository that cache also predates the 0.2.5 -> 0.3.3 Proton
+      # migration (.proton/runtime.json still records proton 0.2.5), so
+      # the objects were built against a layout that still had them.
+      #
+      # `proton_cli cef setup` does NOT fix this: it installs the CEF
+      # runtime and subprocess helper (bin/, Resources/,
+      # cef_process.exe), not the development headers.
+      #
+      # Until Proton ships those headers, the release exe can only be
+      # built on a machine with a warm cache, i.e. locally via
+      # `_build/package-app.bat`. Publishing to mooncakes is unaffected
+      # — `moon publish` runs check, not build.
       - name: moon build
         run: moon build --target native
 
