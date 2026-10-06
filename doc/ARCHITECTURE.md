@@ -28,11 +28,11 @@ The IPC bridge is bidirectional JSON-RPC over the V8↔C FFI.
 ## Module dependency tree
 
 ```
-moon.mod  (riantr/moonbit_labeler@0.2.10)
-  ├── moonbitlang/async@0.19.4
+moon.mod  (riantr/moonbit_labeler@0.2.12)
+  ├── moonbitlang/async@0.22.4
   ├── moonbit-community/proton@0.3.3          (CEF runtime)
   ├── moonbit-community/proton_contract@0.3.3 (typed IPC contract)
-  ├── riantr/moonbit_image@0.3.5              (BMP/QOI/TGA/PNG/GIF/JPEG)
+  ├── riantr/moonbit_image@0.3.7              (BMP/QOI/TGA/PNG/GIF/JPEG)
   └── wzzc-dev/moui@0.1.12                    (MoUI spike; see Phase 18)
 
 app/                       ─ entry point

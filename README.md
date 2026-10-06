@@ -177,7 +177,7 @@ incremental. If the Proton runtime is missing, run `proton_cli cef setup`.
 
 The packaged binary is at
 `target/proton-dist/moonbit-labeler/moonbit-labeler.exe`. (The `zip` format
-in `proton.project.json` would produce a sibling `moonbit-labeler-0.2.11.zip` —
+in `proton.project.json` would produce a sibling `moonbit-labeler-0.2.12.zip` —
 self-contained, drop on any Windows machine, unzip, double-click the exe.
 Note: Proton 0.3.3's built-in zip step is upstream-broken on Windows; ship
 the `app/` dir with `proton_cli package --format app` and zip manually via

@@ -13,7 +13,7 @@
   },
   "package": {
     "product_name": "MoonBit Labeler",
-    "version": "0.2.11",
+    "version": "0.2.12",
     "formats": [
       "app",
       "zip"

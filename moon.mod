@@ -1,6 +1,6 @@
 name = "riantr/moonbit_labeler"
 
-version = "0.2.11"
+version = "0.2.12"
 
 import {
   "moonbitlang/async@0.22.4",

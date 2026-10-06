@@ -99,9 +99,9 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   frontend dev/build commands, product name + version + output dir + formats.
   (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration; the 0.2.5 → 0.3.3
   migration kept the same `proton.project.json` schema.)
-- `moon.mod`               — `riantr/moonbit_labeler` v0.2.10, depends on `moonbit-community/proton@0.3.3`,
-  `proton_contract@0.3.3`, and `moonbitlang/async@0.19.4`. The image codec comes from the shared
-  `riantr/moonbit_image@0.3.4` package (pulled in transitively). A prior vendored copy under
+- `moon.mod`               — `riantr/moonbit_labeler` v0.2.12, depends on `moonbit-community/proton@0.3.3`,
+  `proton_contract@0.3.3`, `moonbitlang/async@0.22.4`, and `wzzc-dev/moui@0.1.12`. The image codec comes from the shared
+  `riantr/moonbit_image@0.3.7` package (pulled in transitively). A prior vendored copy under
   `extensions/image/` was removed in commit b6dd1b1; do not reintroduce it without first
   re-reading the deletion rationale in that commit's message.
 
