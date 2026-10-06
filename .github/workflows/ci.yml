@@ -34,6 +34,16 @@ jobs:
           key: moon-cache-${{ runner.os }}-${{ hashFiles('moon.mod', 'app_moui/moon.mod') }}
           restore-keys: moon-cache-${{ runner.os }}-
 
+      # A cold runner has an empty registry index, so any dependency
+      # that must come from mooncakes.io fails to resolve until the
+      # index is fetched. `.mooncakes/` is gitignored, so there is no
+      # vendored copy to fall back on. This failure mode is invisible
+      # locally because a developer machine has a warm
+      # `~/.moon/registry`; upstream's own setup action
+      # (moonbit-docs .github/actions/setup) does the same thing.
+      - name: Fetch registry index
+        run: moon update
+
       - name: moon fmt --check
         run: moon fmt --check
 
@@ -73,6 +83,12 @@ jobs:
           key: moon-cache-${{ runner.os }}-${{ hashFiles('moon.mod', 'app_moui/moon.mod') }}
           restore-keys: moon-cache-${{ runner.os }}-
 
+      # See the note in the lint job: a cold runner's registry index is
+      # empty, and `.mooncakes/` is gitignored, so `moon check` cannot
+      # resolve the mooncakes.io dependencies without this.
+      - name: Fetch registry index
+        run: moon update
+
       - name: moon check
         run: moon check --target native --diagnostic-limit 40
 
@@ -91,10 +107,20 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install moon
+        # The Windows installer is `install/powershell.ps1`. The URL
+        # this step used to name — `install/windows.ps1` — does not
+        # exist, and that is why every run in this repo's history has
+        # failed at this step with exit code 1, before moon was ever
+        # installed. Confirmed three ways: MoonBit's own docs and
+        # download page both name `powershell.ps1`; moonbitlang/moon
+        # installs moon on its Windows runners with exactly this URL;
+        # and `https://cli.moonbitlang.com/install/powershell.ps1`
+        # returns 200 (3218 bytes) while `install/windows.ps1` does
+        # not resolve.
         run: |
-          Invoke-WebRequest -UseBasicParsing -Uri https://cli.moonbitlang.com/install/windows.ps1 -OutFile install.ps1
+          Invoke-WebRequest -UseBasicParsing -Uri https://cli.moonbitlang.com/install/powershell.ps1 -OutFile install.ps1
           powershell -ExecutionPolicy Bypass -File install.ps1
-          echo "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Cache moon deps
         uses: actions/cache@v4
@@ -105,6 +131,10 @@ jobs:
             .proton
           key: moon-cache-${{ runner.os }}-${{ hashFiles('moon.mod', 'app_moui/moon.mod', 'proton.project.json') }}
           restore-keys: moon-cache-${{ runner.os }}-
+
+      # Same cold-runner registry problem as the two ubuntu jobs.
+      - name: Fetch registry index
+        run: moon update
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
