@@ -72,12 +72,14 @@ pub fn extension() -> @proton_extension.Extension {
   let read_thumb : @proton_contract.Command[ReadThumbRequest, ReadImageReply] = contract.command(
     "read_thumb",
   )
-  let decode_image : @proton_contract.Command[DecodeImageRequest, ReadImageReply] = contract.command(
-    "decode_image",
-  )
-  let resize_image : @proton_contract.Command[ResizeImageRequest, ReadImageReply] = contract.command(
-    "resize_image",
-  )
+  let decode_image : @proton_contract.Command[
+    DecodeImageRequest,
+    ReadImageReply,
+  ] = contract.command("decode_image")
+  let resize_image : @proton_contract.Command[
+    ResizeImageRequest,
+    ReadImageReply,
+  ] = contract.command("resize_image")
   let read_text : @proton_contract.Command[ReadTextRequest, ReadTextReply] = contract.command(
     "read_text",
   )
@@ -98,45 +100,57 @@ pub fn extension() -> @proton_extension.Extension {
   let parse_label : @proton_contract.Command[ParseLabelRequest, ParseLabelReply] = contract.command(
     "parse_label",
   )
-  let serialize_label : @proton_contract.Command[SerializeLabelRequest, SerializeLabelReply] = contract.command(
-    "serialize_label",
-  )
-  let scan_classes : @proton_contract.Command[ScanClassesRequest, ScanClassesReply] = contract.command(
-    "scan_classes",
-  )
-  let save_classes : @proton_contract.Command[SaveClassesRequest, SaveClassesReply] = contract.command(
-    "save_classes",
-  )
-  let load_classes : @proton_contract.Command[LoadClassesRequest, LoadClassesReply] = contract.command(
-    "load_classes",
-  )
-  let load_classes_from_file : @proton_contract.Command[LoadClassesFromFileRequest, LoadClassesReply] = contract.command(
-    "load_classes_from_file",
-  )
+  let serialize_label : @proton_contract.Command[
+    SerializeLabelRequest,
+    SerializeLabelReply,
+  ] = contract.command("serialize_label")
+  let scan_classes : @proton_contract.Command[
+    ScanClassesRequest,
+    ScanClassesReply,
+  ] = contract.command("scan_classes")
+  let save_classes : @proton_contract.Command[
+    SaveClassesRequest,
+    SaveClassesReply,
+  ] = contract.command("save_classes")
+  let load_classes : @proton_contract.Command[
+    LoadClassesRequest,
+    LoadClassesReply,
+  ] = contract.command("load_classes")
+  let load_classes_from_file : @proton_contract.Command[
+    LoadClassesFromFileRequest,
+    LoadClassesReply,
+  ] = contract.command("load_classes_from_file")
   let list_videos : @proton_contract.Command[ListVideosRequest, ListVideosReply] = contract.command(
     "list_videos",
   )
-  let read_video_info : @proton_contract.Command[ReadVideoInfoRequest, ReadVideoInfoReply] = contract.command(
-    "read_video_info",
-  )
-  let read_video_frame : @proton_contract.Command[ReadVideoFrameRequest, ReadVideoFrameReply] = contract.command(
-    "read_video_frame",
-  )
-  let export_voc_folder : @proton_contract.Command[ExportVocRequest, ExportReply] = contract.command(
-    "export_voc_folder",
-  )
-  let export_yolo_folder : @proton_contract.Command[ExportYoloRequest, ExportReply] = contract.command(
-    "export_yolo_folder",
-  )
-  let import_voc_folder : @proton_contract.Command[ImportVocRequest, ImportReply] = contract.command(
-    "import_voc_folder",
-  )
-  let import_yolo_folder : @proton_contract.Command[ImportYoloRequest, ImportReply] = contract.command(
-    "import_yolo_folder",
-  )
-  let import_coco_file : @proton_contract.Command[ImportCocoRequest, ImportReply] = contract.command(
-    "import_coco_file",
-  )
+  let read_video_info : @proton_contract.Command[
+    ReadVideoInfoRequest,
+    ReadVideoInfoReply,
+  ] = contract.command("read_video_info")
+  let read_video_frame : @proton_contract.Command[
+    ReadVideoFrameRequest,
+    ReadVideoFrameReply,
+  ] = contract.command("read_video_frame")
+  let export_voc_folder : @proton_contract.Command[
+    ExportVocRequest,
+    ExportReply,
+  ] = contract.command("export_voc_folder")
+  let export_yolo_folder : @proton_contract.Command[
+    ExportYoloRequest,
+    ExportReply,
+  ] = contract.command("export_yolo_folder")
+  let import_voc_folder : @proton_contract.Command[
+    ImportVocRequest,
+    ImportReply,
+  ] = contract.command("import_voc_folder")
+  let import_yolo_folder : @proton_contract.Command[
+    ImportYoloRequest,
+    ImportReply,
+  ] = contract.command("import_yolo_folder")
+  let import_coco_file : @proton_contract.Command[
+    ImportCocoRequest,
+    ImportReply,
+  ] = contract.command("import_coco_file")
   let pick_folder : @proton_contract.Command[PickFolderRequest, PickFolderReply] = contract.command(
     "pick_folder",
   )
@@ -172,41 +186,39 @@ pub fn extension() -> @proton_extension.Extension {
     import_coco_file.contract_route(),
     pick_folder.contract_route(),
   ]
-  @proton_extension.typed(
-    contract,
-    routes,
-    (registrar) => {
-      // 20 of 21 handlers are stateless and just discard the
-      // AppCommandRequestContext. Only `pick_folder` keeps the
-      // context because it needs the CEF `CommandWindow` to drive
-      // the native folder dialog. The wrap-in-closure is a
-      // typed-registrar requirement (signature is
-      // `async (CommandContext, Request) -> Response`).
-      registrar.bind(list_images, (_ctx, req) => op_list_images(req))
-      registrar.bind(read_image, (_ctx, req) => op_read_image(req))
-      registrar.bind(read_thumb, (_ctx, req) => op_read_thumb(req))
-      registrar.bind(decode_image, (_ctx, req) => op_decode_image(req))
-      registrar.bind(resize_image, (_ctx, req) => op_resize_image(req))
-      registrar.bind(read_text, (_ctx, req) => op_read_text(req))
-      registrar.bind(write_text, (_ctx, req) => op_write_text(req))
-      registrar.bind(read_label, (_ctx, req) => op_read_label(req))
-      registrar.bind(write_label, (_ctx, req) => op_write_label(req))
-      registrar.bind(parse_label, (_ctx, req) => op_parse_label(req))
-      registrar.bind(serialize_label, (_ctx, req) => op_serialize_label(req))
-      registrar.bind(scan_classes, (_ctx, req) => op_scan_classes(req))
-      registrar.bind(save_classes, (_ctx, req) => op_save_classes(req))
-      registrar.bind(load_classes, (_ctx, req) => op_load_classes(req))
-      registrar.bind(load_classes_from_file, (_ctx, req) => op_load_classes_from_file(req))
-      registrar.bind(list_videos, (_ctx, req) => op_list_videos(req))
-      registrar.bind(read_video_info, (_ctx, req) => op_read_video_info(req))
-      registrar.bind(read_video_frame, (_ctx, req) => op_read_video_frame(req))
-      registrar.bind(export_voc_folder, (_ctx, req) => op_export_voc_folder(req))
-      registrar.bind(export_yolo_folder, (_ctx, req) => op_export_yolo_folder(req))
-      registrar.bind(import_voc_folder, (_ctx, req) => op_import_voc_folder(req))
-      registrar.bind(import_yolo_folder, (_ctx, req) => op_import_yolo_folder(req))
-      registrar.bind(import_coco_file, (_ctx, req) => op_import_coco_file(req))
-      // pick_folder keeps the context (the only one of the 21 that does).
-      registrar.bind(pick_folder, (ctx, req) => op_pick_folder(ctx, req))
-    },
-  )
+  @proton_extension.typed(contract, routes, registrar => {
+    // 20 of 21 handlers are stateless and just discard the
+    // AppCommandRequestContext. Only `pick_folder` keeps the
+    // context because it needs the CEF `CommandWindow` to drive
+    // the native folder dialog. The wrap-in-closure is a
+    // typed-registrar requirement (signature is
+    // `async (CommandContext, Request) -> Response`).
+    registrar.bind(list_images, (_ctx, req) => op_list_images(req))
+    registrar.bind(read_image, (_ctx, req) => op_read_image(req))
+    registrar.bind(read_thumb, (_ctx, req) => op_read_thumb(req))
+    registrar.bind(decode_image, (_ctx, req) => op_decode_image(req))
+    registrar.bind(resize_image, (_ctx, req) => op_resize_image(req))
+    registrar.bind(read_text, (_ctx, req) => op_read_text(req))
+    registrar.bind(write_text, (_ctx, req) => op_write_text(req))
+    registrar.bind(read_label, (_ctx, req) => op_read_label(req))
+    registrar.bind(write_label, (_ctx, req) => op_write_label(req))
+    registrar.bind(parse_label, (_ctx, req) => op_parse_label(req))
+    registrar.bind(serialize_label, (_ctx, req) => op_serialize_label(req))
+    registrar.bind(scan_classes, (_ctx, req) => op_scan_classes(req))
+    registrar.bind(save_classes, (_ctx, req) => op_save_classes(req))
+    registrar.bind(load_classes, (_ctx, req) => op_load_classes(req))
+    registrar.bind(load_classes_from_file, (_ctx, req) => {
+      op_load_classes_from_file(req)
+    })
+    registrar.bind(list_videos, (_ctx, req) => op_list_videos(req))
+    registrar.bind(read_video_info, (_ctx, req) => op_read_video_info(req))
+    registrar.bind(read_video_frame, (_ctx, req) => op_read_video_frame(req))
+    registrar.bind(export_voc_folder, (_ctx, req) => op_export_voc_folder(req))
+    registrar.bind(export_yolo_folder, (_ctx, req) => op_export_yolo_folder(req))
+    registrar.bind(import_voc_folder, (_ctx, req) => op_import_voc_folder(req))
+    registrar.bind(import_yolo_folder, (_ctx, req) => op_import_yolo_folder(req))
+    registrar.bind(import_coco_file, (_ctx, req) => op_import_coco_file(req))
+    // pick_folder keeps the context (the only one of the 21 that does).
+    registrar.bind(pick_folder, (ctx, req) => op_pick_folder(ctx, req))
+  })
 }

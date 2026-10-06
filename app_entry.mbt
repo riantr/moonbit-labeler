@@ -40,9 +40,7 @@ pub fn async_package_anchor() -> Bool raise {
 /// not exist and swallow any IO error — the goal is just to touch
 /// the `@fs.*` namespace.
 pub async fn fs_package_anchor() -> Bool {
-  let _ = @fs.kind("/__riantr_anchor_path__") catch {
-    _ => @fs.Regular
-  }
+  let _ = @fs.kind("/__riantr_anchor_path__") catch { _ => @fs.Regular }
   true
 }
 

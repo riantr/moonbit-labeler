@@ -214,7 +214,9 @@ test "component: image_dimensions on encoded BMP stays consistent" {
 
 ///|
 test "component: image_path_to_label_path maps Image@X/<file>.jpg to Label@X/<file>.json" {
-  let got = @labeler.image_path_to_label_path("D:/datasets/Image@CARS.Part.01/1800003_0.jpg")
+  let got = @labeler.image_path_to_label_path(
+    "D:/datasets/Image@CARS.Part.01/1800003_0.jpg",
+  )
   assert_eq(got, "D:/datasets/Label@CARS.Part.01/1800003_0.json")
 }
 
@@ -255,7 +257,9 @@ test "component: image_path_to_label_path falls back to in-folder .json for bare
   // A flat folder of photos (no Image@ prefix anywhere) should still
   // produce a usable label path. This is the "user just dropped a
   // bunch of JPGs in a folder" path.
-  let got = @labeler.image_path_to_label_path("/home/user/pics/2024-01-15/IMG_0001.bmp")
+  let got = @labeler.image_path_to_label_path(
+    "/home/user/pics/2024-01-15/IMG_0001.bmp",
+  )
   assert_eq(got, "/home/user/pics/2024-01-15/IMG_0001.json")
 }
 
@@ -277,7 +281,9 @@ test "component: image_path_to_label_path uses backslash for backslash input on 
 
 ///|
 test "component: video_path_to_label_path mirrors the image rule for Video@X/<file>.mp4" {
-  let got = @labeler.video_path_to_label_path("D:/datasets/Video@clip/run_001.mp4")
+  let got = @labeler.video_path_to_label_path(
+    "D:/datasets/Video@clip/run_001.mp4",
+  )
   assert_eq(got, "D:/datasets/Label@clip/run_001.json")
 }
 
@@ -304,7 +310,9 @@ test "component: video_path_to_label_path falls back to in-folder .json for non-
 
 ///|
 test "component: derive_label_dir_from_image_dir maps Image@X/ to Label@X/" {
-  let got = @labeler.derive_label_dir_from_image_dir("D:/datasets/Image@CARS.Part.01")
+  let got = @labeler.derive_label_dir_from_image_dir(
+    "D:/datasets/Image@CARS.Part.01",
+  )
   assert_eq(got, "D:/datasets/Label@CARS.Part.01")
 }
 
@@ -342,7 +350,9 @@ test "component: derive_label_dir_from_image_dir preserves dot in Image@<rest> l
   // (including the dot) is preserved. (Note: the function is called
   // with the resolved image dir, not a file path, so the leaf is
   // the trailing segment — no extra "/2024" suffix here.)
-  let got = @labeler.derive_label_dir_from_image_dir("D:/data/Image@CARS.Part.01")
+  let got = @labeler.derive_label_dir_from_image_dir(
+    "D:/data/Image@CARS.Part.01",
+  )
   assert_eq(got, "D:/data/Label@CARS.Part.01")
 }
 
@@ -350,7 +360,9 @@ test "component: derive_label_dir_from_image_dir preserves dot in Image@<rest> l
 test "component: derive_label_dir_from_image_dir treats Image@-less deep tree as in-folder" {
   // A nested dir that does NOT start with `Image@` is in-folder,
   // even if the parent happens to.
-  let got = @labeler.derive_label_dir_from_image_dir("D:/data/photos/day-2024-01-15")
+  let got = @labeler.derive_label_dir_from_image_dir(
+    "D:/data/photos/day-2024-01-15",
+  )
   assert_eq(got, "D:/data/photos/day-2024-01-15")
 }
 
@@ -448,9 +460,7 @@ async test "component: dispatch_op serialize_label round-trips a modern label" {
 /// discrimination: a path is either enumerable (directory) or it
 /// isn't, and `readdir` reliably raises on the latter.
 async fn rm_rf(path : String) -> Unit {
-  let exists = @fs.exists(path) catch {
-    _ => false
-  }
+  let exists = @fs.exists(path) catch { _ => false }
   if !exists {
     return
   }
@@ -468,9 +478,7 @@ async fn rm_rf(path : String) -> Unit {
     }
     return
   }
-  let names = @fs.readdir(path) catch {
-    _ => []
-  }
+  let names = @fs.readdir(path) catch { _ => [] }
   for n in names {
     // Forward-slash join works on both Windows and POSIX; the
     // async fs normalises the separator internally.
@@ -497,9 +505,7 @@ async test "component: dispatch_op write_label auto-creates Label@X/ and round-t
   let label_path = match write_reply {
     { "label_path": String(s), .. } => s
     _ =>
-      fail(
-        "write_label reply missing label_path: " + write_reply.stringify(),
-      )
+      fail("write_label reply missing label_path: " + write_reply.stringify())
   }
   assert_eq(label_path, root + "/Label@CARS/1800003_0.json")
   // The bytes count must match the UTF-8 length of the content.
@@ -569,9 +575,7 @@ async test "component: dispatch_op write_label raises 'cannot create label direc
   } catch {
     e => {
       let msg = e.to_string()
-      assert_true(
-        msg.contains("write_label: cannot create label directory"),
-      )
+      assert_true(msg.contains("write_label: cannot create label directory"))
       // The reported label_dir must be the one we tried to create, not
       // an empty string or the parent. Comparing against the absolute
       // blocker path locks the message to the exact directory that
@@ -617,26 +621,26 @@ async test "component: dispatch_op write_label raises 'cannot create label direc
 fn sample_bmp_bytes() -> Bytes {
   // [file header 14][DIB header 40][pixels 16]
   let raw : Array[Int] = [
-    0x42, 0x4D,                          //  0  "BM"
-    0x46, 0x00, 0x00, 0x00,              //  2  file size = 70
-    0x00, 0x00, 0x00, 0x00,              //  6  reserved
-    0x36, 0x00, 0x00, 0x00,              // 10  pixel offset = 54
-    0x28, 0x00, 0x00, 0x00,              // 14  DIB header size = 40
-    0x02, 0x00, 0x00, 0x00,              // 18  width = 2
-    0x02, 0x00, 0x00, 0x00,              // 22  height = 2
-    0x01, 0x00,                          // 26  planes = 1
-    0x20, 0x00,                          // 28  bits per pixel = 32
-    0x00, 0x00, 0x00, 0x00,              // 30  compression = BI_RGB
-    0x10, 0x00, 0x00, 0x00,              // 34  image size = 16
-    0x00, 0x00, 0x00, 0x00,              // 38  x ppm
-    0x00, 0x00, 0x00, 0x00,              // 42  y ppm
-    0x00, 0x00, 0x00, 0x00,              // 46  colors used
-    0x00, 0x00, 0x00, 0x00,              // 50  important colors
+    0x42, 0x4D, //  0  "BM"
+     0x46, 0x00, 0x00, 0x00, //  2  file size = 70
+     0x00, 0x00, 0x00, 0x00, //  6  reserved
+     0x36, 0x00, 0x00, 0x00, // 10  pixel offset = 54
+     0x28, 0x00, 0x00, 0x00, // 14  DIB header size = 40
+     0x02, 0x00, 0x00, 0x00, // 18  width = 2
+     0x02, 0x00, 0x00, 0x00, // 22  height = 2
+     0x01, 0x00, // 26  planes = 1
+     0x20, 0x00, // 28  bits per pixel = 32
+     0x00, 0x00, 0x00, 0x00, // 30  compression = BI_RGB
+     0x10, 0x00, 0x00, 0x00, // 34  image size = 16
+     0x00, 0x00, 0x00, 0x00, // 38  x ppm
+     0x00, 0x00, 0x00, 0x00, // 42  y ppm
+     0x00, 0x00, 0x00, 0x00, // 46  colors used
+     0x00, 0x00, 0x00, 0x00, // 50  important colors
     // pixel data, bottom row then top row, BGRA per pixel
-    0xFF, 0x00, 0x00, 0xFF,              // 54  (0,0) bottom-left  blue
-    0x00, 0xFF, 0xFF, 0xFF,              // 58  (1,0) bottom-right yellow
-    0x00, 0x00, 0xFF, 0xFF,              // 62  (0,1) top-left    red
-    0x00, 0xFF, 0x00, 0xFF,              // 66  (1,1) top-right   green
+     0xFF, 0x00, 0x00, 0xFF, // 54  (0,0) bottom-left  blue
+     0x00, 0xFF, 0xFF, 0xFF, // 58  (1,0) bottom-right yellow
+     0x00, 0x00, 0xFF, 0xFF, // 62  (0,1) top-left    red
+     0x00, 0xFF, 0x00, 0xFF, // 66  (1,1) top-right   green
   ]
   bytes_from(raw)
 }
@@ -680,7 +684,7 @@ fn b64_decode(s : String) -> Bytes {
     }
   }
   let extra = chars.length() % 4
-  let mut out_len = (chars.length() / 4) * 3
+  let mut out_len = chars.length() / 4 * 3
   if extra == 2 {
     out_len = out_len + 1
   } else if extra == 3 {
@@ -745,7 +749,10 @@ async test "component: e2e — list_images + read_image + write_label + read_lab
   }
   let names = match list_reply {
     { "images": Array(arr), .. } => arr
-    _ => fail("list_images reply missing 'images' array: " + list_reply.stringify())
+    _ =>
+      fail(
+        "list_images reply missing 'images' array: " + list_reply.stringify(),
+      )
   }
   assert_eq(names.length(), 1)
   // list_images returns an array of { name, path, ext } objects, not
@@ -790,12 +797,8 @@ async test "component: e2e — list_images + read_image + write_label + read_lab
     }
   }
   // --- 3. write_label lands the JSON in Label@e2e/sample.json ---
-  let label_content =
-    "{\"img_name\":\"sample.bmp\",\"width\":2,\"height\":2,\"infos\":[{\"id\":\"r1\",\"shape\":\"rect\",\"points\":[[0,0],[1,1]],\"class\":\"target\"}]}"
-  let write_req : Json = {
-    "image_path": bmp_path,
-    "content": label_content,
-  }
+  let label_content = "{\"img_name\":\"sample.bmp\",\"width\":2,\"height\":2,\"infos\":[{\"id\":\"r1\",\"shape\":\"rect\",\"points\":[[0,0],[1,1]],\"class\":\"target\"}]}"
+  let write_req : Json = { "image_path": bmp_path, "content": label_content }
   let write_reply = @labeler.dispatch_op("write_label", write_req) catch {
     e => fail("write_label raised: " + e.to_string())
   }
@@ -815,13 +818,11 @@ async test "component: e2e — list_images + read_image + write_label + read_lab
     e => fail("read_label raised: " + e.to_string())
   }
   let (got_content, got_label_path) = match read_label_reply {
-    { "content": String(s), "found": True, "label_path": String(lp), .. } => (s, lp)
+    { "content": String(s), "found": True, "label_path": String(lp), .. } =>
+      (s, lp)
     { "found": False, .. } =>
       fail("read_label returned found=false right after write_label")
-    _ =>
-      fail(
-        "read_label reply shape wrong: " + read_label_reply.stringify(),
-      )
+    _ => fail("read_label reply shape wrong: " + read_label_reply.stringify())
   }
   assert_eq(got_label_path, label_path)
   assert_eq(got_content, label_content)
@@ -882,14 +883,18 @@ async test "component: read_image_dims parses BMP, PNG, and JPEG headers" {
   // PNG: 1x1 single-pixel IHDR.
   let png_bytes : Array[Int] = [
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // signature
-    0x00, 0x00, 0x00, 0x0D, // IHDR length = 13
-    0x49, 0x48, 0x44, 0x52, // "IHDR"
-    0x00, 0x00, 0x00, 0x01, // width = 1
-    0x00, 0x00, 0x00, 0x01, // height = 1
-    0x08, 0x06, 0x00, 0x00, 0x00, // 8-bit RGBA, no interlace
+     0x00, 0x00, 0x00, 0x0D, // IHDR length = 13
+     0x49, 0x48, 0x44, 0x52, // "IHDR"
+     0x00, 0x00, 0x00, 0x01, // width = 1
+     0x00, 0x00, 0x00, 0x01, // height = 1
+     0x08, 0x06, 0x00, 0x00, 0x00, // 8-bit RGBA, no interlace
   ]
   let png_path = root + "/pixel.png"
-  @fs.write_file(png_path, bytes_from(png_bytes), create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_file(
+    png_path,
+    bytes_from(png_bytes),
+    create_mode=@fs.CreateOrTruncate,
+  ) catch {
     e => fail("test setup: write png failed: " + e.to_string())
   }
   let (pw, ph) = @labeler.read_image_dims(png_path)

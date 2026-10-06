@@ -105,7 +105,7 @@ The Moon-side handler set is pure async MoonBit and can be wired into
 any IPC layer. `extensions/labeler/dispatch.mbt` exposes a single entry
 point:
 
-```mbt
+```mbt nocheck
 pub fn dispatch_op(op : String, payload : Json) -> Json raise
 ```
 

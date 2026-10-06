@@ -194,9 +194,9 @@ pub struct SerializeLabelReply {
 fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply {
   try {
     let (text, err) = parse_label_text(req.text, req.fallback_img_name)
-    { label_text: text, err }
+    { label_text: text, err, }
   } catch {
-    e => { label_text: "", err: e.to_string() }
+    e => { label_text: "", err: e.to_string(), }
   }
 }
 
@@ -209,9 +209,9 @@ fn op_parse_label(req : ParseLabelRequest) -> ParseLabelReply {
 fn op_serialize_label(req : SerializeLabelRequest) -> SerializeLabelReply {
   try {
     let (text, err) = serialize_label_text(req.label_text)
-    { text, err }
+    { text, err, }
   } catch {
-    e => { text: "", err: e.to_string() }
+    e => { text: "", err: e.to_string(), }
   }
 }
 
@@ -936,6 +936,7 @@ pub fn derive_label_dir_from_image_dir(image_dir : String) -> String {
   }
 }
 
+///|
 /// Accepts either a directory path (`D:/x/Image@Foo`) or a file path
 /// (`D:/x/Image@Foo/1800003_0.jpg`). Returns the sibling `Label@Foo`
 /// directory, or the in-folder path if the dir doesn't follow the
@@ -3700,7 +3701,11 @@ async fn op_pick_folder(
   // path / description, then substitute the placeholders.
   let initial = req.initial_dir
   let initial_escaped = initial.replace_all(old="'", new="''")
-  let desc = if req.description == "" { "Select folder" } else { req.description }
+  let desc = if req.description == "" {
+    "Select folder"
+  } else {
+    req.description
+  }
   let desc_escaped = desc.replace_all(old="'", new="''")
   let script = script.replace(old="__INITIAL_DIR__", new=initial_escaped)
   let script = script.replace(old="__DESCRIPTION__", new=desc_escaped)
@@ -3881,7 +3886,12 @@ pub fn xml_find_element(s : String, from : Int, tag : String) -> (Int, Int) {
     }
     // Char after `<tag` must be `>`, whitespace, or `/`.
     let after = if i + open_len < n { s[i + open_len] } else { '\u{0}' }
-    if after != '>' && after != ' ' && after != '\t' && after != '\n' && after != '\r' && after != '/' {
+    if after != '>' &&
+      after != ' ' &&
+      after != '\t' &&
+      after != '\n' &&
+      after != '\r' &&
+      after != '/' {
       i = i + 1
       continue
     }
@@ -3949,18 +3959,24 @@ pub fn parse_voc_xml(text : String) -> Array[ExportAnn] {
     let ymin_s = xml_element_text(body, "ymin")
     let xmax_s = xml_element_text(body, "xmax")
     let ymax_s = xml_element_text(body, "ymax")
-    if name != "" && xmin_s != "" && ymin_s != "" && xmax_s != "" && ymax_s != "" {
+    if name != "" &&
+      xmin_s != "" &&
+      ymin_s != "" &&
+      xmax_s != "" &&
+      ymax_s != "" {
       let xmin = parse_int_range(xmin_s, 0, xmin_s.length())
       let ymin = parse_int_range(ymin_s, 0, ymin_s.length())
       let xmax = parse_int_range(xmax_s, 0, xmax_s.length())
       let ymax = parse_int_range(ymax_s, 0, ymax_s.length())
       if xmax > xmin && ymax > ymin && xmin >= 0 && ymin >= 0 {
-        out.push(
-          { shape: "rect", type_: name, points: [
+        out.push({
+          shape: "rect",
+          type_: name,
+          points: [
             (xmin.to_double(), ymin.to_double()),
             (xmax.to_double(), ymax.to_double()),
-          ] },
-        )
+          ],
+        })
       }
     }
     from = be + close_len
@@ -4048,9 +4064,11 @@ pub fn parse_yolo_lines(
     if xmax <= xmin || ymax <= ymin {
       continue
     }
-    out.push(
-      { shape: "rect", type_: classes[class_id], points: [(xmin, ymin), (xmax, ymax)] },
-    )
+    out.push({
+      shape: "rect",
+      type_: classes[class_id],
+      points: [(xmin, ymin), (xmax, ymax)],
+    })
   }
   out
 }
@@ -4059,17 +4077,18 @@ pub fn parse_yolo_lines(
 /// Build a normalized label JSON object from `ExportAnn[]` and the
 /// source `img_name`. Reuses the same `normalize_label_json` path
 /// the live editor uses so the imported files round-trip identically.
-fn anns_to_label_json(
-  anns : Array[ExportAnn],
-  img_name : String,
-) -> Json {
+fn anns_to_label_json(anns : Array[ExportAnn], img_name : String) -> Json {
   let infos_in : Array[Json] = []
   for ann in anns {
     let pts : Array[Array[Double]] = []
     for p in ann.points {
       pts.push([p.0, p.1])
     }
-    let shape = if ann.shape == "" { infer_shape_from_points(pts) } else { ann.shape }
+    let shape = if ann.shape == "" {
+      infer_shape_from_points(pts)
+    } else {
+      ann.shape
+    }
     infos_in.push(
       Json::object(
         Map::from_array([
@@ -4131,10 +4150,22 @@ async fn import_voc_internal(
   dest_label_dir : String,
 ) -> ImportReply {
   if src_dir == "" {
-    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_voc_folder: src_dir is empty"] }
+    return {
+      imported_count: 0,
+      skipped_count: 0,
+      error_count: 1,
+      classes: [],
+      errors: ["import_voc_folder: src_dir is empty"],
+    }
   }
   if dest_label_dir == "" {
-    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_voc_folder: dest_label_dir is empty"] }
+    return {
+      imported_count: 0,
+      skipped_count: 0,
+      error_count: 1,
+      classes: [],
+      errors: ["import_voc_folder: dest_label_dir is empty"],
+    }
   }
   ensure_dir(dest_label_dir) catch {
     e =>
@@ -4143,7 +4174,12 @@ async fn import_voc_internal(
         skipped_count: 0,
         error_count: 1,
         classes: [],
-        errors: ["import_voc_folder: cannot create dest_label_dir '" + dest_label_dir + "': " + e.to_string()],
+        errors: [
+          "import_voc_folder: cannot create dest_label_dir '" +
+          dest_label_dir +
+          "': " +
+          e.to_string(),
+        ],
       }
   }
   let names = @fs.readdir(src_dir, include_hidden=false, sort=true) catch {
@@ -4169,7 +4205,10 @@ async fn import_voc_internal(
     let data = @fs.read_file(src_path) catch {
       e => {
         skipped = skipped + 1
-        push_import_error(errors, "read failed for " + src_path + ": " + e.to_string())
+        push_import_error(
+          errors,
+          "read failed for " + src_path + ": " + e.to_string(),
+        )
         continue
       }
     }
@@ -4211,7 +4250,13 @@ async fn import_voc_internal(
       push_import_error(errors, "write failed for " + stem + ".json")
     }
   }
-  { imported_count: imported, skipped_count: skipped, error_count: errors.length(), classes: classes_ordered, errors }
+  {
+    imported_count: imported,
+    skipped_count: skipped,
+    error_count: errors.length(),
+    classes: classes_ordered,
+    errors,
+  }
 }
 
 ///|
@@ -4226,13 +4271,31 @@ async fn import_yolo_internal(
   dest_label_dir : String,
 ) -> ImportReply {
   if src_dir == "" {
-    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_yolo_folder: src_dir is empty"] }
+    return {
+      imported_count: 0,
+      skipped_count: 0,
+      error_count: 1,
+      classes: [],
+      errors: ["import_yolo_folder: src_dir is empty"],
+    }
   }
   if image_dir == "" {
-    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_yolo_folder: image_dir is empty"] }
+    return {
+      imported_count: 0,
+      skipped_count: 0,
+      error_count: 1,
+      classes: [],
+      errors: ["import_yolo_folder: image_dir is empty"],
+    }
   }
   if dest_label_dir == "" {
-    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_yolo_folder: dest_label_dir is empty"] }
+    return {
+      imported_count: 0,
+      skipped_count: 0,
+      error_count: 1,
+      classes: [],
+      errors: ["import_yolo_folder: dest_label_dir is empty"],
+    }
   }
   ensure_dir(dest_label_dir) catch {
     e =>
@@ -4241,7 +4304,12 @@ async fn import_yolo_internal(
         skipped_count: 0,
         error_count: 1,
         classes: [],
-        errors: ["import_yolo_folder: cannot create dest_label_dir '" + dest_label_dir + "': " + e.to_string()],
+        errors: [
+          "import_yolo_folder: cannot create dest_label_dir '" +
+          dest_label_dir +
+          "': " +
+          e.to_string(),
+        ],
       }
   }
   let classes = read_yolo_classes(src_dir)
@@ -4280,14 +4348,20 @@ async fn import_yolo_internal(
     let img_filename = find_image_filename(image_dir, stem)
     if img_filename == "" {
       skipped = skipped + 1
-      push_import_error(errors, "no image found in " + image_dir + " for stem " + stem)
+      push_import_error(
+        errors,
+        "no image found in " + image_dir + " for stem " + stem,
+      )
       continue
     }
     let src_path = join_path(src_dir, name)
     let data = @fs.read_file(src_path) catch {
       e => {
         skipped = skipped + 1
-        push_import_error(errors, "read failed for " + src_path + ": " + e.to_string())
+        push_import_error(
+          errors,
+          "read failed for " + src_path + ": " + e.to_string(),
+        )
         continue
       }
     }
@@ -4301,7 +4375,12 @@ async fn import_yolo_internal(
     let (img_w, img_h) = read_image_dims(join_path(image_dir, img_filename))
     if img_w <= 0 || img_h <= 0 {
       skipped = skipped + 1
-      push_import_error(errors, "cannot read image dims for " + img_filename + " (only PNG / JPEG / BMP / GIF / TGA / QOI are supported)")
+      push_import_error(
+        errors,
+        "cannot read image dims for " +
+        img_filename +
+        " (only PNG / JPEG / BMP / GIF / TGA / QOI are supported)",
+      )
       continue
     }
     let lines = import_split_lines(text)
@@ -4322,7 +4401,13 @@ async fn import_yolo_internal(
       push_import_error(errors, "write failed for " + stem + ".json")
     }
   }
-  { imported_count: imported, skipped_count: skipped, error_count: errors.length(), classes: classes_ordered, errors }
+  {
+    imported_count: imported,
+    skipped_count: skipped,
+    error_count: errors.length(),
+    classes: classes_ordered,
+    errors,
+  }
 }
 
 ///|
@@ -4339,10 +4424,22 @@ async fn import_coco_internal(
   dest_label_dir : String,
 ) -> ImportReply {
   if src_json == "" {
-    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_coco_file: src_json is empty"] }
+    return {
+      imported_count: 0,
+      skipped_count: 0,
+      error_count: 1,
+      classes: [],
+      errors: ["import_coco_file: src_json is empty"],
+    }
   }
   if dest_label_dir == "" {
-    return { imported_count: 0, skipped_count: 0, error_count: 1, classes: [], errors: ["import_coco_file: dest_label_dir is empty"] }
+    return {
+      imported_count: 0,
+      skipped_count: 0,
+      error_count: 1,
+      classes: [],
+      errors: ["import_coco_file: dest_label_dir is empty"],
+    }
   }
   ensure_dir(dest_label_dir) catch {
     e =>
@@ -4351,7 +4448,12 @@ async fn import_coco_internal(
         skipped_count: 0,
         error_count: 1,
         classes: [],
-        errors: ["import_coco_file: cannot create dest_label_dir '" + dest_label_dir + "': " + e.to_string()],
+        errors: [
+          "import_coco_file: cannot create dest_label_dir '" +
+          dest_label_dir +
+          "': " +
+          e.to_string(),
+        ],
       }
   }
   let data = @fs.read_file(src_json) catch {
@@ -4361,7 +4463,12 @@ async fn import_coco_internal(
         skipped_count: 0,
         error_count: 1,
         classes: [],
-        errors: ["import_coco_file: cannot read src_json '" + src_json + "': " + e.to_string()],
+        errors: [
+          "import_coco_file: cannot read src_json '" +
+          src_json +
+          "': " +
+          e.to_string(),
+        ],
       }
   }
   let text = strip_bom(data.text() catch { _ => "" })
@@ -4372,7 +4479,12 @@ async fn import_coco_internal(
         skipped_count: 0,
         error_count: 1,
         classes: [],
-        errors: ["import_coco_file: cannot parse JSON '" + src_json + "': " + e.to_string()],
+        errors: [
+          "import_coco_file: cannot parse JSON '" +
+          src_json +
+          "': " +
+          e.to_string(),
+        ],
       }
   }
   let root_obj : Map[String, Json] = match raw {
@@ -4560,7 +4672,13 @@ async fn import_coco_internal(
     }
   }
   let _ = image_root
-  { imported_count: imported, skipped_count: skipped, error_count: errors.length(), classes: classes_ordered, errors }
+  {
+    imported_count: imported,
+    skipped_count: skipped,
+    error_count: errors.length(),
+    classes: classes_ordered,
+    errors,
+  }
 }
 
 // ---------------------------------------------------------------------
