@@ -56,36 +56,51 @@ jobs:
       - name: Fetch registry index
         run: moon update
 
-      # `moon publish` has no --token / --username flags; it reads
-      # ~/.moon/credentials.json. Only the **token** is needed.
+      # `moon publish` has no --token flag; it reads ~/.moon/credentials.json.
+      # That secret carries the **whole file** as its value, in the
+      # shape `moon login` writes:
       #
-      # The file moon writes also carries a `username` field, and this
-      # workflow originally required a second secret for it. That was
-      # wrong: it was inferred from the file's shape rather than from
-      # what the server actually checks. Measured, with the real token
-      # against mooncakes.io, three credential shapes:
+      #     { "token": "...", "username": "..." }
       #
-      #     token + correct username  -> 202 Accepted
-      #     token + wrong username    -> 202 Accepted
-      #     token, no username field  -> 202 Accepted
+      # so it is written through verbatim. An earlier revision wrapped it
+      # as printf '{"token":"%s"}' "$SECRET", which would have turned
+      # the whole JSON object into the *string value* of a token field —
+      # a plausible-looking file that cannot authenticate.
       #
-      # Authentication is on the token alone, so one secret is enough
-      # and the username is simply omitted rather than faked. Guessing
-      # one from the module's author prefix would be inventing a fact.
+      # Only one secret is needed. The username is not consulted for
+      # publishing: measured against mooncakes.io with the real token,
+      # a correct username, a wrong username, and no username field at
+      # all all returned 202 Accepted. It rides along because it is part
+      # of the file, not because anything needs it.
       #
-      # Only the token length is echoed. Never print the value.
+      # The check below parses the file and prints only the key names and
+      # the token's length — never its value.
       - name: Write mooncakes credentials
         env:
-          MOON_CAKES_TOKEN: ${{ secrets.MOONCAKES_RIANTR_TOKEN }}
+          MOON_CAKES_CREDENTIALS: ${{ secrets.MOONCAKES_RIANTR_TOKEN }}
         run: |
-          if [ -z "$MOON_CAKES_TOKEN" ]; then
+          if [ -z "$MOON_CAKES_CREDENTIALS" ]; then
             echo "::error::MOONCAKES_RIANTR_TOKEN is not set on this repository"
             exit 1
           fi
           mkdir -p "$HOME/.moon"
-          printf '{"token":"%s"}' "$MOON_CAKES_TOKEN" \
-            > "$HOME/.moon/credentials.json"
-          echo "credentials written (token length ${#MOON_CAKES_TOKEN})"
+          printf '%s' "$MOON_CAKES_CREDENTIALS" > "$HOME/.moon/credentials.json"
+          python3 - <<'PY'
+          import json, os, sys
+          path = os.path.expanduser("~/.moon/credentials.json")
+          try:
+              with open(path, encoding="utf-8") as fh:
+                  doc = json.load(fh)
+          except Exception as exc:
+              print(f"::error::the secret is not valid JSON: {exc}")
+              sys.exit(1)
+          if not isinstance(doc, dict) or not doc.get("token"):
+              print("::error::the secret has no non-empty 'token' field")
+              sys.exit(1)
+          # Key names and the token's length only. Never the value.
+          print("credentials valid: keys=" + str(sorted(doc.keys())) +
+                " token length=" + str(len(doc["token"])))
+          PY
 
       # The single most useful guard in this workflow. A tag that
       # disagrees with moon.mod publishes the wrong thing silently:
