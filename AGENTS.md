@@ -115,7 +115,19 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   [README.md](README.md#ipc-surface) and exercised from `frontend/src/`.
 - Frontend is vanilla-JS ES modules — no framework, no TypeScript. Match the existing
   `frontend/src/*.js` style (named exports, IIFE-free, no transpilation).
-- Run `moon fmt` before committing; CI does not currently re-format.
+- **Run `moon fmt` before committing, and always bare — never with path
+  arguments.** `moon fmt app/foo.mbt` still reflows the *entire package*, not
+  just that file (hit in Phase 5.22: asking to format one file produced 777
+  insertions across its neighbours). The CI `lint (ubuntu)` job runs
+  `moon fmt --check` **repo-wide as a hard gate** — the repo is fmt-clean as of
+  `cf55c57` (`style: apply moon fmt to clear the pre-existing drift`, 7 files,
+  315/184), so any new drift fails the build.
+- The "Verification" notes in the phase history below that say *"`moon fmt
+  --check` flags none of the N touched files (the repo-wide fmt drift is
+  pre-existing in `component_blackbox_test.mbt` and unrelated files, so `moon
+  fmt` was deliberately **not** run)"* were accurate for the phase that wrote
+  them but are **obsolete now**. Do not read them as licence to skip
+  formatting: the drift they describe is gone.
 
 ## Testing
 
