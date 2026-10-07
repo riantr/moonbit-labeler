@@ -43,7 +43,7 @@ mooncake = "mooncake"
 Mooncake = "Mooncake"
 moui = "moui"
 MoUI = "MoUI"
-proton = " "  # proton is fine, no-op correction
+proton = "proton"  # proton is fine, no-op correction
 cefsdk = "cefsdk"
 ffmpeg = "ffmpeg"
 stdin = "stdin"
@@ -82,10 +82,86 @@ finalizable = "finalizable"
 unzip = "unzip"
 zipping = "zipping"
 zipped = "zipped"
-stdout = "stdout"
 semver = "semver"
 
+# British spellings. This codebase is written in British English
+# throughout -- colour/behaviour/normalise/centre appear in prose, in
+# test names, and in doc comments. They are not typos.
+#
+# `locale` stays "en-us" (see [default] at the bottom) and these are
+# whitelisted here. DO NOT "fix" this by switching locale to "en-gb":
+# that is not a relaxation, it inverts the check. Measured on this
+# repository, en-gb raises the finding count from 278 to 1191 by
+# demanding `labeler` -> `labeller` (238 hits), `color` -> `colour`
+# (590), `serialize` -> `serialise` (101). `labeler` is the product
+# name and `Color` is a real type with `.r`/`.g`/`.b` fields, so
+# en-gb would demand renaming the product and the API.
+artefacts = "artefacts"
+behaviour = "behaviour"
+behaviours = "behaviours"
+capitalised = "capitalised"
+categorised = "categorised"
+centralise = "centralise"
+Centralised = "Centralised"
+centralises = "centralises"
+centre = "centre"
+centred = "centred"
+centres = "centres"
+centring = "centring"
+colour = "colour"
+coloured = "coloured"
+colours = "colours"
+favour = "favour"
+generalised = "generalised"
+honour = "honour"
+honoured = "honoured"
+honours = "honours"
+hypothesised = "hypothesised"
+labelled = "labelled"
+labelling = "labelling"
+licence = "licence"
+materialise = "materialise"
+modelled = "modelled"
+neighbour = "neighbour"
+neighbours = "neighbours"
+normalisation = "normalisation"
+normalise = "normalise"
+normalised = "normalised"
+normalises = "normalises"
+optimisations = "optimisations"
+optimised = "optimised"
+realise = "realise"
+recognise = "recognise"
+recognised = "recognised"
+serialise = "serialise"
+serialised = "serialised"
+serialises = "serialises"
+synthesise = "synthesise"
+synthesised = "synthesised"
+unlabelled = "unlabelled"
+unrecognised = "unrecognised"
+
+# Tokeniser false positives. These are not misspellings and there is
+# nothing to correct in the source:
+#   mis         -- split out of mis-ordered / mis-centred / mis-diagnosed
+#   PN          -- typos splits "PNGs" on the case boundary into PN + Gs
+#   unparseable -- an ordinary English word, used in doc comments
+#   ba          -- git short hashes like 748bba9 / 7ba7520; the real
+#                  identifier ba_premul is covered by extend-identifiers,
+#                  but a bare hash is not identifier-shaped so it needs
+#                  an entry here as well
+mis = "mis"
+PN = "PN"
+ba = "ba"
+unparseable = "unparseable"
+
 [default.extend-identifiers]
+# `ba` and `iy` are real identifiers, not typos: `ba_premul` in
+# app_moui/rasterizer.mbt (plus git short hashes like 7ba7520 in the
+# review docs), and `iy` as a loop/coord variable in frontend/src/main.js
+# and app_moui/rasterizer.mbt.
+ba = "ba"
+iy = "iy"
 moonbit_image = "moonbit_image"
 riantr = "riantr"
 moonbitted = "moonbitted"
