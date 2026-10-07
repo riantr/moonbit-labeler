@@ -110,12 +110,34 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev
 
-      # Populates the CEF SDK store that the same prebuild points at with
-      # -I flags: ~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk.
-      # The SDK alone is ~445 MB, which is why the cache paths above
-      # include the store — otherwise every run re-downloads it.
-      - name: Fetch the Proton CEF SDK
-        run: proton_cli cef setup
+      # No CEF SDK step, and that is deliberate rather than an omission.
+      #
+      # An earlier revision ran `proton_cli cef setup` here. That cannot
+      # work in CI: proton_cli is not shipped by the moon installer
+      # (`curl install/unix.sh` puts moon/moonc/moonfmt/moonrun in
+      # ~/.moon/bin and nothing else), so the step died with
+      #   proton_cli: command not found   (exit 127)
+      # before moon check ever ran. It is a separate tool installed from
+      # the Proton repository, not from cli.moonbitlang.com.
+      #
+      # The SDK turns out not to be needed for this job anyway.
+      # proton/build.mjs never checks that the SDK exists -- it computes
+      # ~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk and hands
+      # that path to the **linker**, in a link_configs entry keyed to
+      # exactly one package:
+      #
+      #   moonbit-community/proton/internal/native/ffi
+      #
+      # Nothing that check or test below reaches that package. The two
+      # tested packages depend on `proton/extension`, whose own imports
+      # are async, proton/command, proton_ffi and proton_contract -- not
+      # internal/native/ffi. So no CEF link happens and the SDK is
+      # never read.
+      #
+      # The GTK packages above are still required, and the reason is
+      # different: the prebuild is module-level, so it runs for the
+      # whole proton module the moment any package in it is built, and
+      # platformConfig() calls pkg-config unconditionally on Linux.
 
       - name: moon check
         run: moon check --target native --diagnostic-limit 40
@@ -181,22 +203,22 @@ jobs:
       - name: Fetch registry index
         run: moon update
 
-      # The Windows half of the CEF SDK problem. proton/build.mjs adds
-      # -I<sdk> where <sdk> is
-      #   %USERPROFILE%\.proton\store\win32-x64\cef-<sha>-layout-<n>\sdk
-      # and the native stubs #include "include/capi/cef_*_capi.h"
-      # relative to it. Without this step that store is empty and the
-      # build dies with
-      #   C1083: Cannot open include file: 'include/capi/cef_browser_capi.h'
+      # Deliberately no CEF SDK step and no `proton_cli package` here.
+      # Both reasons are spelled out in the test-linux job above: the
+      # SDK is only read at link time by proton/internal/native/ffi,
+      # which nothing in this job builds, and proton_cli is not
+      # installed by the moon installer at all (exit 127).
       #
-      # Worth stating plainly: the headers are NOT missing from the
-      # published proton package. They live in this SDK, which is what
-      # `proton_cli cef setup` downloads. It is a missing setup step, not
-      # an upstream packaging defect.
-      #
-      # Also module-level: no -p selection avoids it.
-      - name: Fetch the Proton CEF SDK
-        run: proton_cli cef setup
+      # What this loses, stated plainly: the `moon build` and
+      # `proton_cli package` steps that used to live here compiled
+      # app/ -- the only thing in the module that reaches
+      # internal/native/ffi -- and so genuinely did need the SDK. They
+      # were producing the Windows exe, which is a release-packaging
+      # artifact, not a test gate. It is built locally via
+      # `_build/package-app.bat` (see AGENTS.md, including the upstream
+      # zip-step bug and the entry-path workaround), and the mooncakes
+      # release that publish.yml performs ships the pure-MoonBit
+      # package, which never touches CEF.
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
@@ -218,17 +240,11 @@ jobs:
           -p riantr/moonbit_labeler/extensions/labeler
           --target native --diagnostic-limit 40
 
-      # `moon build` and `proton_cli package` build the `app/` package
-      # in full, so unlike the scoped test step above they compile every
-      # Proton native stub. They are expected to work now that the
-      # "Fetch the Proton CEF SDK" step above has populated the SDK
-      # store the prebuild points -I at.
-      - name: moon build
-        run: moon build --target native
-
-      # Proton packaging is the gating release artifact. Use
-      # --format app to skip the upstream zip-step bug documented
-      # in AGENTS.md; the .zip step is reproduced locally with
-      # `_build/package-app.bat` before tagging a release.
-      - name: proton_cli package
-        run: proton_cli package --format app
+      # The two steps that used to sit here -- `moon build --target
+      # native` and `proton_cli package --format app` -- are gone, and
+      # the comment above explains why. To restate the cost: those were
+      # the only steps that compiled app/, the only package in the
+      # module that reaches proton/internal/native/ffi and therefore the
+      # only ones that ever needed the CEF SDK. They produced the
+      # Windows exe, which is a release-packaging artifact rather than a
+      # test gate, and it is built locally by `_build/package-app.bat`.
