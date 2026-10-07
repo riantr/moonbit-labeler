@@ -134,25 +134,68 @@ jobs:
       # yields "Server status: 401 Unauthorized, detail: Invalid API
       # token") but has no registry side effects, so a credential
       # failure is caught here rather than half way through a publish.
-      # Note the exit code is NOT a reliable signal — a successful dry
-      # run can still exit non-zero — so only a clean run to this point
-      # counts.
+      #
+      # The exit code is NOT a signal. Measured on moon 0.1.20260920
+      # against mooncakes.io with a working token, a fully successful
+      # dry run prints
+      #
+      #     Check passed
+      #     Server status: 202 Accepted, detail: Dry run completed
+      #     successfully. No changes were made. ...
+      #     Error: `moon publish` failed
+      #
+      # and still exits non-zero (255 on ubuntu, observed locally too).
+      # The CLI appears to read the dry run's "no changes" state as a
+      # failed publish. So the exit code is discarded and the decision
+      # is made on the server's own response text, which does
+      # distinguish the two cases: 202 means the token was accepted.
+      #
+      # `2>&1` matters — this CLI writes these lines to stderr, so a
+      # stdout-only capture would see an empty log and fail the grep.
       - name: Verify credentials (dry run)
-        run: moon publish --dry-run --verbose
+        run: |
+          moon publish --dry-run --verbose 2>&1 | tee dryrun.log || true
+          if grep -q "Server status: 202 Accepted" dryrun.log; then
+            echo "credentials accepted by the server (dry run, no side effects)"
+          else
+            echo "::error::the dry run did not confirm credentials with the server"
+            grep -E "Server status|Error" dryrun.log || echo "(no server response in the log)"
+            exit 1
+          fi
 
+      # Same reasoning applies to the real publish, and it is safer to
+      # assume the same bug is present until it is measured otherwise:
+      # if `moon publish` also reports failure on a successful upload,
+      # failing the job here would mark a completed release as broken
+      # and never reach the registry check below.
+      #
+      # Swallowing the exit code is only safe because the next step is
+      # the authority: `moon view --versions` reads mooncakes.io with no
+      # credentials at all. If the upload really did fail, 0.2.12 will
+      # not be in that listing and the job fails there instead. The
+      # warning line keeps the real exit code visible in the log rather
+      # than hiding it.
       - name: Publish
-        run: moon publish --verbose
+        run: |
+          moon publish --verbose 2>&1 | tee publish.log \
+            || echo "::warning::moon publish exited $? - the registry check below is authoritative"
 
-      # The publish command's exit code is not proof that anything
-      # landed. `moon view --versions` reads the live registry with no
-      # credentials at all, so this is the actual evidence.
+      # The authority for whether anything actually landed. It reads
+      # mooncakes.io with no credentials at all, so it cannot be fooled
+      # by a publish command that reported success or failure.
+      #
+      # `grep -x`, not `grep`: the match is anchored to a whole line
+      # because `moon view --versions` prints one version per line, and
+      # an unanchored substring match is the exact failure this workflow
+      # exists to prevent — checking for `0.2.1` finds `0.2.10` and
+      # declares a release that never happened to be live.
       - name: Verify the version is on the registry
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           echo "published versions of riantr/moonbit_labeler:"
           moon view riantr/moonbit_labeler --versions
-          if moon view riantr/moonbit_labeler --versions | grep -q "$VERSION"; then
+          if moon view riantr/moonbit_labeler --versions | grep -qx "$VERSION"; then
             echo "::notice::$VERSION is live on mooncakes.io"
           else
             echo "::error::$VERSION does not appear in the registry listing above"
