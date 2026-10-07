@@ -4,6 +4,11 @@ target/
 .mooncakes/
 .moonagent/
 .proton/
+# Registry fetch cache created by `moonx <pkg>@<version>`, which runs a
+# package straight from mooncakes without installing it. Each version
+# lands in .repos/<owner>/<name>/<ver>/ -- a full source copy, so this
+# grows by one tree per version that is ever analysed.
+.repos/
 # Proton native prebuilts extracted for `proton_cli build` on Windows.
 # The actual artifact lives in target/proton-dist/ after `proton_cli package`.
 proton/
