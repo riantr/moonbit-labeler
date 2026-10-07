@@ -79,7 +79,7 @@ proton_cli package --format app
 | Layer | Choice | Why |
 |---|---|---|
 | Backend | MoonBit 0.1.20260920 + async runtime | Native AOT compile, no GC pauses in the hot path |
-| UI shell | Proton 0.3.3 + CEF 150.0.19 | Self-contained portable exe, no Electron |
+| UI shell | Proton 0.3.4 + CEF 150.0.19 | Self-contained portable exe, no Electron |
 | Image codec | shared [`riantr/moonbit_image@0.3.7`](https://mooncakes.io/riantr/moonbit_image) (MIT) | Faster than `mizchi/image` for our workload; includes JPEG IDCT fix |
 | Frontend | Vanilla JS + Vite | No framework lock-in, fast cold reload |
 | IPC | MoonBit `@proton_contract.Command` + `@proton_extension.typed` | Type-safe Request/Reply structs, bound via `CommandRegistrar` |
@@ -96,11 +96,11 @@ don't match the documented target.
 ```
 .
 ├── app/
-│   └── main.mbt                       # 0.3.3 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
+│   └── main.mbt                       # 0.3.4 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
 ├── extensions/
 │   ├── labeler/                       # 21 IPC ops + the image/label/VOC/YOLO pipeline
 │   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
-│   │   ├── extension.mbt               # 0.3.3 extension registration (returns @proton_contract.Extension; 21 commands registered via @proton_extension.typed)
+│   │   ├── extension.mbt               # 0.3.4 extension registration (returns @proton_contract.Extension; 21 commands registered via @proton_extension.typed)
 │   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
 │   │   └── moon.pkg
 │   # Image codec lives in the shared riantr/moonbit_image@0.3.7 mooncake
@@ -121,8 +121,8 @@ don't match the documented target.
 │       └── style.css                  # all CSS in one place
 ├── data/                              # local sample dataset (Image@CARS.Part.01)
 ├── doc/VIDEO_LABELING.md
-├── proton.project.json                # 0.3.3 canonical app config (identifier, backend, frontend, package)
-├── moon.mod                           # deps: proton@0.3.3 + proton_contract@0.3.3 + moonbit_image@0.3.7 + moui@0.1.12 + async@0.22.4
+├── proton.project.json                # 0.3.4 canonical app config (identifier, backend, frontend, package)
+├── moon.mod                           # deps: proton@0.3.4 + proton_contract@0.3.4 + moonbit_image@0.3.7 + moui@0.1.12 + async@0.22.4
 └── README.mbt.md                      # generated Proton README (do not edit)
 ```
 
@@ -179,7 +179,8 @@ The packaged binary is at
 `target/proton-dist/moonbit-labeler/moonbit-labeler.exe`. (The `zip` format
 in `proton.project.json` would produce a sibling `moonbit-labeler-0.2.12.zip` —
 self-contained, drop on any Windows machine, unzip, double-click the exe.
-Note: Proton 0.3.3's built-in zip step is upstream-broken on Windows; ship
+Note: Proton's built-in zip step is upstream-broken on Windows (reported on
+0.2.5, still unverified as fixed on 0.3.4); ship
 the `app/` dir with `proton_cli package --format app` and zip manually via
 `_build/package-app.bat`. See [AGENTS.md](AGENTS.md) for the workaround.)
 

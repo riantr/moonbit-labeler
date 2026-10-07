@@ -154,39 +154,26 @@ pub fn extension() -> @proton_extension.Extension {
   let pick_folder : @proton_contract.Command[PickFolderRequest, PickFolderReply] = contract.command(
     "pick_folder",
   )
-  // Routes: belt-and-suspenders sanity check. If a command is declared
-  // but missing from this list, the framework panics with
-  // `ForeignCommandRoute` at startup. A missing bind call (in the
-  // registrar below) wouldn't trip the framework check, so we keep
-  // this list ordered to match the `bind` block — that's a manual
-  // visual check during code review.
-  let routes = [
-    list_images.contract_route(),
-    read_image.contract_route(),
-    read_thumb.contract_route(),
-    decode_image.contract_route(),
-    resize_image.contract_route(),
-    read_text.contract_route(),
-    write_text.contract_route(),
-    read_label.contract_route(),
-    write_label.contract_route(),
-    parse_label.contract_route(),
-    serialize_label.contract_route(),
-    scan_classes.contract_route(),
-    save_classes.contract_route(),
-    load_classes.contract_route(),
-    load_classes_from_file.contract_route(),
-    list_videos.contract_route(),
-    read_video_info.contract_route(),
-    read_video_frame.contract_route(),
-    export_voc_folder.contract_route(),
-    export_yolo_folder.contract_route(),
-    import_voc_folder.contract_route(),
-    import_yolo_folder.contract_route(),
-    import_coco_file.contract_route(),
-    pick_folder.contract_route(),
-  ]
-  @proton_extension.typed(contract, routes, registrar => {
+  // No explicit route list. Proton 0.3.4 removed both the `routes`
+  // positional argument of `@proton_extension.typed` and
+  // `Command::contract_route()`, and derives the frontend command
+  // inventory from the successful `bind` calls inside `register`
+  // instead:
+  //
+  //   `register` runs once during startup. Its successful `bind` calls
+  //   define both the frontend command inventory and permission
+  //   operations.
+  //
+  // 0.2.5 through 0.3.3 took `typed(contract, routes, registrar => ..)`
+  // and this file kept `routes` as a belt-and-suspenders list, because
+  // a command declared but absent from `routes` would panic the
+  // framework at startup while a command missing from the `bind` block
+  // would not -- an asymmetry that made the two lists drift-prone and
+  // left their agreement to visual review. That asymmetry is gone by
+  // design: a command exists in the framework's eyes if and only if it
+  // is bound, so the 24 binds below are now the single source of
+  // truth and the separate list has no meaning.
+  @proton_extension.typed(contract, registrar => {
     // 20 of 21 handlers are stateless and just discard the
     // AppCommandRequestContext. Only `pick_folder` keeps the
     // context because it needs the CEF `CommandWindow` to drive

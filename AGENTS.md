@@ -3,7 +3,7 @@
 Image & video annotation desktop app for security X-ray scans — MoonBit + Proton native stack
 (ported from the C# `MOlabeler_V2.6` reference). One JSON file per image/video, 4 annotation
 primitives (rect / polygon / keypoint / binding), Pascal VOC + YOLO export, CEF shell via
-Proton 0.3.3, plus an optional headless `--stdio` JSON-RPC bridge for non-CEF GUIs.
+Proton 0.3.4, plus an optional headless `--stdio` JSON-RPC bridge for non-CEF GUIs.
 
 Full project description, IPC surface, and data layout: see [README.md](README.md).
 Video-mode details: see [docs/VIDEO_LABELING.md](docs/VIDEO_LABELING.md).
@@ -29,7 +29,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   (formats + output dir come from the `package` block in `proton.project.json`)
 
 > **Upstream bug in `proton_cli` zip step (Windows).** Reported on 0.2.5 and
-> **not yet verified fixed on 0.3.3** (deferred — verifying requires running the
+> **not yet verified on 0.3.3 or 0.3.4** (deferred — verifying requires running the
 > full `proton_cli package` without `--format app` and observing the broken-staging
 > zip, which is the workaround this paragraph exists to bypass). The internal
 > `create_windows_zip` in `proton_package/lib/windows.mbt` passes
@@ -47,8 +47,11 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > `let staging = destination + ".staging.zip"` in `proton_package/lib/windows.mbt`.
 
 > **Upstream bug in `proton_app` entry path resolution (Windows).** Reported on 0.2.5
-> and **confirmed still present on 0.3.3** (verified 2026-09-24 by inspecting
-> `.mooncakes/moonbit-community/proton/facade_entry.mbt` after `moon update`).
+> and **confirmed still present on 0.3.4** (re-verified 2026-10-07 after the
+> 0.3.3 → 0.3.4 bump by inspecting
+> `.mooncakes/moonbit-community/proton/facade_entry.mbt`; `resolve_entry_path`
+> is still at lines 55-62 and still calls `@mbpath.Path(native_path).resolve()`.
+> First reported against 0.3.3 on 2026-09-24).
 > The helper `resolve_entry_path()` in `proton/facade_entry.mbt` does
 > `@mbpath.Path(path).resolve()` — that's cwd-relative, not resource-relative.
 > So `@proton.file("frontend/dist/index.html")` looks at
@@ -76,7 +79,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 
 - `app/`                   — runnable entry. `main.mbt` routes to one of two modes:
   - CEF/Proton (default): `@proton.file(...).identifier(...).capability(...).run_or_abort()` —
-    the 0.3.3 `App` builder API that loads `frontend/dist/index.html` into a CEF webview.
+    the 0.3.4 `App` builder API that loads `frontend/dist/index.html` into a CEF webview.
   - `--stdio` (headless): dispatches the same 21 ops as JSON-RPC over stdin/stdout (see
     "Stdio JSON-RPC bridge" below). Selected by passing `--stdio` as the first arg.
   `stdio_main.mbt` holds the stdio loop. Both modes share the `@labeler.dispatch_op`
@@ -95,12 +98,12 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - `tests/`, `qa/`          — black-box tests. `*_blackbox_test.mbt` at the repo root + Gherkin
   feature `image_codecs.feature`; frontend QA in `frontend/qa/webkit_picker_blackbox.test.mjs`.
 - `target/proton-dist/`    — packaged exe + zip (gitignored).
-- `proton.project.json`    — 0.3.3 canonical app config: identifier, backend package path,
+- `proton.project.json`    — 0.3.4 canonical app config: identifier, backend package path,
   frontend dev/build commands, product name + version + output dir + formats.
   (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration; the 0.2.5 → 0.3.3
   migration kept the same `proton.project.json` schema.)
-- `moon.mod`               — `riantr/moonbit_labeler` v0.2.12, depends on `moonbit-community/proton@0.3.3`,
-  `proton_contract@0.3.3`, `moonbitlang/async@0.22.4`, and `wzzc-dev/moui@0.1.12`. The image codec comes from the shared
+- `moon.mod`               — `riantr/moonbit_labeler` v0.2.12, depends on `moonbit-community/proton@0.3.4`,
+  `proton_contract@0.3.4`, `moonbitlang/async@0.22.4`, and `wzzc-dev/moui@0.1.12`. The image codec comes from the shared
   `riantr/moonbit_image@0.3.7` package (pulled in transitively). A prior vendored copy under
   `extensions/image/` was removed in commit b6dd1b1; do not reintroduce it without first
   re-reading the deletion rationale in that commit's message.
@@ -165,7 +168,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   After any change under `frontend/src/`, re-run `npm run build` (or let `proton_cli dev`
   rebuild) before the change is visible in the packaged binary.
 - CEF runtime, Proton native prebuilts, `target/`, and `_build/` are all gitignored. The
-  documented target is **Proton 0.3.3 + CEF 150.0.19**.
+  documented target is **Proton 0.3.4 + CEF 150.0.19**.
 - **Proton 0.3.3 moved the CEF install out of the repo.** The old
   `.proton/runtimes/` layout (Proton 0.1.12 / 0.2.5) is gone. 0.3.3's
   `proton/build.mjs` resolves the SDK to
