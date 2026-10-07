@@ -1,11 +1,23 @@
 # MoonBit Labeler
 
-A native desktop image and video annotation tool for security X-ray
-scans, ported from a C# reference (`MOlabeler_V2.6`) to a MoonBit +
-Proton native stack (no Electron). Supports 4 annotation primitives
-(rectangle, polygon, keypoint, binding), custom JSON labels that
-round-trip both modern and legacy (CARS-dataset) schemas, and a
-21-op IPC over `ext:labeler/<op>` that any host can drive.
+A native desktop annotation tool for images and video frames, built on
+a MoonBit + Proton native stack (no Electron). Supports 4 annotation
+primitives (rectangle, polygon, keypoint, binding), user-defined classes
+with per-class colors, custom JSON labels that round-trip both modern and
+legacy (CARS-dataset) schemas, and a typed IPC over
+`ext:labeler/<op>` that any host can drive.
+
+The tool is domain-independent: the primitives, the class system, and
+the on-disk format assume nothing about the imagery. Security X-ray
+inspection scanning is one application — it is what the bundled sample
+dataset contains — but another dataset only requires a different image
+folder and class list. Likewise the CARS legacy schema is one supported
+schema variant, not a domain requirement.
+
+This is an independent implementation, not a port. It has no inheritance,
+no shared code, and no design lineage relationship to the C# tool
+`MOlabeler_V2.6`; the only connection is that both solve the same general
+image-annotation problem.
 
 For the full design doc see the project repo's
 [README.md](https://github.com/riantr/moonbit-labeler#readme). For

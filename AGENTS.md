@@ -1,9 +1,16 @@
 # AGENTS.md
 
-Image & video annotation desktop app for security X-ray scans — MoonBit + Proton native stack
-(ported from the C# `MOlabeler_V2.6` reference). One JSON file per image/video, 4 annotation
-primitives (rect / polygon / keypoint / binding), Pascal VOC + YOLO export, CEF shell via
-Proton 0.3.4, plus an optional headless `--stdio` JSON-RPC bridge for non-CEF GUIs.
+Image & video annotation desktop app on a MoonBit + Proton native stack. One JSON file per
+image/video, 4 annotation primitives (rect / polygon / keypoint / binding), Pascal VOC + YOLO +
+COCO export, CEF shell via Proton 0.3.4, plus an optional headless `--stdio` JSON-RPC bridge for
+non-CEF GUIs.
+
+**Domain-independent, and independent in origin.** The primitives, class system, on-disk format,
+and exporters assume nothing about the imagery; security X-ray inspection scanning is one
+application and only explains the bundled `data/` sample. And this is **not** a port of the C#
+tool `MOlabeler_V2.6` — no inheritance, no shared code, no design lineage. Do not reintroduce
+either framing in docs or commit messages; they have been corrected in README.md and
+README.mbt.md.
 
 Full project description, IPC surface, and data layout: see [README.md](README.md).
 Video-mode details: see [docs/VIDEO_LABELING.md](docs/VIDEO_LABELING.md).
