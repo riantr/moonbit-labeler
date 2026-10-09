@@ -40,7 +40,11 @@ follows from that problem rather than from derivation.
 ## Quick Start
 
 ```powershell
-# One-time CEF runtime download (~150 MB) into .proton/runtimes/
+# proton_cli is a mooncakes binary package, not part of the moon installer.
+# Pin it to the version in moon.mod (Proton modules are lockstep-versioned).
+moon install moonbit-community/proton_cli@0.3.4
+
+# One-time CEF runtime download (~850 MB) into ~/.proton/store/
 proton_cli cef setup
 
 # Sync MoonBit deps + frontend deps
@@ -56,6 +60,11 @@ moon test --target native
 proton_cli package --format app
 # Output: target\proton-dist\moonbit-labeler\moonbit-labeler.exe
 ```
+
+Use `--format app` rather than the bare `proton_cli package`: the default
+also runs a zip step that is upstream-broken on Windows. The staged `app/`
+directory is produced either way, so zip it yourself afterwards — see
+[AGENTS.md](AGENTS.md) for the workaround.
 
 ## Features
 
@@ -113,9 +122,9 @@ don't match the documented target.
 ├── app/
 │   └── main.mbt                       # 0.3.4 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
 ├── extensions/
-│   ├── labeler/                       # 21 IPC ops + the image/label/VOC/YOLO pipeline
+│   ├── labeler/                       # 24 IPC ops + the image/label/VOC/YOLO/COCO pipeline
 │   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
-│   │   ├── extension.mbt               # 0.3.4 extension registration (returns @proton_contract.Extension; 21 commands registered via @proton_extension.typed)
+│   │   ├── extension.mbt               # 0.3.4 extension registration (returns @proton_contract.Extension; 24 commands registered via @proton_extension.typed)
 │   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
 │   │   └── moon.pkg
 │   # Image codec lives in the shared riantr/moonbit_image@0.3.7 mooncake
@@ -187,12 +196,18 @@ proton_cli package            # full build -> target/proton-dist/moonbit-labeler
 proton_cli dev                # hot-reload dev mode (reads proton.project.json)
 ```
 
-The first build downloads ~150 MB of CEF binaries; subsequent builds are
+The first build downloads ~850 MB of CEF binaries; subsequent builds are
 incremental. If the Proton runtime is missing, run `proton_cli cef setup`.
+
+`proton_cli` is a mooncakes binary package rather than part of the moon
+installer, so install it once with `moon install
+moonbit-community/proton_cli@<version>` — pinned to the version in
+`moon.mod`, because all published Proton modules use one lockstep
+version.
 
 The packaged binary is at
 `target/proton-dist/moonbit-labeler/moonbit-labeler.exe`. (The `zip` format
-in `proton.project.json` would produce a sibling `moonbit-labeler-0.2.12.zip` —
+in `proton.project.json` would produce a sibling `moonbit-labeler-0.2.13.zip` —
 self-contained, drop on any Windows machine, unzip, double-click the exe.
 Note: Proton's built-in zip step is upstream-broken on Windows (reported on
 0.2.5, still unverified as fixed on 0.3.4); ship
@@ -246,7 +261,11 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
   IDCT fix that the upstream 0.3.5 release ships).
 - **CEF / Proton runtime** — assembled into `target/proton-dist/...` at
   build time by `proton_cli package`. The runtime itself is downloaded
-  by `proton_cli cef setup` and cached under `.proton/runtimes/`.
+  by `proton_cli cef setup` into `~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk`
+  (~850 MB on Windows), which is shared by every project on the machine
+  and can be relocated with `PROTON_RUNTIME_STORE`. Proton 0.3.3 moved
+  this out of the repo, so the older `.proton/runtimes/` path no longer
+  applies.
 
 ## License
 

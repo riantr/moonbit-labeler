@@ -17,7 +17,10 @@ Video-mode details: see [docs/VIDEO_LABELING.md](docs/VIDEO_LABELING.md).
 
 ## Setup
 
-- One-time CEF download (~150 MB) into `.proton/runtimes/`: `proton_cli cef setup`
+- One-time CEF download into `~/.proton/store/` (measured ~850 MB per platform on Windows
+  0.3.4): `proton_cli cef setup`. The CLI itself is a mooncakes binary package —
+  `moon install moonbit-community/proton_cli@<version>`, pinned to the proton version in
+  `moon.mod` (Proton modules are lockstep-versioned).
 - Update MoonBit deps: `moon update`
 - Frontend deps: `cd frontend && npm install`
 
@@ -76,7 +79,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > `resolve_asset_path` into `resolve_entry_path` in
 > `moonbit-community/proton/proton_app/facade_entry.mbt`.
 - Frontend only:                 `cd frontend && npm run dev` / `npm run build`
-- Headless JSON-RPC bridge:      `moonbit-labeler.exe --stdio` (CEF-free; same 21 ops over stdin/stdout)
+- Headless JSON-RPC bridge:      `moonbit-labeler.exe --stdio` (CEF-free; same 24 ops over stdin/stdout)
   See "Stdio JSON-RPC bridge" below for the wire protocol.
 - Launch packaged exe:           `_build/run.bat [--cef|--stdio]`
   (auto mode: CEF if `target/proton-dist/moonbit-labeler/libcef.dll` is present,
@@ -87,11 +90,11 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - `app/`                   — runnable entry. `main.mbt` routes to one of two modes:
   - CEF/Proton (default): `@proton.file(...).identifier(...).capability(...).run_or_abort()` —
     the 0.3.4 `App` builder API that loads `frontend/dist/index.html` into a CEF webview.
-  - `--stdio` (headless): dispatches the same 21 ops as JSON-RPC over stdin/stdout (see
+  - `--stdio` (headless): dispatches the same 24 ops as JSON-RPC over stdin/stdout (see
     "Stdio JSON-RPC bridge" below). Selected by passing `--stdio` as the first arg.
   `stdio_main.mbt` holds the stdio loop. Both modes share the `@labeler.dispatch_op`
   entry point in `extensions/labeler/dispatch.mbt`.
-- `extensions/labeler/`    — 21 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
+- `extensions/labeler/`    — 24 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
   and the pure-MoonBit `dispatch_op(op, payload) -> Json raise` entry point. In
   `extension.mbt`, each op is declared as a `@proton_contract.Command[Request, Reply]`
   and bound to the existing `op_*` handler via a `CommandRegistrar`.
@@ -109,7 +112,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   frontend dev/build commands, product name + version + output dir + formats.
   (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration; the 0.2.5 → 0.3.3
   migration kept the same `proton.project.json` schema.)
-- `moon.mod`               — `riantr/moonbit_labeler` v0.2.12, depends on `moonbit-community/proton@0.3.4`,
+- `moon.mod`               — `riantr/moonbit_labeler` v0.2.13, depends on `moonbit-community/proton@0.3.4`,
   `proton_contract@0.3.4`, `moonbitlang/async@0.22.4`, and `wzzc-dev/moui@0.1.12`. The image codec comes from the shared
   `riantr/moonbit_image@0.3.7` package (pulled in transitively). A prior vendored copy under
   `extensions/image/` was removed in commit b6dd1b1; do not reintroduce it without first
@@ -182,12 +185,18 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   `~/.proton/store/<platform>/cef-<sha256>-layout-<n>/sdk`
   (override the root with an absolute `PROTON_RUNTIME_STORE`), passes it
   via `-I<sdk>`, and the native stubs `#include "include/capi/cef_*_capi.h"`
-  relative to that. The SDK alone is **~445 MB**; the whole store with
-  two platform entries measured ~1.7 GB. Populate it with
-  `proton_cli cef setup`. A stale `.proton/runtime.json` still reading
-  `proton_version: 0.2.5` means the repo-local 0.2.5-era layout is what is
-  on disk and the 0.3.3 store may be missing entirely — check
-  `~/.proton/store`, not `.proton/runtimes`.
+  relative to that. Each platform entry measures **~850 MB** on Windows 0.3.4, so budget
+  roughly 1 GB per platform rather than the ~150 MB the pre-0.3.3 `.proton/runtimes/`
+  layout needed. Populate it with `proton_cli cef setup`. A stale `.proton/runtime.json`
+  still reading `proton_version: 0.2.5` means the repo-local 0.2.5-era layout is what is
+  on disk and the 0.3.3+ store may be missing entirely — check `~/.proton/store`, not
+  `.proton/runtimes`.
+- **`proton_cli` is not part of the moon installer.** `install/unix.sh` puts
+  moon/moonc/moonfmt/moonrun in `~/.moon/bin` and nothing else, so a CI step that calls
+  `proton_cli` without installing it dies with `command not found` (exit 127). It is an
+  ordinary mooncakes binary package: `moon install moonbit-community/proton_cli@<version>`.
+  Pin the version — all published Proton modules share one lockstep version, so an unpinned
+  install floats to the newest release and silently drifts out of lockstep with `moon.mod`.
 - **A warm `_build/` hides missing build prerequisites.** Reused `.obj`
   files mean the C compiler is never re-invoked, so a developer machine
   can pass `moon test` / `moon build` while a clean checkout fails
@@ -2689,21 +2698,21 @@ full-screen capture came back black, which is the harness flakiness
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as
-a CEF-free JSON-RPC server when launched with `--stdio`. Same 21 ops, same Request/Reply
+a CEF-free JSON-RPC server when launched with `--stdio`. Same 24 ops, same Request/Reply
 structs, same JSON wire format as the CEF path — useful for embedding the labeler backend
 in a Python Qt shell, scripts, or debug tooling.
 
 ```
 $ echo '{"id":1,"op":"list_images","payload":{"path":"data/Image@skin","extensions":["jpg"]}}' \
     | ./moonbit-labeler.exe --stdio
-{"type":"ready","ops":["list_images", ...21 ops...]}
+{"type":"ready","ops":["list_images", ...24 ops...]}
 {"id":1,"ok":true,"result":{"folder":"data/Image@skin","images":[...]}}
 {"type":"bye"}
 ```
 
 Wire format (one JSON object per line, newline-delimited):
 
-- Banner on startup: `{"type":"ready","ops":[...21 op names...]}`
+- Banner on startup: `{"type":"ready","ops":[...24 op names...]}`
 - Request: `{"id": <int|null>, "op": "<name>", "payload": <op-specific-json>}`
 - Response: `{"id": ..., "ok": true,  "result": <json>, "error": null}`
   or:       `{"id": ..., "ok": false, "result": null, "error": "<message>"}`
@@ -2764,5 +2773,6 @@ enough for the current single-host dev workflow.
 - The `--stdio` bridge is a privileged local IPC surface: it accepts JSON-RPC from whoever
   owns the parent process. Only invoke it from a trusted local driver; do not expose it
   on a network socket without an explicit auth layer.
-- CEF download (`proton_cli cef setup`) is a 150 MB tarball — verify the SHA256 from
-  upstream if operating in a high-trust environment.
+- CEF download (`proton_cli cef setup`) is a large tarball — measured ~850 MB unpacked per
+  platform on Windows 0.3.4, against ~150 MB in the pre-0.3.3 `.proton/runtimes/` layout.
+  Verify the SHA256 from upstream if operating in a high-trust environment.

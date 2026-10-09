@@ -13,12 +13,12 @@ feature overview and `doc/VIDEO_LABELING.md` for video-mode details.
 │  ┌────────────────────────┐    ┌────────────────────────────────┐   │
 │  │   CEF/Proton 0.3.4     │    │   MoonBit 0.1.20260920        │   │
 │  │   frontend/ (Vite SPA) │◄──►│   extensions/labeler/         │   │
-│  │   Chromium 150 embedded│ IPC│   21 async ops over @fs/@json│   │
+│  │   Chromium 150 embedded│ IPC│   24 async ops over @fs/@json│   │
 │  │   via libcef.dll       │    │   IPC bridge: dispatch_op()   │   │
 │  └────────────────────────┘    └────────────────────────────────┘   │
 │                                                                     │
 │  Optional headless `--stdio` JSON-RPC bridge on stdin/stdout,    │
-│  same 21 ops over the same Request/Reply structs.                 │
+│  same 24 ops over the same Request/Reply structs.                 │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -40,7 +40,7 @@ app/                       ─ entry point
   ├── stdio_main.mbt        ─ headless JSON-RPC bridge
   └── ipc_handler.mbt       ─ cross-cutting request shaping
 
-extensions/labeler/        ─ public API (21 ops)
+extensions/labeler/        ─ public API (24 ops)
   ├── extension.mbt         ─ @proton_contract.Command[Request, Reply]
   ├── labeler.mbt           ─ Request/Reply structs + helpers
   ├── dispatch.mbt          ─ @labeler.dispatch_op(op, payload) -> Json raise
@@ -55,7 +55,7 @@ frontend/                  ─ Vite SPA
 
 ## IPC surface
 
-21 ops registered as `@proton_contract.Command[Request, Reply]` and bound
+24 ops registered as `@proton_contract.Command[Request, Reply]` and bound
 to handlers via `@proton_extension.typed(...)`. Wire format: JSON
 payloads in/out. Full list in [README.md](README.md#ipc-surface).
 
@@ -95,12 +95,12 @@ payloads in/out. Full list in [README.md](README.md#ipc-surface).
 ```
 
 The frontend never touches the filesystem directly. Every read/write
-funnels through one of the 21 IPC ops, which centralises `ensure_dir`,
+funnels through one of the 24 IPC ops, which centralises `ensure_dir`,
 path resolution (`image_path_to_label_path`), and schema normalisation.
 
 ## Layering rules
 
-- `frontend/` depends on the 21-op IPC surface (no other backend symbols).
+- `frontend/` depends on the 24-op IPC surface (no other backend symbols).
 - `app/` is the entry point — no domain logic.
 - `extensions/labeler/` is the **only** sub-package with public IPC.
   Everything inside (`labeler.mbt`, `dispatch.mbt`) can be re-exported
