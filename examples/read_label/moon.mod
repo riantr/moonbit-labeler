@@ -4,7 +4,7 @@ version = "0.1.0"
 
 import {
   "moonbitlang/async@0.22.4",
-  "riantr/moonbit_labeler@0.2.12",
+  "riantr/moonbit_labeler@0.2.13",
 }
 
 options(
