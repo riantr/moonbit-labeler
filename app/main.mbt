@@ -42,7 +42,7 @@ async fn main {
   //
   // When launched with `--stdio`, skip the Proton/Chromium stack and
   // run the headless JSON-RPC bridge in `stdio_main.mbt` instead. The
-  // bridge talks the same 21 ops to the parent process over stdin/stdout,
+  // bridge talks the same 24 ops to the parent process over stdin/stdout,
   // which lets non-CEF shells (Python Qt, scripts, debug tooling) embed
   // the labeler backend without spinning up a webview.
   let args = @env.args()

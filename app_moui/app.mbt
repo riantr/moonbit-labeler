@@ -2,7 +2,7 @@
 //
 // Phase 2 (this session): Model + Msg + Update + view shell, modelled
 // on the existing frontend state machine (frontend/src/main.js lines
-// 60-100). The 21 IPC ops stay in extensions/labeler/ and get called
+// 60-100). The 24 IPC ops stay in extensions/labeler/ and get called
 // as direct MoonBit async functions from update() — see
 // _build/design/moui-migration-design.md §6 for the IPC removal plan.
 //

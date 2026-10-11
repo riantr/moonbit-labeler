@@ -22,7 +22,7 @@ image-annotation problem.
 For the full design doc see the project repo's
 [README.md](https://github.com/riantr/moonbit-labeler#readme). For
 data format and project layout see that repo's README and
-[docs/VIDEO_LABELING.md](https://github.com/riantr/moonbit-labeler/blob/main/docs/VIDEO_LABELING.md).
+[doc/VIDEO_LABELING.md](https://github.com/riantr/moonbit-labeler/blob/main/doc/VIDEO_LABELING.md).
 
 ## Build from source
 

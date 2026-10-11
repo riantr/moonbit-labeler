@@ -249,6 +249,10 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 | `list_videos` / `read_video_info` / `read_video_frame` | frontend → backend | Video enumeration + per-frame decode (via `ffprobe / ffmpeg`) |
 | `export_voc_folder` / `export_yolo_folder` | frontend → backend | Batch export the current Image/Label folder to Pascal VOC XML or YOLO TXT |
 | `import_voc_folder` / `import_yolo_folder` / `import_coco_file` | frontend → backend | Batch import Pascal VOC XML / YOLO TXT / COCO JSON into a destination `Label@<dataset>` folder (see Features above) |
+| `pick_folder` | frontend → backend | Native folder picker; the only op that uses the request context. Spawns a PowerShell folder dialog on Windows (CEF 150's `CommandWindow.choose_directory` renders as an OpenFileDialog and returns an empty path, so it is bypassed) |
+
+All 24 rows above correspond 1:1 to the `contract.command(...)`
+declarations in `extensions/labeler/extension.mbt`.
 
 ## Vendored dependencies
 

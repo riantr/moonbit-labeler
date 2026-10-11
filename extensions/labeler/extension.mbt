@@ -174,7 +174,7 @@ pub fn extension() -> @proton_extension.Extension {
   // is bound, so the 24 binds below are now the single source of
   // truth and the separate list has no meaning.
   @proton_extension.typed(contract, registrar => {
-    // 20 of 21 handlers are stateless and just discard the
+    // 23 of the 24 handlers are stateless and just discard the
     // AppCommandRequestContext. Only `pick_folder` keeps the
     // context because it needs the CEF `CommandWindow` to drive
     // the native folder dialog. The wrap-in-closure is a
@@ -205,7 +205,7 @@ pub fn extension() -> @proton_extension.Extension {
     registrar.bind(import_voc_folder, (_ctx, req) => op_import_voc_folder(req))
     registrar.bind(import_yolo_folder, (_ctx, req) => op_import_yolo_folder(req))
     registrar.bind(import_coco_file, (_ctx, req) => op_import_coco_file(req))
-    // pick_folder keeps the context (the only one of the 21 that does).
+    // pick_folder keeps the context (the only one of the 24 that does).
     registrar.bind(pick_folder, (ctx, req) => op_pick_folder(ctx, req))
   })
 }

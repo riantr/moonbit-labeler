@@ -13,7 +13,7 @@ either framing in docs or commit messages; they have been corrected in README.md
 README.mbt.md.
 
 Full project description, IPC surface, and data layout: see [README.md](README.md).
-Video-mode details: see [docs/VIDEO_LABELING.md](docs/VIDEO_LABELING.md).
+Video-mode details: see [doc/VIDEO_LABELING.md](doc/VIDEO_LABELING.md).
 
 ## Setup
 
