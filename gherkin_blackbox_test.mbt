@@ -171,7 +171,7 @@ test "Scenario: QOI round-trip preserves pixel data" {
 ///|
 fn bmp_1x1_black_24bpp() -> Bytes {
   // 1x1 black 24bpp BMP, 58 bytes total.
-  let raw : Array[Int] = [
+  let raw : Array[Int32] = [
     // file header
     0x42, 0x4D, 0x3A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x36, 0x00, 0x00,
     0x00,
@@ -190,7 +190,7 @@ fn bmp_1x1_black_24bpp() -> Bytes {
 fn qoi_1x1_red_rgba() -> Bytes {
   // 'qoif' magic + BE(width=1) + BE(height=1) + channels=4 + srgb=1
   // + OP_RGB tag (0xFE) + r=255 g=0 b=0 (absolute) + 8-byte end marker.
-  let raw : Array[Int] = [
+  let raw : Array[Int32] = [
     0x71, 0x6F, 0x69, 0x66, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04,
     0x01, 0xFE, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
   ]
@@ -198,7 +198,7 @@ fn qoi_1x1_red_rgba() -> Bytes {
 }
 
 ///|
-fn to_bytes(raw : Array[Int]) -> Bytes {
+fn to_bytes(raw : Array[Int32]) -> Bytes {
   let arr = Array::make(raw.length(), b'\x00')
   for i = 0; i < raw.length(); i = i + 1 {
     arr[i] = raw[i].to_byte()

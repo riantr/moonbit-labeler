@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 
 ///|
-fn bytes_from(values : Array[Int]) -> Bytes {
+fn bytes_from(values : Array[Int32]) -> Bytes {
   // Each value is converted to its low 8 bits via Int::to_byte(),
   // matching the helper used in gherkin_blackbox_test.mbt.
   let buf = Array::make(values.length(), b'\x00')
@@ -35,7 +35,7 @@ fn bytes_from(values : Array[Int]) -> Bytes {
 ///|
 fn comp_bmp_1x1_black_24bpp() -> Bytes {
   // 58 bytes: 14-byte file header + 40-byte DIB header + 4-byte pixel row
-  let bytes : Array[Int] = [
+  let bytes : Array[Int32] = [
     // file header
     0x42, 0x4D, // "BM"
      0x3A, 0x00, 0x00, 0x00, // file size = 58
@@ -64,7 +64,7 @@ fn comp_qoi_1x1_red_rgba() -> Bytes {
   // 24 bytes: 'qoif' magic + BE(width=1) + BE(height=1) + channels +
   // colorspace + OP_RGB(255,0,0) + 8-byte end marker.
   // Matches the layout used by gherkin_blackbox_test.mbt.
-  let bytes : Array[Int] = [
+  let bytes : Array[Int32] = [
     0x71, 0x6F, 0x69, 0x66, // "qoif"
      0x00, 0x00, 0x00, 0x01, // width = 1
      0x00, 0x00, 0x00, 0x01, // height = 1
@@ -620,7 +620,7 @@ async test "component: dispatch_op write_label raises 'cannot create label direc
 /// for 32-bit alignment.
 fn sample_bmp_bytes() -> Bytes {
   // [file header 14][DIB header 40][pixels 16]
-  let raw : Array[Int] = [
+  let raw : Array[Int32] = [
     0x42, 0x4D, //  0  "BM"
      0x46, 0x00, 0x00, 0x00, //  2  file size = 70
      0x00, 0x00, 0x00, 0x00, //  6  reserved
@@ -659,7 +659,7 @@ fn sample_bmp_bytes() -> Bytes {
 fn b64_decode(s : String) -> Bytes {
   // Map every base64 alphabet char to its 6-bit value, sentinel -1
   // for anything else (including padding).
-  let idx = fn(c : Char) -> Int {
+  let idx = fn(c : Char) -> Int32 {
     let n = c.to_int()
     if n >= 65 && n <= 90 {
       n - 65
@@ -690,7 +690,7 @@ fn b64_decode(s : String) -> Bytes {
   } else if extra == 3 {
     out_len = out_len + 2
   }
-  let out : Array[Int] = Array::make(out_len, 0)
+  let out : Array[Int32] = Array::make(out_len, 0)
   let mut bi = 0
   let mut i = 0
   while i + 4 <= chars.length() {
@@ -881,7 +881,7 @@ async test "component: read_image_dims parses BMP, PNG, and JPEG headers" {
   assert_eq(bw, 2)
   assert_eq(bh, 2)
   // PNG: 1x1 single-pixel IHDR.
-  let png_bytes : Array[Int] = [
+  let png_bytes : Array[Int32] = [
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // signature
      0x00, 0x00, 0x00, 0x0D, // IHDR length = 13
      0x49, 0x48, 0x44, 0x52, // "IHDR"

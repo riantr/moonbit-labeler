@@ -236,7 +236,7 @@ jobs:
       # the next time proton itself is bumped. Keeping the pin here
       # means the two have to be updated together, visibly.
       - name: Install proton_cli
-        run: moon install moonbit-community/proton_cli@0.3.4
+        run: moon install moonbit-community/proton_cli@0.4.0
 
       # Populates the CEF runtime store that proton/build.mjs points the
       # linker at: ~/.proton/store/win32-x64/cef-<sha>-layout-<n>/sdk.

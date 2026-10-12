@@ -60,10 +60,10 @@ pub struct ReadImageReply {
 pub struct ReadThumbRequest {
   path : String
   /// Longest-side pixel cap. 64-256 is the sensible range. Default 128.
-  max_edge : Int?
+  max_edge : Int32?
   /// JPEG quality 1-31 (lower is better). Default 5 (slightly worse
   /// than the main image path). Ignored for PNG source.
-  quality : Int?
+  quality : Int32?
 } derive(FromJson, ToJson, Eq, Debug)
 
 ///|
@@ -89,7 +89,7 @@ pub struct WriteTextRequest {
 ///|
 pub struct WriteTextReply {
   path : String
-  bytes : Int
+  bytes : Int32
 } derive(ToJson, Eq, Debug)
 
 ///|
@@ -122,7 +122,7 @@ pub struct WriteLabelRequest {
 pub struct WriteLabelReply {
   image_path : String
   label_path : String
-  bytes : Int
+  bytes : Int32
 } derive(ToJson, Eq, Debug)
 
 ///|
@@ -249,7 +249,7 @@ pub struct ScanClassesRequest {
 /// label-folder scan that can't recover one).
 pub struct ClassInfo {
   name : String
-  count : Int
+  count : Int32
   color : String
 } derive(ToJson, Eq, Debug)
 
@@ -273,7 +273,7 @@ pub struct SaveClassesRequest {
 /// file (may be empty if the destination couldn't be determined).
 pub struct SaveClassesReply {
   path : String
-  written : Int
+  written : Int32
 } derive(ToJson, Eq, Debug)
 
 ///|
@@ -318,7 +318,7 @@ pub struct VideoEntry {
   name : String
   path : String
   ext : String
-  size_bytes : Int
+  size_bytes : Int32
 } derive(ToJson, Eq, Debug)
 
 ///|
@@ -340,14 +340,14 @@ pub struct ReadVideoInfoRequest {
 pub struct ReadVideoInfoReply {
   path : String
   /// Duration in milliseconds.
-  duration_ms : Int
+  duration_ms : Int32
   /// Effective frames per second (best of r_frame_rate / avg_frame_rate).
   fps : Double
   /// Total frame count. Computed as round(fps * duration_seconds), with
   /// a min of 1 to keep timelines usable.
-  frame_count : Int
-  width : Int
-  height : Int
+  frame_count : Int32
+  width : Int32
+  height : Int32
   /// Codec fourcc as a string (e.g. "h264"). Empty if unknown.
   codec : String
   /// True when ffprobe finished cleanly and a video stream was found.
@@ -361,19 +361,19 @@ pub struct ReadVideoInfoReply {
 /// frontend can re-use the data: URL fallback path.
 pub struct ReadVideoFrameRequest {
   path : String
-  frame : Int
+  frame : Int32
   /// Optional override JPEG quality (1-31, lower is better). Defaults to 3.
-  quality : Int?
+  quality : Int32?
 } derive(FromJson, ToJson, Eq, Debug)
 
 ///|
 pub struct ReadVideoFrameReply {
   path : String
-  frame : Int
+  frame : Int32
   base64 : String
   mime : String
-  width : Int
-  height : Int
+  width : Int32
+  height : Int32
   ok : Bool
 } derive(ToJson, Eq, Debug)
 
@@ -395,8 +395,8 @@ pub struct ExportAnn {
 /// export calls.
 pub struct ExportReply {
   dest_folder : String
-  exported_count : Int
-  skipped_count : Int
+  exported_count : Int32
+  skipped_count : Int32
   classes : Array[String]
 } derive(ToJson, Eq, Debug)
 
@@ -441,7 +441,7 @@ fn lower(s : String) -> String {
   let buf = StringBuilder()
   for c in s {
     if c >= 'A' && c <= 'Z' {
-      buf.write_char(Int::unsafe_to_char(c.to_int() + 32))
+      buf.write_char(Int32::unsafe_to_char(c.to_int() + 32))
     } else {
       buf.write_char(c)
     }
@@ -455,7 +455,7 @@ fn upper(s : String) -> String {
   let buf = StringBuilder()
   for c in s {
     if c >= 'a' && c <= 'z' {
-      buf.write_char(Int::unsafe_to_char(c.to_int() - 32))
+      buf.write_char(Int32::unsafe_to_char(c.to_int() - 32))
     } else {
       buf.write_char(c)
     }
@@ -764,7 +764,7 @@ async fn op_decode_image(req : DecodeImageRequest) -> ReadImageReply {
 /// subprocess) and gives visually fine output at thumbnail sizes.
 pub struct ResizeImageRequest {
   path : String
-  max_edge : Int?
+  max_edge : Int32?
   /// "Nearest" | "Bilinear" | "Bicubic". Defaults to Bilinear.
   /// (Bicubic falls back to bilinear — buildliming has no bicubic
   /// kernel, and the visual difference is invisible at our sizes.)
@@ -858,7 +858,7 @@ async fn op_write_text(req : WriteTextRequest) -> WriteTextReply {
 
 ///|
 /// Returns the last index of `c` in `s`, or `-1` if not found.
-fn last_index_of(s : String, c : Char) -> Int {
+fn last_index_of(s : String, c : Char) -> Int32 {
   let mut result = -1
   let mut i = 0
   for ch in s {
@@ -1224,7 +1224,7 @@ async fn op_scan_classes(req : ScanClassesRequest) -> ScanClassesReply {
 /// share the aggregation logic here and let callers handle the async
 /// filesystem read.
 fn aggregate_label_entries(items : Array[(String, String)]) -> Array[ClassInfo] {
-  let counts : Map[String, Int] = Map([])
+  let counts : Map[String, Int32] = Map([])
   for pair in items {
     let (_, text) = pair
     let cleaned = if text.length() > 0 && text[0] == '\u{FEFF}' {
@@ -1385,7 +1385,7 @@ type CuratedClass = (String, String) // (name, color)
 
 ///|
 /// UTF-8 BOM (U+FEFF) as a Char literal.
-let bom_char : Char = Int::unsafe_to_char(0xFEFF)
+let bom_char : Char = Int32::unsafe_to_char(0xFEFF)
 
 ///|
 /// Extract class names from a curated file. Two formats supported:
@@ -1403,7 +1403,7 @@ let bom_char : Char = Int::unsafe_to_char(0xFEFF)
 fn parse_curated_classes(text : String) -> Array[CuratedClass] {
   // Strip BOM if present
   let trimmed_text = if text.length() > 0 &&
-    Int::unsafe_to_char(text[0].to_int()) == bom_char {
+    Int32::unsafe_to_char(text[0].to_int()) == bom_char {
     text[1:].to_owned()
   } else {
     text
@@ -1413,7 +1413,7 @@ fn parse_curated_classes(text : String) -> Array[CuratedClass] {
   let mut first_char : Char = ' '
   let mut probe = 0
   while probe < n {
-    let c = Int::unsafe_to_char(trimmed_text[probe].to_int())
+    let c = Int32::unsafe_to_char(trimmed_text[probe].to_int())
     if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
       probe = probe + 1
       continue
@@ -1434,7 +1434,7 @@ fn parse_curated_json(text : String) -> Array[CuratedClass] {
   let out : Array[CuratedClass] = []
   let needle = "\"classes\""
   let n = text.length()
-  let mut start : Int = -1
+  let mut start : Int32 = -1
   let mut i = 0
   while i + needle.length() <= n {
     if text[i:i + needle.length()] == needle {
@@ -1462,7 +1462,7 @@ fn parse_curated_json(text : String) -> Array[CuratedClass] {
     let ch = text[j]
     if in_str {
       if escape {
-        buf.write_char(Int::unsafe_to_char(ch.to_int()))
+        buf.write_char(Int32::unsafe_to_char(ch.to_int()))
         escape = false
       } else if ch == '\\' {
         escape = true
@@ -1471,7 +1471,7 @@ fn parse_curated_json(text : String) -> Array[CuratedClass] {
         out.push((buf.to_string(), ""))
         buf.reset()
       } else {
-        buf.write_char(Int::unsafe_to_char(ch.to_int()))
+        buf.write_char(Int32::unsafe_to_char(ch.to_int()))
       }
     } else if ch == '"' {
       in_str = true
@@ -1541,7 +1541,7 @@ fn parse_curated_txt(text : String) -> Array[CuratedClass] {
 /// Substring `text[s:e]` rendered as an owned String (no UTF-8 boundary
 /// checks — caller is expected to slice on ASCII boundaries, e.g. on
 /// `|` delimiters or line endings).
-fn slice_trim(text : String, s : Int, e : Int) -> String {
+fn slice_trim(text : String, s : Int32, e : Int32) -> String {
   let mut a = s
   let mut b = e
   while a < b && (text[a] == ' ' || text[a] == '\t') {
@@ -1553,7 +1553,7 @@ fn slice_trim(text : String, s : Int, e : Int) -> String {
   let buf = StringBuilder()
   let mut k = a
   while k < b {
-    buf.write_char(Int::unsafe_to_char(text[k].to_int()))
+    buf.write_char(Int32::unsafe_to_char(text[k].to_int()))
     k = k + 1
   }
   buf.to_string()
@@ -1587,8 +1587,8 @@ fn normalize_color(s : String) -> String {
 ///|
 /// Returns a count map of class-name -> frequency inside the given
 /// (already BOM-stripped) label JSON text.
-fn collect_classes_from_text(text : String) -> Map[String, Int] {
-  let counts : Map[String, Int] = Map([])
+fn collect_classes_from_text(text : String) -> Map[String, Int32] {
+  let counts : Map[String, Int32] = Map([])
   // Simple scan: find every `"type":"..."` occurrence. Avoids a full JSON
   // parse for speed — the on-disk schema is small.
   let needle = "\"type\""
@@ -1796,7 +1796,7 @@ async fn op_read_video_info(req : ReadVideoInfoRequest) -> ReadVideoInfoReply {
 /// a lightweight scan: find the first "streams" array entry with
 /// `"codec_type":"video"`, then read the four fields we need. Numbers are
 /// integers except fps (rational parsed as double).
-fn parse_first_video_stream(json : String) -> (Int, Int, Double, String) {
+fn parse_first_video_stream(json : String) -> (Int32, Int32, Double, String) {
   let mut w = 0
   let mut h = 0
   let mut fps = 0.0
@@ -1843,7 +1843,7 @@ fn parse_first_video_stream(json : String) -> (Int, Int, Double, String) {
 /// quote of the key. Returns (ok, value). The implementation walks
 /// past the key + closing quote + colon + whitespace, then reads the
 /// next quoted string. We return the bare value (no surrounding quotes).
-fn read_string_value(json : String, key_open_idx : Int) -> (Bool, String) {
+fn read_string_value(json : String, key_open_idx : Int32) -> (Bool, String) {
   let n = json.length()
   // Skip past the key, the closing quote, optional whitespace, the
   // colon, and the optional whitespace before the value's quote.
@@ -1906,7 +1906,7 @@ fn parse_format_duration_seconds(json : String) -> Double {
 ///|
 /// Find `"needle"` (the quoted JSON key itself) starting from `from`,
 /// returning the index of the opening quote. Returns None if not found.
-fn find_key(s : String, from : Int, needle : String) -> Int? {
+fn find_key(s : String, from : Int32, needle : String) -> Int32? {
   let n = s.length()
   let needle_len = needle.length()
   let mut i = from
@@ -1976,7 +1976,7 @@ fn find_quoted_string_value(s : String, key : String) -> String? {
 
 ///|
 /// Find `"key": <number>` and parse it as Int.
-fn find_number_in(s : String, key : String) -> Int? {
+fn find_number_in(s : String, key : String) -> Int32? {
   let n = s.length()
   let key_len = key.length()
   let mut i = 0
@@ -2050,7 +2050,7 @@ fn find_fps_in(s : String, key : String) -> Double? {
 }
 
 ///|
-fn parse_int_range(s : String, start : Int, end : Int) -> Int {
+fn parse_int_range(s : String, start : Int32, end : Int32) -> Int32 {
   let mut result = 0
   let mut i = start
   while i < end {
@@ -2107,11 +2107,11 @@ fn parse_double_text(s : String) -> Double {
 /// the PowerShell call was the only remaining `DateTimeOffset` use. A
 /// monotonic counter is just as unique within a session and avoids
 /// the process spawn.
-let tmp_stamp_counter : @ref.Ref[Int] = @ref.new(0)
+let tmp_stamp_counter : @ref.Ref[Int32] = @ref.new(0)
 
 ///|
 /// Mint a fresh temp-file stamp. Pure-MoonBit, no PowerShell.
-fn next_tmp_stamp() -> Int {
+fn next_tmp_stamp() -> Int32 {
   tmp_stamp_counter.val = tmp_stamp_counter.val + 1
   tmp_stamp_counter.val
 }
@@ -2234,7 +2234,7 @@ fn format_double(x : Double) -> String {
 /// a real 2×2 BMP and asserts the round-trip. Every internal call
 /// site already had a path-relative (private) view of this function;
 /// the public alias doesn't change the call signature.
-pub async fn read_image_dims(path : String) -> (Int, Int) {
+pub async fn read_image_dims(path : String) -> (Int32, Int32) {
   if path == "" {
     return (0, 0)
   }
@@ -2355,7 +2355,7 @@ pub async fn read_image_dims(path : String) -> (Int, Int) {
 ///|
 /// Global counter used to mint short unique ids when the on-disk
 /// annotation is missing one.
-let label_id_counter : @ref.Ref[Int] = @ref.new(0)
+let label_id_counter : @ref.Ref[Int32] = @ref.new(0)
 
 ///|
 /// Mint a short identifier with the given prefix (`obj`, `b`, ...).
@@ -2389,7 +2389,7 @@ fn json_get_string(obj : Map[String, Json], key : String) -> String {
 ///|
 /// Pull an `Int` from a JSON value, accepting either a JSON number or
 /// a string of digits. Returns `None` when the value can't be parsed.
-fn json_get_int(j : Json) -> Int? {
+fn json_get_int(j : Json) -> Int32? {
   match j {
     Number(n, ..) => Some(n.to_int())
     String(s) =>
@@ -2551,7 +2551,7 @@ fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
   // Frames: accept numbers (modern) or comma-separated strings
   // (legacy "1,2,3"). De-dup and sort ascending.
   let frames_set : Map[String, Bool] = Map([])
-  let frames_acc : Array[Int] = []
+  let frames_acc : Array[Int32] = []
   for entry in raw_frames {
     match json_get_int(entry) {
       Some(n) =>
@@ -2667,7 +2667,7 @@ pub fn serialize_label_text(text : String) -> (String, String) raise {
 /// offset `from`. Returns the index of the value's first byte (right
 /// after `:` and any whitespace) or `-1` if not found. Hand-rolled to
 /// stay consistent with the other light parsers in this file.
-fn find_value_after_key(s : String, from : Int, key : String) -> Int {
+fn find_value_after_key(s : String, from : Int32, key : String) -> Int32 {
   let n = s.length()
   let key_len = key.length()
   let mut i = from
@@ -2709,7 +2709,7 @@ fn find_value_after_key(s : String, from : Int, key : String) -> Int {
 /// `idx` past the closing quote. Supports `\"`, `\\`, `\/`, `\n`, `\r`,
 /// `\t`, `\b`, `\f`, `\uXXXX` — more than we need for label JSON but
 /// cheap to include.
-fn read_json_string(s : String, idx : Int) -> (String, Int)? {
+fn read_json_string(s : String, idx : Int32) -> (String, Int32)? {
   let n = s.length()
   if idx >= n || s[idx] != '"' {
     return None
@@ -2722,7 +2722,7 @@ fn read_json_string(s : String, idx : Int) -> (String, Int)? {
       if j + 1 >= n {
         return None
       }
-      let e = Int::unsafe_to_char(s[j + 1].to_int())
+      let e = Int32::unsafe_to_char(s[j + 1].to_int())
       if e == '"' {
         buf.write_char('"')
       } else if e == '\\' {
@@ -2752,7 +2752,7 @@ fn read_json_string(s : String, idx : Int) -> (String, Int)? {
     if c == '"' {
       return Some((buf.to_string(), j + 1))
     }
-    buf.write_char(Int::unsafe_to_char(c.to_int()))
+    buf.write_char(Int32::unsafe_to_char(c.to_int()))
     j = j + 1
   }
   None
@@ -2763,7 +2763,7 @@ fn read_json_string(s : String, idx : Int) -> (String, Int)? {
 /// (which must be `{`). Returns the parsed annotation and the index
 /// right after the closing `}`. Returns `None` if the entry is not
 /// a recognizable object — caller skips it.
-fn parse_one_info(s : String, idx : Int) -> (ExportAnn, Int)? {
+fn parse_one_info(s : String, idx : Int32) -> (ExportAnn, Int32)? {
   let n = s.length()
   if idx >= n || s[idx] != '{' {
     return None
@@ -2916,7 +2916,7 @@ fn parse_points_string(s : String) -> Array[(Double, Double)] {
 /// Parse `[[x,y],[x,y],...]` starting at the opening `[`. We balance
 /// brackets and skip string contents. Each inner `[...]` becomes one
 /// `(x, y)` point.
-fn parse_points_array(s : String, start : Int) -> Array[(Double, Double)] {
+fn parse_points_array(s : String, start : Int32) -> Array[(Double, Double)] {
   let out : Array[(Double, Double)] = []
   let n = s.length()
   if start >= n || s[start] != '[' {
@@ -3022,7 +3022,7 @@ fn parse_export_anns(text : String) -> Array[ExportAnn] {
   let out : Array[ExportAnn] = []
   // Strip UTF-8 BOM if present.
   let trimmed = if text.length() > 0 &&
-    Int::unsafe_to_char(text[0].to_int()) == bom_char {
+    Int32::unsafe_to_char(text[0].to_int()) == bom_char {
     text[1:].to_owned()
   } else {
     text
@@ -3119,7 +3119,7 @@ fn xml_escape(s : String) -> String {
 
 ///|
 /// Round a positive double to the nearest integer (half-up).
-fn round_half_up(x : Double) -> Int {
+fn round_half_up(x : Double) -> Int32 {
   let whole = x.to_int()
   let frac = x - whole.to_double()
   if frac >= 0.5 {
@@ -3138,8 +3138,8 @@ fn round_half_up(x : Double) -> Int {
 fn voc_xml_for(
   folder : String,
   filename : String,
-  width : Int,
-  height : Int,
+  width : Int32,
+  height : Int32,
   anns : Array[ExportAnn],
 ) -> String {
   let buf = StringBuilder()
@@ -3217,10 +3217,10 @@ fn voc_xml_for(
 /// normalised to `[0, 1]` against the image dimensions. Empty output
 /// when the image has no qualifying boxes (a YOLO convention).
 fn yolo_txt_for(
-  class_ids : Map[String, Int],
+  class_ids : Map[String, Int32],
   anns : Array[ExportAnn],
-  width : Int,
-  height : Int,
+  width : Int32,
+  height : Int32,
 ) -> String {
   if width <= 0 || height <= 0 {
     return ""
@@ -3280,7 +3280,7 @@ fn format_yolo_coord(x : Double) -> String {
 /// Combine an integer part and a 6-digit fractional part into a YOLO
 /// coordinate. The frac must already be in `[0, 999_999]`; we left-
 /// pad it to the requested width.
-fn pad_left_zeros(whole : String, frac : Int, width : Int) -> String {
+fn pad_left_zeros(whole : String, frac : Int32, width : Int32) -> String {
   let frac_str = frac.to_string()
   let n = width - frac_str.length()
   let mut padded = frac_str
@@ -3489,7 +3489,7 @@ async fn export_yolo_internal(
     pair_anns.push((stem, anns))
   }
   // Map class name -> id.
-  let class_ids : Map[String, Int] = Map([])
+  let class_ids : Map[String, Int32] = Map([])
   let mut i = 0
   while i < classes_ordered.length() {
     class_ids[classes_ordered[i]] = i
@@ -3794,9 +3794,9 @@ pub struct ImportCocoRequest {
 /// hard failures (read error, write failure). `errors` is capped at
 /// 32 entries so a pathological input cannot blow up the wire reply.
 pub struct ImportReply {
-  imported_count : Int
-  skipped_count : Int
-  error_count : Int
+  imported_count : Int32
+  skipped_count : Int32
+  error_count : Int32
   classes : Array[String]
   errors : Array[String]
 } derive(ToJson, Eq, Debug)
@@ -3863,7 +3863,11 @@ pub fn import_split_whitespace(s : String) -> Array[String] {
 /// body-start offset and the offset just past the closing tag's
 /// `<`. Returns `(-1, -1)` if no such element exists. Self-closing
 /// `<tag/>` is reported as not-found (no body to return).
-pub fn xml_find_element(s : String, from : Int, tag : String) -> (Int, Int) {
+pub fn xml_find_element(
+  s : String,
+  from : Int32,
+  tag : String,
+) -> (Int32, Int32) {
   let n = s.length()
   let open_prefix = "<" + tag
   let open_len = open_prefix.length()
@@ -4024,8 +4028,8 @@ async fn read_yolo_classes(dir : String) -> Array[String] {
 pub fn parse_yolo_lines(
   lines : Array[String],
   classes : Array[String],
-  img_w : Int,
-  img_h : Int,
+  img_w : Int32,
+  img_h : Int32,
 ) -> Array[ExportAnn] {
   let out : Array[ExportAnn] = []
   for line in lines {
