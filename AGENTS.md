@@ -2,7 +2,7 @@
 
 Image & video annotation desktop app on a MoonBit + Proton native stack. One JSON file per
 image/video, 4 annotation primitives (rect / polygon / keypoint / binding), Pascal VOC + YOLO +
-COCO export, CEF shell via Proton 0.3.4, plus an optional headless `--stdio` JSON-RPC bridge for
+COCO export, CEF shell via Proton 0.4.0, plus an optional headless `--stdio` JSON-RPC bridge for
 non-CEF GUIs.
 
 **Domain-independent, and independent in origin.** The primitives, class system, on-disk format,
@@ -19,10 +19,25 @@ Video-mode details: see [doc/VIDEO_LABELING.md](doc/VIDEO_LABELING.md).
 
 - One-time CEF download into `~/.proton/store/` (measured ~850 MB per platform on Windows
   0.3.4): `proton_cli cef setup`. The CLI itself is a mooncakes binary package —
-  `moon install moonbit-community/proton_cli@<version>`, pinned to the proton version in
+  `moon install moonbit-community/proton_cli@0.4.0`, pinned to the proton version in
   `moon.mod` (Proton modules are lockstep-versioned).
 - Update MoonBit deps: `moon update`
 - Frontend deps: `cd frontend && npm install`
+
+> **`moon >= 0.1.20261012` rejects a dependency's `moon.mod.json`** with
+> `` `moon.mod.json` at '.mooncakes/<pkg>' is no longer supported. `` — it
+> aborts the build before any of our source is read. If you ever see it, run
+> `moon fmt` **inside that package directory**: at the project root `moon fmt`
+> only formats this module's own packages and silently does nothing for a
+> dependency.
+>
+> The root module no longer hits this — `wzzc-dev/moui` was an **unused**
+> import here (every `@moui.` reference lives in `app_moui/`, a separate
+> module) and removing it drops the whole `Milky2018/*` chain that carried
+> `moon_accesskit@0.3.0`. Do not re-add moui to the root `moon.mod` without
+> checking that chain, or `moon publish` breaks: it extracts the package into
+> a temp directory with its own fresh cache, so no CI step can pre-empt it.
+> `app_moui/` is still blocked either way — see its status note below.
 
 ## Commands
 
@@ -89,7 +104,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 
 - `app/`                   — runnable entry. `main.mbt` routes to one of two modes:
   - CEF/Proton (default): `@proton.file(...).identifier(...).capability(...).run_or_abort()` —
-    the 0.3.4 `App` builder API that loads `frontend/dist/index.html` into a CEF webview.
+    the 0.4.0 `App` builder API that loads `frontend/dist/index.html` into a CEF webview.
   - `--stdio` (headless): dispatches the same 24 ops as JSON-RPC over stdin/stdout (see
     "Stdio JSON-RPC bridge" below). Selected by passing `--stdio` as the first arg.
   `stdio_main.mbt` holds the stdio loop. Both modes share the `@labeler.dispatch_op`
@@ -108,13 +123,14 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - `tests/`, `qa/`          — black-box tests. `*_blackbox_test.mbt` at the repo root + Gherkin
   feature `image_codecs.feature`; frontend QA in `frontend/qa/webkit_picker_blackbox.test.mjs`.
 - `target/proton-dist/`    — packaged exe + zip (gitignored).
-- `proton.project.json`    — 0.3.4 canonical app config: identifier, backend package path,
+- `proton.project.json`    — 0.4.0 canonical app config: identifier, backend package path,
   frontend dev/build commands, product name + version + output dir + formats.
   (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration; the 0.2.5 → 0.3.3
-  migration kept the same `proton.project.json` schema.)
-- `moon.mod`               — `riantr/moonbit_labeler` v0.2.13, depends on `moonbit-community/proton@0.3.4`,
-  `proton_contract@0.3.4`, `moonbitlang/async@0.22.4`, and `wzzc-dev/moui@0.1.12`. The image codec comes from the shared
-  `riantr/moonbit_image@0.3.7` package (pulled in transitively). A prior vendored copy under
+  migration kept the same `proton.project.json` schema, as did 0.4.0.)
+- `moon.mod`               — `riantr/moonbit_labeler` v0.2.13, depends on `moonbit-community/proton@0.4.0`,
+  `proton_contract@0.4.0`, `moonbitlang/async@0.22.4`, and `riantr/moonbit_image@0.3.7`.
+  MoUI is **not** a root dependency: it is only used by `app_moui/`, which is its own
+  module with its own `moon.mod`. A prior vendored copy under
   `extensions/image/` was removed in commit b6dd1b1; do not reintroduce it without first
   re-reading the deletion rationale in that commit's message.
 
@@ -135,6 +151,14 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   `moon fmt --check` **repo-wide as a hard gate** — the repo is fmt-clean as of
   `cf55c57` (`style: apply moon fmt to clear the pre-existing drift`, 7 files,
   315/184), so any new drift fails the build.
+- **moon 0.1.20261012's formatter rewrites `Int` to `Int32`.** Running a bare
+  `moon fmt` on it changes 3 files (~79/75 lines, all in
+  `labeler.mbt` and the two blackbox drivers) purely by rewriting that type
+  annotation. That is the formatter's canonical form, **not** a compile
+  requirement — the pre-rewrite tree still checks clean on the same moon — but
+  it is required for `moon fmt --check` to pass, so it is committed. Expect
+  it again after any future moon upgrade and do not "fix" it back: reverting
+  puts CI red.
 - The "Verification" notes in the phase history below that say *"`moon fmt
   --check` flags none of the N touched files (the repo-wide fmt drift is
   pre-existing in `component_blackbox_test.mbt` and unrelated files, so `moon
@@ -178,7 +202,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   After any change under `frontend/src/`, re-run `npm run build` (or let `proton_cli dev`
   rebuild) before the change is visible in the packaged binary.
 - CEF runtime, Proton native prebuilts, `target/`, and `_build/` are all gitignored. The
-  documented target is **Proton 0.3.4 + CEF 150.0.19**.
+  documented target is **Proton 0.4.0 + CEF 150.0.19**.
 - **Proton 0.3.3 moved the CEF install out of the repo.** The old
   `.proton/runtimes/` layout (Proton 0.1.12 / 0.2.5) is gone. 0.3.3's
   `proton/build.mjs` resolves the SDK to
@@ -210,15 +234,40 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 
 ## MoUI `app_moui/` migration status
 
-> **Status: SPIKE SCOPE — future cleanup candidate.** `app_moui/` is a
-> parallel spike demonstrating an alternative native view tree (MoUI 0.1.12)
-> that could replace the CEF/JS frontend. It is **not** on the production
-> path; the production frontend is `frontend/` (Vite + vanilla JS + CEF
-> 150.0.19). The 217 tests in `app_moui/` are reference + smoke tests, not
-> the gating regression suite — the gating suite is
-> `extensions/labeler/labeler_test.mbt` (39 tests). `app_moui/` should
+> **Status: SPIKE SCOPE — future cleanup candidate, and currently unbuildable
+> with the current toolchain.** `app_moui/` is a parallel spike demonstrating an
+> alternative native view tree (MoUI 0.1.12) that could replace the CEF/JS
+> frontend. It is **not** on the production path; the production frontend is
+> `frontend/` (Vite + vanilla JS + CEF 150.0.19). The 217 tests in `app_moui/`
+> are reference + smoke tests, not the gating regression suite — the gating
+> suite is `extensions/labeler/labeler_test.mbt` (39 tests). `app_moui/` should
 > eventually either be promoted to production scope (when MoUI upstream
 > fixes the `@views.button` rendering bug) or be deleted entirely.
+
+> **`app_moui/` does not build on moon 0.1.20261012, and both escapes are
+> upstream — verified, not assumed:**
+>
+> - **moui 0.1.12** (its current pin) pulls `mizchi/svg@0.2.1`, which the new
+>   moon rejects outright for its deprecated `moon.mod.json`. That one cannot
+>   be migrated at all: `mizchi/svg/component` is a sub-module with a *local*
+>   dependency, which `moon.mod` cannot express — it needs `moon.work`
+>   workspace config instead. `moon fmt` there fails with
+>   `moon.mod does not support local dependency ... use workspace
+>   configuration in moon.work instead`.
+> - **moui 0.2.2** drops `mizchi/svg` for `Milky2018/svg` (so the manifest
+>   problem goes away) but pulls `Milky2018/css@0.5.3`, which declares
+>   `pub(all) enum Float` — and `Float` is now a **reserved type name**. The
+>   build fails with `"Float" is a reserved type name. Cannot declare it as
+>   type`. 0.5.3 is the newest css on the registry, so there is no fixed
+>   version to move to.
+>
+> So its `moon.mod` is deliberately **left on 0.1.12**: the upgrade cannot be
+> verified here, and committing an unverified bump would hide the real blocker
+> behind a wall of unrelated errors. Revisit when MoUI ships a `css` release
+> without `enum Float`. Note the root module moved to moui 0.2.2 briefly and
+> is unaffected — it imports moui but never builds the css package — and then
+> **dropped moui entirely as an unused import**. `app_moui/` is a separate
+> module with its own `moon.mod` and its own `.mooncakes/`.
 
 The CEF/JS frontend is being replaced by a native Moui 0.1.12 view tree driven through
 `app_moui/main_native.mbt`. Phase history:

@@ -28,14 +28,14 @@ data format and project layout see that repo's README and
 
 ### Prerequisites
 
-- **MoonBit** ≥ 0.1.20260803 (the build host has `moon 0.1.20260920`)
+- **MoonBit** ≥ 0.1.20260803 (the build host has `moon 0.1.20261012`)
 - **Node.js** ≥ 18 with `npm` on PATH (for the Vite frontend)
 - **Proton CLI** — `proton_cli` is the wrapper that drives the native
   AOT compile, downloads the CEF runtime, and assembles the exe. It is a
   mooncakes binary package and is installed with:
 
   ```sh
-  moon install moonbit-community/proton_cli@0.3.4
+  moon install moonbit-community/proton_cli@0.4.0
   ```
 
   which drops it in `~/.moon/bin`. **Pin the version to the one in
@@ -50,7 +50,7 @@ data format and project layout see that repo's README and
 
 ```sh
 # From the project root:
-moon install moonbit-community/proton_cli@0.3.4  # the CLI itself
+moon install moonbit-community/proton_cli@0.4.0  # the CLI itself
 moon update                                     # sync moon.mod deps
 proton_cli cef setup                            # download the CEF runtime
 cd frontend && npm install && cd ..             # Vite + frontend deps
@@ -123,7 +123,7 @@ in the system directory.
 ├── app/                            # runnable entry (CEF + stdio)
 ├── extensions/labeler/             # 24 IPC ops + label/VOC/YOLO/COCO pipeline
 ├── frontend/                       # Vite + vanilla-JS UI (built into the exe at pack time)
-├── moon.mod                        # deps: proton@0.3.4, proton_contract@0.3.4, moonbit_image@0.3.7, moui@0.1.12, async@0.22.4
+├── moon.mod                        # deps: proton@0.4.0, proton_contract@0.4.0, moonbit_image@0.3.7, async@0.22.4
 ├── proton.project.json             # identifier, frontend, package (output dir, formats, version)
 └── AGENTS.md                       # setup + commands + smoke-test recipe (read first)
 ```

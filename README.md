@@ -42,7 +42,7 @@ follows from that problem rather than from derivation.
 ```powershell
 # proton_cli is a mooncakes binary package, not part of the moon installer.
 # Pin it to the version in moon.mod (Proton modules are lockstep-versioned).
-moon install moonbit-community/proton_cli@0.3.4
+moon install moonbit-community/proton_cli@0.4.0
 
 # One-time CEF runtime download (~850 MB) into ~/.proton/store/
 proton_cli cef setup
@@ -102,8 +102,8 @@ directory is produced either way, so zip it yourself afterwards — see
 
 | Layer | Choice | Why |
 |---|---|---|
-| Backend | MoonBit 0.1.20260920 + async runtime | Native AOT compile, no GC pauses in the hot path |
-| UI shell | Proton 0.3.4 + CEF 150.0.19 | Self-contained portable exe, no Electron |
+| Backend | MoonBit 0.1.20261012 + async runtime | Native AOT compile, no GC pauses in the hot path |
+| UI shell | Proton 0.4.0 + CEF 150.0.19 | Self-contained portable exe, no Electron |
 | Image codec | shared [`riantr/moonbit_image@0.3.7`](https://mooncakes.io/riantr/moonbit_image) (MIT) | Faster than `mizchi/image` for our workload; includes JPEG IDCT fix |
 | Frontend | Vanilla JS + Vite | No framework lock-in, fast cold reload |
 | IPC | MoonBit `@proton_contract.Command` + `@proton_extension.typed` | Type-safe Request/Reply structs, bound via `CommandRegistrar` |
@@ -120,11 +120,11 @@ don't match the documented target.
 ```
 .
 ├── app/
-│   └── main.mbt                       # 0.3.4 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
+│   └── main.mbt                       # 0.4.0 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
 ├── extensions/
 │   ├── labeler/                       # 24 IPC ops + the image/label/VOC/YOLO/COCO pipeline
 │   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
-│   │   ├── extension.mbt               # 0.3.4 extension registration (returns @proton_contract.Extension; 24 commands registered via @proton_extension.typed)
+│   │   ├── extension.mbt               # 0.4.0 extension registration (returns @proton_contract.Extension; 24 commands registered via @proton_extension.typed)
 │   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
 │   │   └── moon.pkg
 │   # Image codec lives in the shared riantr/moonbit_image@0.3.7 mooncake
@@ -145,8 +145,8 @@ don't match the documented target.
 │       └── style.css                  # all CSS in one place
 ├── data/                              # local sample dataset (Image@CARS.Part.01)
 ├── doc/VIDEO_LABELING.md
-├── proton.project.json                # 0.3.4 canonical app config (identifier, backend, frontend, package)
-├── moon.mod                           # deps: proton@0.3.4 + proton_contract@0.3.4 + moonbit_image@0.3.7 + moui@0.1.12 + async@0.22.4
+├── proton.project.json                # 0.4.0 canonical app config (identifier, backend, frontend, package)
+├── moon.mod                           # deps: proton@0.4.0 + proton_contract@0.4.0 + moonbit_image@0.3.7 + async@0.22.4
 └── README.mbt.md                      # generated Proton README (do not edit)
 ```
 
