@@ -75,6 +75,7 @@ function Invoke-Native {
     $o = Join-Path $logDir "$Tag.out"; $e = Join-Path $logDir "$Tag.err"
     $p = Start-Process -FilePath $File -ArgumentList $ArgList -WorkingDirectory $WorkingDir `
         -NoNewWindow -Wait -PassThru -RedirectStandardOutput $o -RedirectStandardError $e
+    if ($null -eq $p) { return @{ Exit = 127; Out = $o; Err = $e } }
     return @{ Exit = $p.ExitCode; Out = $o; Err = $e }
 }
 
@@ -100,9 +101,46 @@ function Get-Versions {
         ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
 }
 
+function Compare-Version {
+    <# Semver-ish ordering: -1 / 0 / 1. Main releases compare
+       numerically; a `-prerelease` suffix sorts BELOW the same number
+       without one, so 0.5.4-0.2.1 < 0.5.4 < 0.5.5. Needed because
+       Proton's `wzzc-dev/window` uses prereleases like that. #>
+    param([string]$A, [string]$B)
+    $aPre = $false; $bPre = $false
+    $aMain = $A; $bMain = $B
+    if ($A -match '^(.*?)-(.+)$') { $aMain = $Matches[1]; $aPre = $true }
+    if ($B -match '^(.*?)-(.+)$') { $bMain = $Matches[1]; $bPre = $true }
+    $av = [version]$aMain; $bv = [version]$bMain
+    if ($av -ne $bv) { return $(if ($av -lt $bv) { -1 } else { 1 }) }
+    if ($aPre -and -not $bPre) { return -1 }
+    if ($bPre -and -not $aPre) { return 1 }
+    return 0
+}
+
 function Test-Compiles {
     param([string]$ModDir)
-    $r = Invoke-Native -File 'moon' -ArgumentList $CheckArgs -Tag 'probe' -WorkingDirectory $ModDir
+    # -ArgList and -WorkingDir must match Invoke-Native's parameter names
+    # exactly. PowerShell binds a supplied name only when it is a *prefix*
+    # of the real one, and a non-matching name fails silently under
+    # ErrorActionPreference=Continue -- the default value survives and the
+    # probe quietly runs in the wrong directory. That happened here twice:
+    # `-ArgumentList` left $ArgList null (every module looked broken), then
+    # `-WorkingDirectory` left $WorkingDir at the repo root (app_moui
+    # "compiled" by borrowing the root module's result). Both produced
+    # confident wrong answers rather than errors.
+    if (-not (Test-Path (Join-Path $ModDir 'moon.mod'))) {
+        Write-Host ("  probe error: no moon.mod under {0}" -f $ModDir) -ForegroundColor Red
+        return $false
+    }
+    $r = Invoke-Native -File 'moon' -ArgList $CheckArgs -Tag 'probe' -WorkingDir $ModDir
+    if ($null -eq $r) {
+        Write-Host '  probe error: the probe returned nothing' -ForegroundColor Red
+        return $false
+    }
+    # Read the directory back out of the result so the working directory
+    # actually used is visible in the log rather than assumed.
+    Write-Host ("  probe: moon check in {0} -> exit {1}" -f $ModDir.Replace($repo + '\', ''), $r.Exit) -ForegroundColor DarkGray
     return ($r.Exit -eq 0)
 }
 
@@ -143,13 +181,31 @@ foreach ($mod in $Module) {
 
     $original = [System.IO.File]::ReadAllText($modFile, $utf8)
 
+    # Pin rewrites go through a helper rather than inline. `-replace`
+    # takes a comma-separated pair, and inside a method call that comma is
+    # parsed as an argument separator -- WriteAllText then gets four
+    # arguments and there is no four-argument overload. That failure is
+    # silent under ErrorActionPreference=Continue, so a candidate that
+    # "compiled" was really the unmodified file.
+    function Set-Pin {
+        param([string]$Path, [string]$Text, [string]$Pkg, [string]$From, [string]$To)
+        $pattern = '"' + [regex]::Escape($Pkg + '@' + $From) + '"'
+        $updated = $Text -replace $pattern, ('"' + $Pkg + '@' + $To + '"')
+        [System.IO.File]::WriteAllText($Path, $updated, $utf8)
+    }
+
     foreach ($line in ($original -split "`r?`n")) {
         if ($line -notmatch '"([\w-]+/[\w-]+)@([\d][^"]*)"') { continue }
         $pkg = $Matches[1]; $have = $Matches[2]
         $all = Get-Versions $pkg
         if (-not $all) { Write-Host ("  {0,-30} {1,-9} could not list versions" -f $pkg, $have) -ForegroundColor DarkGray; continue }
 
-        $newer = @($all | Where-Object { $_ -ne $have })
+        # Strictly newer only. An earlier revision used `-ne $have`, which
+        # left every OLDER version in the candidate list, so the walk ran
+        # past latest down through history and happily "found" proton
+        # 0.3.4 as the newest usable version of a module pinned at 0.4.0.
+        $newer = @($all | Where-Object { (Compare-Version $_ $have) -gt 0 } |
+            Sort-Object { [version](($_ -split '-')[0]) } -Descending)
         if (-not $newer) {
             Write-Host ("  {0,-30} {1,-9} already newest known" -f $pkg, $have) -ForegroundColor Green
             continue
@@ -164,7 +220,7 @@ foreach ($mod in $Module) {
                 continue
             }
             # Metadata says this one is plausible; only compiling can decide.
-            [System.IO.File]::WriteAllText($modFile, $original -replace ('"' + [regex]::Escape($pkg) + '@' + [regex]::Escape($have) + '"'), ('"' + $pkg + '@' + $cand + '"'), $utf8)
+            Set-Pin -Path $modFile -Text $original -Pkg $pkg -From $have -To $cand
             if (Test-Compiles $modDir) {
                 $chosen = $cand; $why = $cand
                 Write-Host ("  {0,-30} {1,-9} -> {2} COMPILES" -f $pkg, $have, $cand) -ForegroundColor Green
@@ -176,30 +232,46 @@ foreach ($mod in $Module) {
 
         if ($chosen -ne $have) {
             if ($Apply) {
-                [System.IO.File]::WriteAllText($modFile, $original -replace ('"' + [regex]::Escape($pkg) + '@' + [regex]::Escape($have) + '"'), ('"' + $pkg + '@' + $chosen + '"'), $utf8)
+                Set-Pin -Path $modFile -Text $original -Pkg $pkg -From $have -To $chosen
                 $original = [System.IO.File]::ReadAllText($modFile, $utf8)
                 $changedAny = $true
                 Write-Host ("  APPLIED: {0} {1} -> {2}" -f $pkg, $have, $chosen) -ForegroundColor Green
             }
             else {
                 Write-Host ("  WOULD UPDATE: {0} {1} -> {2}" -f $pkg, $have, $chosen) -ForegroundColor Yellow
-                # Re-apply for the next dependency in the list.
-                [System.IO.File]::WriteAllText($modFile, $original -replace ('"' + [regex]::Escape($pkg) + '@' + [regex]::Escape($have) + '"'), ('"' + $pkg + '@' + $chosen + '"'), $utf8)
+                # Keep it applied while the remaining dependencies are
+                # probed, so each candidate is tested against the state
+                # the previous one produced. The final restore below undoes
+                # all of it when -Apply was not given.
+                Set-Pin -Path $modFile -Text $original -Pkg $pkg -From $have -To $chosen
                 $original = [System.IO.File]::ReadAllText($modFile, $utf8)
                 $unresolved += "$label/$pkg -> $chosen (not applied; rerun with -Apply)"
             }
         }
         elseif ($why -eq $have) {
-            $tried = @($newer | Where-Object { $m = Get-Manifest $pkg $_; $m -and $m.build_status -eq 'success' -and $m.has_package -eq $true }).Count
+            $tried = @($newer | Where-Object {
+                    $m = Get-Manifest $pkg $_
+                    $m -and $m.build_status -eq 'success' -and $m.has_package -eq $true
+                }).Count
             if ($tried -gt 0) { Write-Host ("  {0,-30} {1,-9} stays: {2} newer version(s) tried, none compiles here" -f $pkg, $have, $tried) -ForegroundColor Yellow }
             else { Write-Host ("  {0,-30} {1,-9} stays: every newer version is unusable upstream" -f $pkg, $have) -ForegroundColor Yellow }
         }
     }
 
-    # Leave the module compiling no matter what happened above.
+    # Restore the module's exact starting bytes. Testing a candidate means
+    # writing it into moon.mod, so report-only mode must put the file back
+    # unconditionally -- leaving that to the compile-failure guard alone is
+    # luck, not design, and a candidate that happens to still compile would
+    # silently persist a downgrade. In -Apply mode $original already
+    # carries the accumulated upgrades, so this keeps them and drops only
+    # the candidate under test.
     if (-not (Test-Compiles $modDir)) {
         [System.IO.File]::WriteAllText($modFile, $original, $utf8)
         Write-Host '  restored: the edited module did not compile, reverting' -ForegroundColor Red
+    }
+    elseif (-not $Apply) {
+        [System.IO.File]::WriteAllText($modFile, $original, $utf8)
+        Write-Host '  restored (report-only; no pins changed)' -ForegroundColor DarkGray
     }
 }
 

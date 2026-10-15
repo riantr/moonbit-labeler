@@ -254,12 +254,19 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 >   workspace config instead. `moon fmt` there fails with
 >   `moon.mod does not support local dependency ... use workspace
 >   configuration in moon.work instead`.
+> - **moui 0.2.3** is currently `latest` and must not be taken: its registry
+>   manifest reports `"build_status": "failed"` and `"has_package": false`, so
+>   there is no artifact to download. This is why dependency bumps here are
+>   resolved by measurement rather than by tracking `latest`; see
+>   `scripts/deps-check.ps1`.
 > - **moui 0.2.2** drops `mizchi/svg` for `Milky2018/svg` (so the manifest
 >   problem goes away) but pulls `Milky2018/css@0.5.3`, which declares
 >   `pub(all) enum Float` — and `Float` is now a **reserved type name**. The
 >   build fails with `"Float" is a reserved type name. Cannot declare it as
 >   type`. 0.5.3 is the newest css on the registry, so there is no fixed
->   version to move to.
+>   version to move to. Note css 0.5.3 itself reports `build_status:
+>   success` — it built fine under the publisher's own toolchain. **A green
+>   build_status means "upstream built this", never "it compiles for you."**
 >
 > So its `moon.mod` is deliberately **left on 0.1.12**: the upgrade cannot be
 > verified here, and committing an unverified bump would hide the real blocker
