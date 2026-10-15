@@ -207,7 +207,7 @@ version.
 
 The packaged binary is at
 `target/proton-dist/moonbit-labeler/moonbit-labeler.exe`. (The `zip` format
-in `proton.project.json` would produce a sibling `moonbit-labeler-0.2.13.zip` —
+in `proton.project.json` would produce a sibling `moonbit-labeler-0.2.14.zip` —
 self-contained, drop on any Windows machine, unzip, double-click the exe.
 Note: Proton's built-in zip step is upstream-broken on Windows (reported on
 0.2.5, still unverified as fixed on 0.3.4); ship

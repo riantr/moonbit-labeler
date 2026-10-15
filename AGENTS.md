@@ -127,7 +127,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   frontend dev/build commands, product name + version + output dir + formats.
   (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration; the 0.2.5 → 0.3.3
   migration kept the same `proton.project.json` schema, as did 0.4.0.)
-- `moon.mod`               — `riantr/moonbit_labeler` v0.2.13, depends on `moonbit-community/proton@0.4.0`,
+- `moon.mod`               — `riantr/moonbit_labeler` v0.2.14, depends on `moonbit-community/proton@0.4.0`,
   `proton_contract@0.4.0`, `moonbitlang/async@0.22.5`, and `riantr/moonbit_image@0.3.7`.
   MoUI is **not** a root dependency: it is only used by `app_moui/`, which is its own
   module with its own `moon.mod`. A prior vendored copy under
