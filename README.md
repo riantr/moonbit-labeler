@@ -146,7 +146,7 @@ don't match the documented target.
 ├── data/                              # local sample dataset (Image@CARS.Part.01)
 ├── doc/VIDEO_LABELING.md
 ├── proton.project.json                # 0.4.0 canonical app config (identifier, backend, frontend, package)
-├── moon.mod                           # deps: proton@0.4.0 + proton_contract@0.4.0 + moonbit_image@0.3.7 + async@0.22.4
+├── moon.mod                           # deps: proton@0.4.0 + proton_contract@0.4.0 + moonbit_image@0.3.7 + async@0.22.5
 └── README.mbt.md                      # generated Proton README (do not edit)
 ```
 

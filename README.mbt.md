@@ -123,7 +123,7 @@ in the system directory.
 ├── app/                            # runnable entry (CEF + stdio)
 ├── extensions/labeler/             # 24 IPC ops + label/VOC/YOLO/COCO pipeline
 ├── frontend/                       # Vite + vanilla-JS UI (built into the exe at pack time)
-├── moon.mod                        # deps: proton@0.4.0, proton_contract@0.4.0, moonbit_image@0.3.7, async@0.22.4
+├── moon.mod                        # deps: proton@0.4.0, proton_contract@0.4.0, moonbit_image@0.3.7, async@0.22.5
 ├── proton.project.json             # identifier, frontend, package (output dir, formats, version)
 └── AGENTS.md                       # setup + commands + smoke-test recipe (read first)
 ```

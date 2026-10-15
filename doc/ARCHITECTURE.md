@@ -29,7 +29,7 @@ The IPC bridge is bidirectional JSON-RPC over the V8↔C FFI.
 
 ```
 moon.mod  (riantr/moonbit_labeler@0.2.12)
-  ├── moonbitlang/async@0.22.4
+  ├── moonbitlang/async@0.22.5
   ├── moonbit-community/proton@0.4.0          (CEF runtime)
   ├── moonbit-community/proton_contract@0.4.0 (typed IPC contract)
   ├── riantr/moonbit_image@0.3.7              (BMP/QOI/TGA/PNG/GIF/JPEG)
