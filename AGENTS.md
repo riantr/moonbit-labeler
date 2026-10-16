@@ -234,49 +234,71 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 
 ## MoUI `app_moui/` migration status
 
-> **Status: SPIKE SCOPE — future cleanup candidate, and currently unbuildable
-> with the current toolchain.** `app_moui/` is a parallel spike demonstrating an
-> alternative native view tree (MoUI 0.1.12) that could replace the CEF/JS
-> frontend. It is **not** on the production path; the production frontend is
-> `frontend/` (Vite + vanilla JS + CEF 150.0.19). The 217 tests in `app_moui/`
-> are reference + smoke tests, not the gating regression suite — the gating
-> suite is `extensions/labeler/labeler_test.mbt` (39 tests). `app_moui/` should
-> eventually either be promoted to production scope (when MoUI upstream
-> fixes the `@views.button` rendering bug) or be deleted entirely.
+> **Status: SPIKE SCOPE — future cleanup candidate, blocked on exactly one
+> upstream line.** `app_moui/` is a parallel spike demonstrating an
+> alternative native view tree that could replace the CEF/JS frontend. It is
+> **not** on the production path; the production frontend is `frontend/`
+> (Vite + vanilla JS + CEF 150.0.19). The 217 tests in `app_moui/` are
+> reference + smoke tests, not the gating regression suite — the gating suite
+> is `extensions/labeler/labeler_test.mbt`. `app_moui/` should eventually either
+> be promoted to production scope (when MoUI upstream fixes the
+> `@views.button` rendering bug) or be deleted entirely. See below for exactly
+> what is currently blocking it.
 
-> **`app_moui/` does not build on moon 0.1.20261012, and both escapes are
-> upstream — verified, not assumed:**
+> **Precise state, re-measured 2026-10-16.** `app_moui/` is ONE error
+> away from building on moon 0.1.20261012. On `wzzc-dev/moui@0.2.2` (the
+> newest moui whose registry build actually succeeded) `moon check`
+> reports exactly **one** error, in a third-party package:
 >
-> - **moui 0.1.12** (its current pin) pulls `mizchi/svg@0.2.1`, which the new
->   moon rejects outright for its deprecated `moon.mod.json`. That one cannot
->   be migrated at all: `mizchi/svg/component` is a sub-module with a *local*
->   dependency, which `moon.mod` cannot express — it needs `moon.work`
->   workspace config instead. `moon fmt` there fails with
->   `moon.mod does not support local dependency ... use workspace
->   configuration in moon.work instead`.
-> - **moui 0.2.3** is currently `latest` and must not be taken: its registry
->   manifest reports `"build_status": "failed"` and `"has_package": false`, so
->   there is no artifact to download. This is why dependency bumps here are
->   resolved by measurement rather than by tracking `latest`; see
->   `scripts/deps-check.ps1`.
-> - **moui 0.2.2** drops `mizchi/svg` for `Milky2018/svg` (so the manifest
->   problem goes away) but pulls `Milky2018/css@0.5.3`, which declares
->   `pub(all) enum Float` — and `Float` is now a **reserved type name**. The
->   build fails with `"Float" is a reserved type name. Cannot declare it as
->   type`. 0.5.3 is the newest css on the registry, so there is no fixed
->   version to move to. Note css 0.5.3 itself reports `build_status:
->   success` — it built fine under the publisher's own toolchain. **A green
->   build_status means "upstream built this", never "it compiles for you."**
+>     Milky2018/css/values/keywords.mbt:82
+>     pub(all) enum Float {
+>       "Float" is a reserved type name. Cannot declare it as type
 >
-> So its `moon.mod` is deliberately **left on 0.1.12**: the upgrade cannot be
-> verified here, and committing an unverified bump would hide the real blocker
-> behind a wall of unrelated errors. Revisit when MoUI ships a `css` release
-> without `enum Float`. Note the root module moved to moui 0.2.2 briefly and
-> is unaffected — it imports moui but never builds the css package — and then
-> **dropped moui entirely as an unused import**. `app_moui/` is a separate
-> module with its own `moon.mod` and its own `.mooncakes/`.
+> Nothing in our code fails. The rest of the module type-checks. So the
+> earlier "dead end" reading was too coarse — it is a single upstream
+> line.
+>
+> That line is already fixed upstream, one version along the same chain:
+>
+>   Milky2018/css@0.6.0   no longer declares `enum Float` (verified by
+>                         extracting the package and grepping it)
+>   Milky2018/svg@0.6.0   pins css 0.6.0 and xml 0.6.0
+>
+> What we cannot do is get there from here:
+>
+> - `wzzc-dev/moui` 0.2.2 **and** 0.2.3 both pin `Milky2018/svg@0.5.3`,
+>   which in turn pins `css@0.5.3`. The newest moui (0.2.3) is itself
+>   unusable: `"build_status": "failed"`, `"has_package": false`.
+> - MoonBit has **no dependency-override mechanism**. `moon check
+>   --patch-file` patches a selected package's source; it does not change
+>   which version of a transitive dependency is resolved. `build` /
+>   `update` / `install` expose no such flag at all.
+> - Forcing it locally by rewriting `Milky2018/svg`'s own manifest in
+>   `.mooncakes/` is not a fix: `.mooncakes/` is gitignored and
+>   re-fetched, so it would not survive CI or another developer.
+>
+> **So: wait for moui to move to `Milky2018/svg@0.6.0`.** That is the
+> single event that unblocks this module. Revisit by re-running the
+> `moon check` above and looking at the error count, not by re-reading
+> this paragraph.
+>
+> **On absorbing `mizchi/svg` into `moonbit_image`: it would not help,
+> and the question is now moot anyway.** `mizchi/svg` is declared by
+> `wzzc-dev/moui@0.1.12`'s own manifest, not by this repository. moon
+> resolves a module's declared dependencies transitively, so nothing we
+> put in our own packages removes that edge — the fetch happens because
+> moui asked for it. And on the moui versions that work at all, the
+> dependency is not `mizchi/svg` but `Milky2018/svg`, which would need
+> the same transitive resolution to override.
+>
+> So its `moon.mod` is deliberately **left on 0.1.12**: the upgrade still
+> cannot be verified here, and committing an unverified bump would hide the
+> one real blocker behind a wall of unrelated errors. The root module dropped
+> moui entirely as an unused import — it never built the css package, and the
+> whole Milky2018 chain it dragged in was breaking `moon publish`. `app_moui/`
+> is a separate module with its own `moon.mod` and its own `.mooncakes/`.
 
-The CEF/JS frontend is being replaced by a native Moui 0.1.12 view tree driven through
+The CEF/JS frontend is being replaced by a native Moui view tree driven through
 `app_moui/main_native.mbt`. Phase history:
 
 - **Phase 17** — `_build/run_smoke.ps1` + `--smoke` flag launches the packaged exe,
