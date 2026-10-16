@@ -291,3 +291,100 @@ jobs:
       # This is coverage that the Windows exe actually builds.
       - name: proton_cli package
         run: proton_cli package --format app
+
+  # app_moui/ is a SECOND MoonBit module -- its own moon.mod, its own
+  # .mooncakes/ -- and it is not a workspace member: moon.work lists only
+  # ".". So nothing above builds it, and it had no CI coverage at all.
+  # That is how it sat broken across a whole moon toolchain upgrade
+  # (moon 0.1.20261012 rejects a deprecated moon.mod.json, and the
+  # Milky2018/css that moui pinned declared `enum Float`, now a
+  # reserved type name) without any job turning red. This job exists to
+  # make that class of failure visible again.
+  #
+  # `moon check` is the gate, not `moon test`, and the reason is worth
+  # stating rather than leaving as an unexplained gap. 16 tests in
+  # disk_io_test.mbt / image_decode_test.mbt / image_header_test.mbt read
+  # the real shipped dataset (data/Image@skin, data/Label@skin), which is
+  # gitignored per-deployment data -- only data/.gitkeep is tracked. In a
+  # clean checkout those 16 fail with `0 != 6`; copying the dataset in
+  # gives 361/361. Running `moon test` here would therefore be red for a
+  # reason that has nothing to do with the code, and committing ~800 KB
+  # of user images to satisfy it contradicts the ignore rule's stated
+  # intent. The other 345 tests are exercised locally by anyone who has
+  # the dataset.
+  #
+  # To close that properly the dataset-dependent tests need to skip when
+  # the fixture is absent rather than fail; that is a change to
+  # app_moui's own suite and was not made unilaterally.
+  app-moui:
+    name: check (app_moui, ubuntu, native)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app_moui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install moon
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      - name: Cache moon deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            app_moui/.mooncakes
+            .mooncakes
+          key: moon-cache-appmoui-${{ runner.os }}-${{ hashFiles('app_moui/moon.mod', 'moon.mod') }}
+          restore-keys: moon-cache-appmoui-${{ runner.os }}-
+
+      # Same cold-runner registry problem as the other jobs: a fresh
+      # checkout has an empty index and no .mooncakes/.
+      - name: Fetch registry index
+        run: moon update
+
+      # MoUI ships its own module prebuild (wzzc-dev/moui/build.js), and
+      # on Linux it runs `pkg-config --cflags glib-2.0 gio-2.0` and
+      # throws when either package is missing -- the same failure mode as
+      # Proton's build.mjs in test-linux. gio-2.0 ships in
+      # libglib2.0-dev, so one package covers both.
+      - name: Install MoUI's Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libglib2.0-dev
+
+      # Milky2018/moon_accesskit@0.3.0 still ships a moon.mod.json,
+      # which moon 0.1.20261012 rejects outright. .mooncakes/ is
+      # gitignored and re-fetched, so this returns on every clean
+      # checkout and has to be migrated per package -- `moon fmt` at the
+      # module root only formats this module's own packages and silently
+      # does nothing for a dependency.
+      #
+      # The `moon check` in front is not a smoke test -- it is there to
+      # MATERIALISE the cache, and it is expected to fail on a cold
+      # runner. `moon update` only refreshes the registry index; package
+      # sources are fetched during a build. So without this line the
+      # loop below scans an empty .mooncakes/, reports "no deprecated
+      # manifests found", and the very next step fails on the manifest it
+      # just claimed was absent. Its non-zero exit is swallowed on
+      # purpose; the real gate is the `moon check` after it, which fails
+      # for any other reason too.
+      - name: Migrate deprecated moon.mod.json in cached dependencies
+        run: |
+          moon check --target native >/dev/null 2>&1 || true
+          found=0
+          while IFS= read -r -d '' manifest; do
+            found=1
+            pkg="$(dirname "$manifest")"
+            echo "migrating ${pkg#.mooncakes/}"
+            ( cd "$pkg" && moon fmt )
+          done < <(find .mooncakes -name moon.mod.json -print0 2>/dev/null)
+          if [ "$found" = 1 ]; then
+            echo "migrated one or more cached manifests"
+          else
+            echo "no deprecated manifests found"
+          fi
+
+      - name: moon check
+        run: moon check --target native --diagnostic-limit 60
