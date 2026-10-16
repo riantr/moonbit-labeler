@@ -234,62 +234,69 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 
 ## MoUI `app_moui/` migration status
 
-> **Status: SPIKE SCOPE — future cleanup candidate, blocked on exactly one
-> upstream line.** `app_moui/` is a parallel spike demonstrating an
-> alternative native view tree that could replace the CEF/JS frontend. It is
-> **not** on the production path; the production frontend is `frontend/`
-> (Vite + vanilla JS + CEF 150.0.19). The 217 tests in `app_moui/` are
-> reference + smoke tests, not the gating regression suite — the gating suite
-> is `extensions/labeler/labeler_test.mbt`. `app_moui/` should eventually either
-> be promoted to production scope (when MoUI upstream fixes the
-> `@views.button` rendering bug) or be deleted entirely. See below for exactly
-> what is currently blocking it.
+> **Status: SPIKE SCOPE — future cleanup candidate.** `app_moui/` is a
+> parallel spike demonstrating an alternative native view tree that could
+> replace the CEF/JS frontend. It is **not** on the production path; the
+> production frontend is `frontend/` (Vite + vanilla JS + CEF 150.0.19).
+> The 361 tests in `app_moui/` are reference + smoke tests, not the gating
+> regression suite — the gating suite is `extensions/labeler/labeler_test.mbt`.
+> `app_moui/` should eventually either be promoted to production scope (when
+> MoUI upstream fixes the `@views.button` rendering bug) or be deleted
+> entirely. It builds and passes on the current toolchain again; see below.
 
-> **Precise state, re-measured 2026-10-16.** `app_moui/` is ONE error
-> away from building on moon 0.1.20261012. On `wzzc-dev/moui@0.2.2` (the
-> newest moui whose registry build actually succeeded) `moon check`
-> reports exactly **one** error, in a third-party package:
+> **Solved 2026-10-16 — `app_moui/` builds and its full suite passes on
+> moon 0.1.20261012.** Two lines in `app_moui/moon.mod`:
 >
->     Milky2018/css/values/keywords.mbt:82
->     pub(all) enum Float {
->       "Float" is a reserved type name. Cannot declare it as type
+>     "wzzc-dev/moui@0.2.2",
+>     "Milky2018/css@0.6.0",
 >
-> Nothing in our code fails. The rest of the module type-checks. So the
-> earlier "dead end" reading was too coarse — it is a single upstream
-> line.
+> **Why the second line is there, since `moon.mod` takes no comments.** The
+> chain was: moui 0.2.2 pins `Milky2018/svg@0.5.3`, which pins
+> `css@0.5.3`, which declares `pub(all) enum Float` — a reserved type name
+> as of moon 0.1.20261012. `css@0.6.0` removed that enum. There is no
+> dependency-override mechanism in MoonBit (`moon check --patch-file`
+> patches a selected package's *source*; it does not change which version
+> of a transitive dependency resolves, and build/update/install expose no
+> such flag). But a **direct declaration outranks a transitive pin**:
+> moon's resolver unifies to the highest version requested, so naming
+> `Milky2018/css@0.6.0` here wins over `svg`'s pin on `0.5.3`.
 >
-> That line is already fixed upstream, one version along the same chain:
+> That is worth stating plainly because it was missed twice. `moon.mod`
+> has no `override`/`patch`/`replace` flag, and "the mechanism does not
+> exist" looked like a conclusion — but the mechanism is the resolver's
+> precedence rule, and only a real compile answers that. Search for the
+> capability, then *test the behaviour*.
 >
->   Milky2018/css@0.6.0   no longer declares `enum Float` (verified by
->                         extracting the package and grepping it)
->   Milky2018/svg@0.6.0   pins css 0.6.0 and xml 0.6.0
+> Verified: `moon check` 0 errors, `moon test` **361/361**, in a **cold
+> clone** with a fresh `.mooncakes/` — not just against a warm cache.
+> The earlier "217 tests" figure in this file was stale from Phase 18.E.
+
+> **One catch on a cold fetch.** `Milky2018/moon_accesskit@0.3.0` still
+> ships a deprecated `moon.mod.json`, which moon 0.1.20261012 rejects
+> outright:
 >
-> What we cannot do is get there from here:
+>     `moon.mod.json` at '.mooncakes/<pkg>' is no longer supported.
+>     Run `moon fmt` to migrate to `moon.mod`.
 >
-> - `wzzc-dev/moui` 0.2.2 **and** 0.2.3 both pin `Milky2018/svg@0.5.3`,
->   which in turn pins `css@0.5.3`. The newest moui (0.2.3) is itself
->   unusable: `"build_status": "failed"`, `"has_package": false`.
-> - MoonBit has **no dependency-override mechanism**. `moon check
->   --patch-file` patches a selected package's source; it does not change
->   which version of a transitive dependency is resolved. `build` /
->   `update` / `install` expose no such flag at all.
-> - Forcing it locally by rewriting `Milky2018/svg`'s own manifest in
->   `.mooncakes/` is not a fix: `.mooncakes/` is gitignored and
->   re-fetched, so it would not survive CI or another developer.
+> `.mooncakes/` is gitignored and re-fetched, so this comes back on every
+> clean checkout. Fix it per package — at the project root `moon fmt`
+> only formats this module's own packages and silently does nothing:
 >
-> **So: wait for moui to move to `Milky2018/svg@0.6.0`.** That is the
-> single event that unblocks this module. Revisit by re-running the
-> `moon check` above and looking at the error count, not by re-reading
-> this paragraph.
+>     cd app_moui/.mooncakes/Milky2018/moon_accesskit && moon fmt
 >
-> **On absorbing `mizchi/svg` into `moonbit_image`: it would not help,
-> and the question is now moot anyway.** `mizchi/svg` is declared by
-> `wzzc-dev/moui@0.1.12`'s own manifest, not by this repository. moon
-> resolves a module's declared dependencies transitively, so nothing we
-> put in our own packages removes that edge — the fetch happens because
-> moui asked for it. And on the moui versions that work at all, the
-> dependency is not `mizchi/svg` but `Milky2018/svg`, which would need
-> the same transitive resolution to override.
+> A loop over `find .mooncakes -name moon.mod.json` handles all of them.
+> (`mizchi/svg`, the 0.1.12-era blocker, cannot be migrated this way —
+> its `component` sub-module has a *local* dependency, which `moon.mod`
+> cannot express. Upgrading past 0.1.12 is what removes it.)
+
+> **The 16 dataset-dependent tests need `data/` present.** A cold clone
+> has no `data/Image@skin` or `data/Label@skin` — those are gitignored
+> per-deployment data, only `.gitkeep` is tracked — and 16 tests in
+> `disk_io_test.mbt` / `image_decode_test.mbt` / `image_header_test.mbt`
+> read the real shipped dataset, so they fail with `0 != 6` and a
+> `""` where a `data/Label@skin/...` path was expected. Copy the dataset
+> in and the suite is 361/361. This is a pre-existing property of those
+> tests, not a regression; do not read those 16 failures as a build break.
 >
 > So its `moon.mod` is deliberately **left on 0.1.12**: the upgrade still
 > cannot be verified here, and committing an unverified bump would hide the
