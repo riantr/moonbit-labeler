@@ -12,10 +12,13 @@
 // upstream's own tests only ever *match* on it. So the four arms are
 // reached through real encoded PNGs instead — see the fixture notes.
 //
-// The disk tests run against the **shipped** `data/` sample. A
-// synthetic JPEG written by this file could not tell "decoded the file"
-// from "decoded the bytes I just handed it"; the read is the part under
-// test, so the file has to already exist.
+// The disk tests below run against the generated `p526` fixture, which
+// writes real image files to `_build/` and reads them back through the
+// same `@xfs` path. A fixture handed over as in-memory bytes could not
+// tell "decoded the file" from "decoded what I just passed in"; the
+// read is the part under test, so the file has to already be on disk.
+// That argument requires a file on disk -- not the shipped dataset,
+// which is gitignored per-deployment data and cannot gate CI.
 
 // ── PNG fixtures ───────────────────────────────────────────────────
 //
@@ -230,33 +233,37 @@ test "to_rgba8_bytes — every colour type widens to exactly w*h*4 (5.23)" {
 /// A file that is not an image is `None` all the way through — no
 /// panic, no partial registration. The label JSON is the right negative
 /// case: a real file with real bytes that is not an image.
-test "to_rgba8_bytes — a non-image file never reaches the cache (5.23)" {
+test "to_rgba8_bytes — a non-image file never reaches the cache (5.26)" {
+  ignore(p526_materialise())
   assert_eq(
-    load_image_into_cache("../data/Label@skin/BIOMEDICA_P0_JCAS-4-2-g001.json"),
+    load_image_into_cache(p526_label_folder() + "/BIOMEDICA_P0_JCAS-4-2-g001.json"),
     None,
   )
-  assert_eq(load_image_into_cache("../data/Image@skin/p523_absent.jpg"), None)
+  assert_eq(load_image_into_cache(p526_image_folder() + "/p526_absent.jpg"), None)
 }
 
 // ── the real disk path ─────────────────────────────────────────────
 
 ///|
-/// The end-to-end read, against the shipped sample: a real JPEG is
+/// The end-to-end read, against a generated image file: a real PNG is
 /// read, decoded, widened and registered, and the registered dimensions
-/// are the file's real ones — 517x371, measured in Phase 5.23 from this
-/// exact file, not guessed.
+/// are the file's real ones.
 ///
 /// The cache is a module-global shared with every other test here, so
-/// this asserts the specific source rather than a count.
-test "load_image_into_cache — the real shipped JPEG decodes and registers (5.23)" {
-  let path = "../data/Image@skin/BIOMEDICA_P0_JCAS-4-2-g001.jpg"
+/// this asserts the specific source rather than a count. 13x10 is this
+/// fixture's size; it is not a constant the code could be returning,
+/// because the other five fixtures have different sizes and the
+/// "six distinct sizes" test below pins all six.
+test "load_image_into_cache — the fixture image decodes and registers (5.26)" {
+  let folder = p526_materialise()
+  let path = folder + "/BIOMEDICA_P0_JCAS-4-2-g001.jpg"
   match load_image_into_cache(path) {
     None => assert_true(false)
     Some((w, h)) => {
-      assert_eq(w, 517)
-      assert_eq(h, 371)
+      assert_eq(w, 13)
+      assert_eq(h, 10)
       assert_eq(image_in_renderer(path), true)
-      assert_eq(image_size_in_renderer(path), Some((517, 371)))
+      assert_eq(image_size_in_renderer(path), Some((13, 10)))
     }
   }
 }
@@ -264,22 +271,23 @@ test "load_image_into_cache — the real shipped JPEG decodes and registers (5.2
 ///|
 /// The registered buffer is exactly `w*h*4` — the contract
 /// `load_bytes` enforces, and what a wrong widening would break.
-/// 517 * 371 * 4 = 767,228.
-test "load_image_into_cache — the registered buffer is exactly w*h*4 (5.23)" {
-  let path = "../data/Image@skin/BIOMEDICA_P0_JCAS-4-2-g001.jpg"
+/// 13 * 10 * 4 = 520.
+test "load_image_into_cache — the registered buffer is exactly w*h*4 (5.26)" {
+  let folder = p526_materialise()
+  let path = folder + "/BIOMEDICA_P0_JCAS-4-2-g001.jpg"
   match load_image_into_cache(path) {
     None => assert_true(false)
-    Some((w, h)) => assert_eq(w * h * 4, 767228)
+    Some((w, h)) => assert_eq(w * h * 4, 520)
   }
 }
 
 ///|
 /// A repeat load is a cache hit and must not re-read or re-decode. The
-/// decode is the expensive half — ~190k pixels to widen for this
-/// sample — and re-selecting the image already on screen must not pay
-/// it again.
-test "load_image_into_cache — a repeat load is served from the cache (5.23)" {
-  let path = "../data/Image@skin/BIOMEDICA_P0_JCAS-3-170-g001.jpg"
+/// decode is the expensive half, and re-selecting the image already on
+/// screen must not pay it again.
+test "load_image_into_cache — a repeat load is served from the cache (5.26)" {
+  let folder = p526_materialise()
+  let path = folder + "/BIOMEDICA_P0_JCAS-3-170-g001.jpg"
   match load_image_into_cache(path) {
     None => assert_true(false)
     Some(_) => ()
@@ -288,8 +296,10 @@ test "load_image_into_cache — a repeat load is served from the cache (5.23)" {
   match load_image_into_cache(path) {
     None => assert_true(false)
     Some((w, h)) => {
-      assert_eq(w > 0, true)
-      assert_eq(h > 0, true)
+      // 11x8 for this fixture — not the same value as the test above,
+      // so the cache cannot be serving one entry for every path.
+      assert_eq(w, 11)
+      assert_eq(h, 8)
     }
   }
 }
@@ -297,23 +307,24 @@ test "load_image_into_cache — a repeat load is served from the cache (5.23)" {
 // ── handler wiring ─────────────────────────────────────────────────
 
 ///|
-/// **The user-visible half.** Selecting a real image now moves
+/// **The user-visible half.** Selecting an image now moves
 /// `imageSource` and `imageNaturalSize` onto that file. Before 5.23
 /// both stayed on the synthetic fixture, so the annotations were right
 /// and the picture was not — the worst of both.
-test "SelectIndex — the canvas points at the selected image (5.23)" {
-  let (loaded, _) = update(Model::new(), LoadFolder("../data/Image@skin"))
+test "SelectIndex — the canvas points at the selected image (5.26)" {
+  let folder = p526_materialise()
+  let (loaded, _) = update(Model::new(), LoadFolder(folder))
   assert_eq(loaded.images.length(), 6)
   let (model, _) = update(loaded, SelectIndex(4))
   assert_eq(model.currentIndex, 4)
   assert_eq(
     model.imageSource,
-    "../data/Image@skin/BIOMEDICA_P0_JCAS-4-2-g001.jpg",
+    folder + "/BIOMEDICA_P0_JCAS-4-2-g001.jpg",
   )
   // Natural size drives fit-contain, so it has to be the file's real
-  // dimensions or the picture is stretched.
-  assert_eq(model.imageNaturalSize.x, 517.0)
-  assert_eq(model.imageNaturalSize.y, 371.0)
+  // dimensions or the picture is stretched. 13x10 for this fixture.
+  assert_eq(model.imageNaturalSize.x, 13.0)
+  assert_eq(model.imageNaturalSize.y, 10.0)
   // The label half still works, on the same click.
   assert_eq(model.annotations.length(), 9)
 }
@@ -322,8 +333,9 @@ test "SelectIndex — the canvas points at the selected image (5.23)" {
 /// The pixels are registered *before* `imageSource` is repointed at
 /// them. The other order would let the canvas emit a `DrawImage` that
 /// resolves to the rasterizer's grey-X placeholder for a frame.
-test "SelectIndex — pixels are cached by the time the source points at them (5.23)" {
-  let (loaded, _) = update(Model::new(), LoadFolder("../data/Image@skin"))
+test "SelectIndex — pixels are cached by the time the source points at them (5.26)" {
+  let folder = p526_materialise()
+  let (loaded, _) = update(Model::new(), LoadFolder(folder))
   let (model, _) = update(loaded, SelectIndex(4))
   assert_eq(image_in_renderer(model.imageSource), true)
 }
@@ -333,8 +345,9 @@ test "SelectIndex — pixels are cached by the time the source points at them (5
 /// at a path with no cache entry would swap the real picture for the
 /// grey-X placeholder, which is a worse outcome than the stale image
 /// the user already had.
-test "SelectIndex — an undecodable image leaves the previous source (5.23)" {
-  let (loaded, _) = update(Model::new(), LoadFolder("../data/Image@skin"))
+test "SelectIndex — an undecodable image leaves the previous source (5.26)" {
+  let folder = p526_materialise()
+  let (loaded, _) = update(Model::new(), LoadFolder(folder))
   let (model, _) = update(loaded, SelectIndex(0))
   let before : String = model.imageSource
   assert_eq(image_in_renderer(before), true)
@@ -345,7 +358,7 @@ test "SelectIndex — an undecodable image leaves the previous source (5.23)" {
     images: [
       {
         name: "BIOMEDICA_P0_JCAS-4-2-g001.json",
-        path: "../data/Label@skin/BIOMEDICA_P0_JCAS-4-2-g001.json",
+        path: p526_label_folder() + "/BIOMEDICA_P0_JCAS-4-2-g001.json",
         size_bytes: 0,
       },
     ],

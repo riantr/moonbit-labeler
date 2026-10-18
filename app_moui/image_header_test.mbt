@@ -313,21 +313,45 @@ test "probe_image_dimensions_path — non-existent path returns None" {
 ///|
 /// Phase 5.22 — **the sync probe works on a real file.** This is the
 /// replacement for the claim that it always returned `None`: it reads
-/// the bytes off disk synchronously and parses a real JPEG header.
+/// the bytes off disk synchronously and parses a real image header.
 ///
-/// Run against the shipped `data/Image@skin` sample. A synthetic
-/// header built by this same test file could not distinguish "reads
-/// the file" from "parsed the bytes I just handed it" — the read is
-/// the part under test, so the file has to already be on disk.
-test "probe_image_dimensions_path — reads a real image off disk (5.22)" {
-  let path = "../data/Image@skin/BIOMEDICA_P0_JCAS-4-2-g001.jpg"
+/// Run against the generated `p526` fixture, which writes real image
+/// files to `_build/` before this test reads them back. The reason for
+/// a file on disk rather than bytes built inline is the one recorded in
+/// 5.22: a header built by this same test file could not distinguish
+/// "reads the file" from "parsed the bytes I just handed it" -- the read
+/// is the part under test.
+///
+/// The fixture's images are all different sizes (8x6 ... 14x11), so
+/// asserting one specific pair proves the dimensions came from the
+/// file's SOF marker rather than from a constant.
+test "probe_image_dimensions_path — reads a real image off disk (5.26)" {
+  let path = p526_image_folder() + "/BIOMEDICA_P0_JCAS-4-2-g001.jpg"
   match probe_image_dimensions_path(path) {
     None => assert_true(false)
     Some((w, h)) => {
-      // A real scan thumbnail, not a 1x1 placeholder: the whole point
-      // is that these came from the file's SOF marker.
-      assert_true(w > 100)
-      assert_true(h > 100)
+      // This fixture is 13x10. A 1x1 placeholder would pass a `> 1`
+      // guard and prove nothing; the exact pair pins it to the file.
+      assert_eq(w, 13)
+      assert_eq(h, 10)
+    }
+  }
+}
+
+///|
+/// Every fixture image reports its own size, so the probe is reading the
+/// header rather than returning a constant. This is the property the
+/// shipped sample could not check: its six JPEGs were six names over one
+/// dimension set.
+test "probe_image_dimensions_path — each fixture image reports its own size (5.26)" {
+  let folder = p526_materialise()
+  for (name, _hex, w, h) in p526_images() {
+    match probe_image_dimensions_path(folder + "/" + name) {
+      None => assert_true(false)
+      Some((gw, gh)) => {
+        assert_eq(gw, w)
+        assert_eq(gh, h)
+      }
     }
   }
 }

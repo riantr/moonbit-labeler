@@ -67,12 +67,15 @@ test "strip_extension — drops the last extension only (5.22)" {
 }
 
 ///|
-/// The label path convention, asserted against the **actual**
-/// filenames in `data/`. `BIOMEDICA_P0_JCAS-4-2-g001.jpg` pairs
+/// The label path convention. `BIOMEDICA_P0_JCAS-4-2-g001.jpg` pairs
 /// with `BIOMEDICA_P0_JCAS-4-2-g001.json` — extension stripped, not
-/// `.jpg.json` appended. This test is the reason the convention is
-/// known rather than guessed.
-test "label_path_for — matches the real dataset convention (5.22)" {
+/// `.jpg.json` appended.
+///
+/// These are string literals, not files: this has always been a pure
+/// string test. The names are the ones the fixture generates, so a
+/// reader can follow them into `scan_folder` below and see the same
+/// paths come out the other end.
+test "label_path_for — pairs by stripping the extension (5.26)" {
   assert_eq(
     label_path_for("data/Image@skin/BIOMEDICA_P0_JCAS-4-2-g001.jpg", ""),
     "data/Image@skin/BIOMEDICA_P0_JCAS-4-2-g001.json",
@@ -228,17 +231,14 @@ test "scan_folder — readable but empty folder is Some (5.22)" {
   }
 }
 
-///|
-/// **The end-to-end claim, against the shipped dataset.** Scans the
-/// real `data/Image@skin` folder: six JPEGs are found, sorted, and the
-/// label folder is derived as `data/Label@skin`.
-test "scan_folder — the real data/Image@skin yields sorted images + Label@skin (5.22)" {
-  match scan_folder("../data/Image@skin") {
+test "scan_folder — the fixture folder yields sorted images + Label@skin (5.26)" {
+  let folder = p526_materialise()
+  match scan_folder(folder) {
     None => assert_true(false)
     Some(scan) => {
       assert_eq(scan.images.length(), 6)
       assert_eq(scan.videos.length(), 0)
-      assert_eq(scan.label_folder, "../data/Label@skin")
+      assert_eq(scan.label_folder, p526_label_folder())
       // Sorted, not filesystem order: the sidebar indexes this list
       // directly, so an unstable order would shuffle the UI. Uses
       // `name_less`, not `<` — see `name_less` for why.
@@ -253,7 +253,7 @@ test "scan_folder — the real data/Image@skin yields sorted images + Label@skin
         // Full path is usable as-is by label_path_for.
         assert_eq(
           label_path_for(img.path, scan.label_folder),
-          "../data/Label@skin/" + strip_extension(img.name) + ".json",
+          scan.label_folder + "/" + strip_extension(img.name) + ".json",
         )
       }
     }
@@ -261,16 +261,15 @@ test "scan_folder — the real data/Image@skin yields sorted images + Label@skin
 }
 
 ///|
-/// The real label file parses: the shipped
-/// `BIOMEDICA_P0_JCAS-4-2-g001.json` has one rect and eight
-/// keypoints, all of class `object`. This is the check that the
-/// parser and the on-disk format actually agree — a synthetic
-/// fixture written by this same code would agree by construction.
-test "load_label — the real data/Label@skin JSON parses (5.22)" {
+/// The fixture label file parses: one rect and eight keypoints, all of
+/// class `object`. This is the check that the parser and the on-disk
+/// format actually agree.
+test "load_label — the fixture label JSON parses (5.26)" {
+  ignore(p526_materialise())
   let classes : Array[ClassEntry] = [
     { id: "c-object", name: "object", is_default: true, },
   ]
-  let path = "../data/Label@skin/BIOMEDICA_P0_JCAS-4-2-g001.json"
+  let path = p526_label_folder() + "/BIOMEDICA_P0_JCAS-4-2-g001.json"
   let loaded = load_label(path, classes)
   match loaded {
     None => assert_true(false)
@@ -346,8 +345,9 @@ test "name_less — lexicographic, unlike String.< (5.22)" {
 /// The sorted scan puts the labelled image at index 4, which is where
 /// the handler tests below look for it. This asserts the order
 /// explicitly so an ordering change fails with the order visible.
-test "scan_folder — alphabetical order, labelled image at index 4 (5.22)" {
-  match scan_folder("../data/Image@skin") {
+test "scan_folder — alphabetical order, labelled image at index 4 (5.26)" {
+  let folder = p526_materialise()
+  match scan_folder(folder) {
     None => assert_true(false)
     Some(scan) => {
       assert_eq(scan.images[0].name, "BIOMEDICA_P0_JCAS-2-72-g003.jpg")
@@ -371,12 +371,13 @@ test "scan_folder — alphabetical order, labelled image at index 4 (5.22)" {
 /// `LoadFolder` really scans: the shipped folder yields 6 images, the
 /// derived label folder, and `currentIndex` 0 (not -1 — the folder is
 /// not empty).
-test "LoadFolder — scanning the real folder populates the model (5.22)" {
-  let (model, _) = update(Model::new(), LoadFolder("../data/Image@skin"))
+test "LoadFolder — scanning the fixture folder populates the model (5.26)" {
+  let folder = p526_materialise()
+  let (model, _) = update(Model::new(), LoadFolder(folder))
   assert_eq(model.images.length(), 6)
   assert_eq(model.videos.length(), 0)
-  assert_eq(model.labelFolder, "../data/Label@skin")
-  assert_eq(model.folder, "../data/Image@skin")
+  assert_eq(model.labelFolder, p526_label_folder())
+  assert_eq(model.folder, folder)
   assert_eq(model.currentIndex, 0)
 }
 
@@ -412,10 +413,11 @@ test "LoadFolder — an empty folder selects no image (5.22)" {
 /// loads its real label: 9 annotations, and `loadedFromDisk` true.
 /// This is the end-to-end claim of the whole phase — sidebar row ->
 /// `SelectIndex` -> read -> parse -> model.
-test "SelectIndex — picking a row loads that image's real label (5.22)" {
-  let (loaded, _) = update(Model::new(), LoadFolder("../data/Image@skin"))
+test "SelectIndex — picking a row loads that image's label (5.26)" {
+  let folder = p526_materialise()
+  let (loaded, _) = update(Model::new(), LoadFolder(folder))
   // Sorted order puts BIOMEDICA_P0_JCAS-4-2-g001.jpg at index 4, and
-  // that is the one image in the dataset that has a label file.
+  // that is the one fixture image that has a label file.
   assert_eq(loaded.images.length(), 6)
   assert_eq(loaded.images[4].name, "BIOMEDICA_P0_JCAS-4-2-g001.jpg")
   let (model, _) = update(loaded, SelectIndex(4))
@@ -424,7 +426,7 @@ test "SelectIndex — picking a row loads that image's real label (5.22)" {
   assert_eq(model.bindings.length(), 0)
   assert_eq(
     model.labelPath,
-    "../data/Label@skin/BIOMEDICA_P0_JCAS-4-2-g001.json",
+    p526_label_folder() + "/BIOMEDICA_P0_JCAS-4-2-g001.json",
   )
   assert_eq(model.currentIndex, 4)
 }
@@ -433,8 +435,9 @@ test "SelectIndex — picking a row loads that image's real label (5.22)" {
 /// A row whose image has **no** label file is not an error: the canvas
 /// is empty, `loadedFromDisk` is false, and the status says so rather
 /// than raising a red toast for an unlabelled scan.
-test "SelectIndex — a row with no label file loads empty, not broken (5.22)" {
-  let (loaded, _) = update(Model::new(), LoadFolder("../data/Image@skin"))
+test "SelectIndex — a row with no label file loads empty, not broken (5.26)" {
+  let folder = p526_materialise()
+  let (loaded, _) = update(Model::new(), LoadFolder(folder))
   let (model, _) = update(loaded, SelectIndex(0))
   assert_eq(model.loadedFromDisk, false)
   assert_eq(model.annotations.length(), 0)
@@ -442,7 +445,7 @@ test "SelectIndex — a row with no label file loads empty, not broken (5.22)" {
   // The path is still recorded, so Save knows where to write.
   assert_eq(
     model.labelPath,
-    "../data/Label@skin/BIOMEDICA_P0_JCAS-2-72-g003.json",
+    p526_label_folder() + "/BIOMEDICA_P0_JCAS-2-72-g003.json",
   )
   assert_true(model.statusMessage.contains("no label"))
 }
@@ -452,8 +455,9 @@ test "SelectIndex — a row with no label file loads empty, not broken (5.22)" {
 /// whatever was there, and switching to an unlabelled image clears it
 /// again rather than leaving the previous image's annotations on
 /// screen under the new name.
-test "SelectIndex — switching does not carry the previous label (5.22)" {
-  let (loaded, _) = update(Model::new(), LoadFolder("../data/Image@skin"))
+test "SelectIndex — switching does not carry the previous label (5.26)" {
+  let folder = p526_materialise()
+  let (loaded, _) = update(Model::new(), LoadFolder(folder))
   let (with_label, _) = update(loaded, SelectIndex(4))
   assert_eq(with_label.annotations.length(), 9)
   let (next, _) = update(with_label, SelectIndex(0))
@@ -464,12 +468,13 @@ test "SelectIndex — switching does not carry the previous label (5.22)" {
 ///|
 /// The class name in a loaded label resolves through `model.classes`
 /// when the class is present. `Model::new` seeds knife/gun/..., and
-/// the real label says "object", which is deliberately *not* in that
+/// the fixture label says "object", which is deliberately *not* in that
 /// list — so this asserts both halves: an unknown class leaves the id
 /// empty (the canvas falls back to the annotation id) instead of
 /// inventing one, and a known class resolves.
-test "SelectIndex — loaded class names resolve through model.classes (5.22)" {
-  let (loaded, _) = update(Model::new(), LoadFolder("../data/Image@skin"))
+test "SelectIndex — loaded class names resolve through model.classes (5.26)" {
+  let folder = p526_materialise()
+  let (loaded, _) = update(Model::new(), LoadFolder(folder))
   // Every index below is length-guarded. An unguarded `annotations[0]`
   // panics, and a panic kills the whole blackbox executable — which
   // silently discards the results of every test that ran before it.
@@ -492,11 +497,12 @@ test "SelectIndex — loaded class names resolve through model.classes (5.22)" {
 ///|
 /// `SaveLabel` writes the annotations to the path it read from, and
 /// the file on disk is then readable back with the same content.
-test "SaveLabel — writes to the path the label was read from (5.22)" {
-  let (loaded, _) = update(Model::new(), LoadFolder("../data/Image@skin"))
+test "SaveLabel — writes to the path the label was read from (5.26)" {
+  let folder = p526_materialise()
+  let (loaded, _) = update(Model::new(), LoadFolder(folder))
   let (model, _) = update(loaded, SelectIndex(4))
-  // Redirect at a scratch copy so the shipped dataset is not touched.
-  let scratch = "../_build/p522_saved.json"
+  // Redirect at a scratch copy so the fixture is not rewritten.
+  let scratch = "../_build/p526_saved.json"
   let staged = { ..model, labelPath: scratch, }
   let (saved, _) = update(staged, SaveLabel)
   assert_true(saved.statusMessage.contains("Saved"))
