@@ -271,6 +271,36 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > clone** with a fresh `.mooncakes/` — not just against a warm cache.
 > The earlier "217 tests" figure in this file was stale from Phase 18.E.
 
+> **The `app-moui` CI job gates on `moon check` only, and deliberately
+> installs no Linux build dependencies.** Measured on WSL Ubuntu 26.04
+> with neither `glib-2.0` nor `gio-2.0` present and no `node` on PATH:
+> `moon check --target native` against a brand-new `--target-dir` exits
+> 0 over 80 tasks with zero mentions of prebuild, pkg-config or node.
+> The reason is that **a module prebuild only fires on the compile
+> path.** The same tree's `moon build` fails at once:
+>
+>     Failed to run prebuild script for module wzzc-dev/moui
+>       Running prebuild script for module wzzc-dev/moui
+>         needs `node` executable in PATH
+>
+> `wzzc-dev/moui/build.js` also runs
+> `pkg-config --cflags glib-2.0 gio-2.0` on Linux, so a linking job would
+> need **both** node and `libglib2.0-dev` (gio-2.0 ships in the latter).
+> An earlier revision of ci.yml installed `libglib2.0-dev` for a
+> check-only gate on the strength of reading build.js; it was a no-op
+> that only cost runner time. If that job is ever widened past
+> `moon check`, add both back.
+>
+> Useful as a general rule: reading a prebuild's source says what it
+> would need; it does not say whether the command you run invokes it.
+> Run the command and read its output.
+
+> **`moon check` is enough to catch the regressions this module has
+> actually had** (a deprecated dependency manifest, a reserved type
+> name) — both surface as type-check or resolution failures. Only
+> native-link breakage needs `moon build`, and that is Proton's job in
+> `test-windows`.
+
 > **One catch on a cold fetch.** `Milky2018/moon_accesskit@0.3.0` still
 > ships a deprecated `moon.mod.json`, which moon 0.1.20261012 rejects
 > outright:

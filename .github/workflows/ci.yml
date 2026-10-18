@@ -344,15 +344,25 @@ jobs:
       - name: Fetch registry index
         run: moon update
 
-      # MoUI ships its own module prebuild (wzzc-dev/moui/build.js), and
-      # on Linux it runs `pkg-config --cflags glib-2.0 gio-2.0` and
-      # throws when either package is missing -- the same failure mode as
-      # Proton's build.mjs in test-linux. gio-2.0 ships in
-      # libglib2.0-dev, so one package covers both.
-      - name: Install MoUI's Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libglib2.0-dev
+      # No Linux build dependencies here, and that is measured rather than
+      # assumed. wzzc-dev/moui/build.js does run
+      # `pkg-config --cflags glib-2.0 gio-2.0` on Linux, which suggested
+      # installing libglib2.0-dev -- an earlier revision of this file
+      # did exactly that. But a **module prebuild only fires on the
+      # compile path, not on `moon check`**. Measured on WSL Ubuntu 26.04
+      # with neither glib-2.0 nor gio-2.0 installed and no node on
+      # PATH: `moon check --target native` against a brand-new
+      # --target-dir exits 0 over 80 tasks with zero mentions of
+      # prebuild, pkg-config or node in its output. The same tree's
+      # `moon build` fails immediately with
+      #
+      #   Running prebuild script for module wzzc-dev/moui
+      #     needs `node` executable in PATH
+      #
+      # So if this job is ever widened past `moon check` to something
+      # that links, it will need BOTH node and libglib2.0-dev first
+      # (gio-2.0 ships in the latter). Until then the apt step would be
+      # a no-op that only costs runner time.
 
       # Milky2018/moon_accesskit@0.3.0 still ships a moon.mod.json,
       # which moon 0.1.20261012 rejects outright. .mooncakes/ is
