@@ -271,29 +271,44 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > clone** with a fresh `.mooncakes/` — not just against a warm cache.
 > The earlier "217 tests" figure in this file was stale from Phase 18.E.
 
-> **The `app-moui` CI job gates on `moon check` only, and deliberately
-> installs no Linux build dependencies.** Measured on WSL Ubuntu 26.04
-> with neither `glib-2.0` nor `gio-2.0` present and no `node` on PATH:
-> `moon check --target native` against a brand-new `--target-dir` exits
-> 0 over 80 tasks with zero mentions of prebuild, pkg-config or node.
-> The reason is that **a module prebuild only fires on the compile
-> path.** The same tree's `moon build` fails at once:
+> **The `app-moui` (ubuntu) job gates on `moon check`; the 365 tests run
+> in `app-moui-windows`.** Neither job installs MoUI's Linux build
+> dependencies, and the reason is specific rather than general.
+>
+> **`moon check` is the one command that does *not* invoke a module
+> prebuild.** Measured on WSL Ubuntu 26.04 with neither `glib-2.0` nor
+> `gio-2.0` present and no `node` on PATH: `moon check --target native`
+> against a brand-new `--target-dir` exits 0 over 80 tasks with zero
+> mentions of prebuild, pkg-config or node.
+>
+> `moon test` and `moon build` both *do* invoke them, and both fail at
+> once on this host:
 >
 >     Failed to run prebuild script for module wzzc-dev/moui
 >       Running prebuild script for module wzzc-dev/moui
 >         needs `node` executable in PATH
 >
-> `wzzc-dev/moui/build.js` also runs
-> `pkg-config --cflags glib-2.0 gio-2.0` on Linux, so a linking job would
-> need **both** node and `libglib2.0-dev` (gio-2.0 ships in the latter).
+> and with node supplied, `wzzc-dev/window`'s prebuild then demands
+>
+>     xdg-shell protocol XML not found at
+>       /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml;
+>       install wayland-protocols
+>
+> So a **Linux test** run wants node + pkg-config + libglib2.0-dev +
+> wayland-protocols — each confirmed only by a CI round-trip. Windows
+> wants none of them, and it is MoUI's primary target, so the tests live
+> there.
+>
+> Two corrections this replaces, both of which cost time:
 > An earlier revision of ci.yml installed `libglib2.0-dev` for a
-> check-only gate on the strength of reading build.js; it was a no-op
-> that only cost runner time. If that job is ever widened past
-> `moon check`, add both back.
+> check-only gate on the strength of reading `build.js`; it was a no-op
+> that only cost runner time. And a later note claimed prebuilds fire
+> only on "the compile path" — too loose, since `moon test` compiles the
+> test executable and fires them too.
 >
 > Useful as a general rule: reading a prebuild's source says what it
-> would need; it does not say whether the command you run invokes it.
-> Run the command and read its output.
+> would need; it does not say **which commands invoke it**. Run the
+> command and read its output.
 
 > **`moon check` is enough to catch the regressions this module has
 > actually had** (a deprecated dependency manifest, a reserved type
@@ -319,14 +334,31 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > its `component` sub-module has a *local* dependency, which `moon.mod`
 > cannot express. Upgrading past 0.1.12 is what removes it.)
 
-> **The 16 dataset-dependent tests need `data/` present.** A cold clone
-> has no `data/Image@skin` or `data/Label@skin` — those are gitignored
-> per-deployment data, only `.gitkeep` is tracked — and 16 tests in
-> `disk_io_test.mbt` / `image_decode_test.mbt` / `image_header_test.mbt`
-> read the real shipped dataset, so they fail with `0 != 6` and a
-> `""` where a `data/Label@skin/...` path was expected. Copy the dataset
-> in and the suite is 361/361. This is a pre-existing property of those
-> tests, not a regression; do not read those 16 failures as a build break.
+> **The tests no longer need `data/` — they generate their own.** As of
+> 5.26 the 16 tests that read `data/Image@skin` / `data/Label@skin` build
+> the dataset themselves in `app_moui/p526_fixture_test.mbt`, writing real
+> image files under `_build/` and reading them back through the same
+> `@xfs` path. They did not before, which is why they failed with
+> `0 != 6` on any clean checkout — `data/` is gitignored
+> per-deployment data and only `.gitkeep` is tracked — and why
+> `moon test` could not gate CI for this module at all.
+>
+> The 5.22/5.23 reason for not synthesising still holds and is why the
+> fixture writes *files* rather than passing bytes: a fixture handed over
+> as in-memory bytes cannot distinguish "decoded the file" from "decoded
+> what I just passed in", because the read is the part under test. That
+> requires a file on disk; it never required the shipped dataset.
+>
+> The fixture images are six **different** sizes (8x6 … 14x11) on
+> purpose. The shipped sample's six JPEGs were six filenames over one
+> dimension set (517x371), so a hardcoded constant passed those tests as
+> readily as a real header read. A self-test now pins all six.
+>
+> Verified in a fresh clone with `data/Image@skin` absent: **365/365**.
+> So `app_moui-windows` gates the build and `app-moui` (ubuntu) is
+> check-only — not because the tests cannot run, but because `moon test`
+> invokes the MoUI prebuilds and those need node, pkg-config,
+> libglib2.0-dev and wayland-protocols on Linux. See ci.yml.
 >
 > So its `moon.mod` is deliberately **left on 0.1.12**: the upgrade still
 > cannot be verified here, and committing an unverified bump would hide the

@@ -348,21 +348,27 @@ jobs:
       # assumed. wzzc-dev/moui/build.js does run
       # `pkg-config --cflags glib-2.0 gio-2.0` on Linux, which suggested
       # installing libglib2.0-dev -- an earlier revision of this file
-      # did exactly that. But a **module prebuild only fires on the
-      # compile path, not on `moon check`**. Measured on WSL Ubuntu 26.04
-      # with neither glib-2.0 nor gio-2.0 installed and no node on
-      # PATH: `moon check --target native` against a brand-new
-      # --target-dir exits 0 over 80 tasks with zero mentions of
-      # prebuild, pkg-config or node in its output. The same tree's
-      # `moon build` fails immediately with
+      # did exactly that. But `moon test` and `moon build` both invoke
+      # the MoUI prebuilds and `moon check` is the one command that does
+      # not. Measured on WSL Ubuntu 26.04 with neither glib-2.0 nor
+      # gio-2.0 installed and no node on PATH: `moon check --target
+      # native` against a brand-new --target-dir exits 0 over 80 tasks
+      # with zero mentions of prebuild, pkg-config or node. The same
+      # tree's `moon build` and `moon test` both fail immediately with
       #
       #   Running prebuild script for module wzzc-dev/moui
       #     needs `node` executable in PATH
       #
-      # So if this job is ever widened past `moon check` to something
-      # that links, it will need BOTH node and libglib2.0-dev first
-      # (gio-2.0 ships in the latter). Until then the apt step would be
-      # a no-op that only costs runner time.
+      # and with node supplied, `wzzc-dev/window`'s prebuild then demands
+      #
+      #   xdg-shell protocol XML not found at
+      #     /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml;
+      #     install wayland-protocols
+      #
+      # so a Linux test run wants node + pkg-config + libglib2.0-dev +
+      # wayland-protocols, each confirmed only by a CI round-trip.
+      # Windows wants none of it, so the 365 tests run in the
+      # app-moui-windows job below and this one stays check-only.
 
       # Milky2018/moon_accesskit@0.3.0 still ships a moon.mod.json,
       # which moon 0.1.20261012 rejects outright. .mooncakes/ is
@@ -398,3 +404,68 @@ jobs:
 
       - name: moon check
         run: moon check --target native --diagnostic-limit 60
+
+  # The 365 app_moui tests, on Windows.
+  #
+  # Split from the check above because `moon test` *does* invoke the MoUI
+  # module prebuilds (the claim that prebuilds only fire on "the compile
+  # path" was too loose -- `moon check` is the exception, not `moon test`).
+  # On Linux those prebuilds need node, pkg-config, libglib2.0-dev and
+  # wayland-protocols, discovered one failure at a time. Windows needs
+  # none of it, and it is MoUI's primary target anyway.
+  #
+  # Nothing here needs the shipped dataset. The tests that used to read
+  # data/Image@skin now generate their own files under _build/ (see
+  # app_moui/p526_fixture_test.mbt), because data/ is gitignored
+  # per-deployment data and could not gate CI. Verified in a fresh clone
+  # with data/Image@skin absent: 365/365.
+  app-moui-windows:
+    name: test (app_moui, windows, native)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app_moui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install moon
+        run: |
+          Invoke-WebRequest -UseBasicParsing -Uri https://cli.moonbitlang.com/install/powershell.ps1 -OutFile install.ps1
+          powershell -ExecutionPolicy Bypass -File install.ps1
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Cache moon deps
+        uses: actions/cache@v4
+        with:
+          path: app_moui/.mooncakes
+          key: moon-cache-appmoui-win-${{ runner.os }}-${{ hashFiles('app_moui/moon.mod', 'moon.mod') }}
+          restore-keys: moon-cache-appmoui-win-${{ runner.os }}-
+
+      - name: Fetch registry index
+        run: moon update
+
+      # Same moon.mod.json migration as the ubuntu app-moui job, for the
+      # same two reasons: Milky2018/moon_accesskit@0.3.0 still ships the
+      # deprecated manifest, and `moon update` refreshes only the index --
+      # package sources are fetched during a build, so without the check
+      # in front the loop would scan an empty .mooncakes/ and the next
+      # step would die on the manifest it just claimed was absent.
+      - name: Migrate deprecated moon.mod.json in cached dependencies
+        run: |
+          moon check --target native *> $null
+          $manifests = Get-ChildItem .mooncakes -Filter moon.mod.json -Recurse -ErrorAction SilentlyContinue
+          if (-not $manifests) {
+            Write-Output "no deprecated manifests found"
+          }
+          else {
+            foreach ($m in $manifests) {
+              Write-Output ("migrating " + $m.Directory.FullName)
+              Push-Location $m.Directory.FullName
+              try { moon fmt } finally { Pop-Location }
+            }
+            Write-Output "migrated one or more cached manifests"
+          }
+        shell: pwsh
+
+      - name: moon test
+        run: moon test --target native --diagnostic-limit 60
