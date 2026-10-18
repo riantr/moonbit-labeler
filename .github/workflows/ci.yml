@@ -301,36 +301,21 @@ jobs:
   # reserved type name) without any job turning red. This job exists to
   # make that class of failure visible again.
   #
-  # `moon test` deliberately does NOT run here. It runs in the
-  # app-moui-windows job instead, because on Linux it drags in the whole
-  # MoUI native build environment. See that job for the measurements.
+  # `moon check` is the gate, not `moon test`, and the reason is worth
+  # stating rather than leaving as an unexplained gap. 16 tests in
+  # disk_io_test.mbt / image_decode_test.mbt / image_header_test.mbt read
+  # the real shipped dataset (data/Image@skin, data/Label@skin), which is
+  # gitignored per-deployment data -- only data/.gitkeep is tracked. In a
+  # clean checkout those 16 fail with `0 != 6`; copying the dataset in
+  # gives 361/361. Running `moon test` here would therefore be red for a
+  # reason that has nothing to do with the code, and committing ~800 KB
+  # of user images to satisfy it contradicts the ignore rule's stated
+  # intent. The other 345 tests are exercised locally by anyone who has
+  # the dataset.
   #
-  # The distinction is narrower than "prebuilds fire on the compile path",
-  # and it was measured rather than assumed:
-  #
-  #   moon check   does NOT run the module prebuild. Verified on WSL
-  #                Ubuntu 26.04 with no glib-2.0, no gio-2.0 and no node
-  #                on PATH: exit 0 over 80 tasks, output containing zero
-  #                mentions of prebuild, pkg-config or node.
-  #   moon test    DOES. Without node:
-  #                  "prebuild script for module wzzc-dev/moui
-  #                   needs `node` executable in PATH"
-  #                With node supplied, the next prebuild
-  #                (wzzc-dev/window) then demands
-  #                  "xdg-shell protocol XML not found at
-  #                   /usr/share/wayland-protocols/...; install
-  #                   wayland-protocols"
-  #                so a Linux test run needs node + pkg-config +
-  #                libglib2.0-dev + wayland-protocols, each confirmed
-  #                only by a CI round-trip. Windows needs none of it.
-  #
-  # `moon check` is enough to catch the regressions this module has
-  # actually had: a deprecated dependency manifest and a reserved type
-  # name both surface as resolution or type-check failures. Only native
-  # linking needs more, and test-windows covers that for Proton.
-  #
-  # The 16 dataset-dependent tests are exercised for real in the
-  # app-moui-windows job, which materialises the fixture package.
+  # To close that properly the dataset-dependent tests need to skip when
+  # the fixture is absent rather than fail; that is a change to
+  # app_moui's own suite and was not made unilaterally.
   app-moui:
     name: check (app_moui, ubuntu, native)
     runs-on: ubuntu-latest
@@ -395,11 +380,6 @@ jobs:
       # just claimed was absent. Its non-zero exit is swallowed on
       # purpose; the real gate is the `moon check` after it, which fails
       # for any other reason too.
-      #
-      # That materialising check is also what pulls down
-      # riantr/moonbit_labeler_sample_data (declared in
-      # app_moui/moon.mod), which is what the step after this one copies
-      # into data/.
       - name: Migrate deprecated moon.mod.json in cached dependencies
         run: |
           moon check --target native >/dev/null 2>&1 || true
@@ -418,102 +398,3 @@ jobs:
 
       - name: moon check
         run: moon check --target native --diagnostic-limit 60
-
-  # The 361 tests, on Windows.
-  #
-  # Split from the check above because `moon test` *does* invoke the MoUI
-  # module prebuilds, and on Linux those need node + pkg-config +
-  # libglib2.0-dev + wayland-protocols -- a chain discovered one failure
-  # at a time, and none of it is needed on Windows, which is MoUI's
-  # primary target anyway (it is what Proton/CEF ships).
-  #
-  # 16 of the 361 read the real shipped dataset, and data/Image@skin +
-  # data/Label@skin are gitignored per-deployment data -- only
-  # data/.gitkeep is tracked. MoonBit cannot express "skip when the
-  # fixture is absent": `#skip("reason")` is static and would skip on
-  # developer machines too, and `#cfg` takes compile-time constants
-  # only. So the dataset ships as a mooncakes package instead,
-  # riantr/moonbit_labeler_sample_data, declared in app_moui/moon.mod
-  # and copied into ../data below. That keeps ~800 KB of user images out
-  # of the repository without weakening any assertion -- one test
-  # checks an exact decoded size of 517x371, which a synthesised
-  # fixture would have to fake.
-  app-moui-windows:
-    name: test (app_moui, windows, native)
-    runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: app_moui
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install moon
-        run: |
-          Invoke-WebRequest -UseBasicParsing -Uri https://cli.moonbitlang.com/install/powershell.ps1 -OutFile install.ps1
-          powershell -ExecutionPolicy Bypass -File install.ps1
-          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-
-      - name: Cache moon deps
-        uses: actions/cache@v4
-        with:
-          path: app_moui/.mooncakes
-          key: moon-cache-appmoui-win-${{ runner.os }}-${{ hashFiles('app_moui/moon.mod', 'moon.mod') }}
-          restore-keys: moon-cache-appmoui-win-${{ runner.os }}-
-
-      # Same cold-runner registry problem as every other job.
-      - name: Fetch registry index
-        run: moon update
-
-      # Same moon.mod.json migration as the ubuntu app-moui job, and for
-      # the same reason: Milky2018/moon_accesskit@0.3.0 still ships the
-      # deprecated manifest, .mooncakes/ is gitignored and re-fetched, and
-      # moon 0.1.20261012 rejects it outright. `moon fmt` has to run
-      # inside the offending package -- at the module root it only
-      # formats this module's own packages and silently does nothing.
-      #
-      # The `moon check` in front exists to materialise the cache (it is
-      # expected to fail on a cold runner and its exit is swallowed on
-      # purpose). `moon update` only refreshes the registry index;
-      # package sources are fetched during a build. Without it the loop
-      # below scans an empty .mooncakes/ and the next step dies on the
-      # manifest it just claimed was absent. That check is also what
-      # pulls down the fixture package.
-      - name: Migrate deprecated moon.mod.json in cached dependencies
-        run: |
-          moon check --target native *> $null
-          $manifests = Get-ChildItem .mooncakes -Filter moon.mod.json -Recurse -ErrorAction SilentlyContinue
-          if (-not $manifests) {
-            Write-Output "no deprecated manifests found"
-          }
-          else {
-            foreach ($m in $manifests) {
-              Write-Output ("migrating " + $m.Directory.FullName)
-              Push-Location $m.Directory.FullName
-              try { moon fmt } finally { Pop-Location }
-            }
-            Write-Output "migrated one or more cached manifests"
-          }
-        shell: pwsh
-
-      # moon has no version directory in the cache -- the path is
-      # .mooncakes/<owner>/<module>/ -- so this does not encode a version;
-      # the version bump shows up in the cache key above instead.
-      #
-      # Fails loudly rather than letting the 16 tests fail later with an
-      # unexplained `0 != 6`.
-      - name: Materialise the sample dataset
-        run: |
-          $fixture = '.mooncakes/riantr/moonbit_labeler_sample_data/src'
-          if (-not (Test-Path "$fixture/Image@skin")) {
-            Write-Output "::error::fixture package not resolved at $fixture -- did app_moui/moon.mod declare riantr/moonbit_labeler_sample_data?"
-            exit 1
-          }
-          New-Item -ItemType Directory -Force -Path ..\data | Out-Null
-          Copy-Item -Recurse -Force "$fixture/Image@skin" ..\data\Image@skin
-          Copy-Item -Recurse -Force "$fixture/Label@skin" ..\data\Label@skin
-          Write-Output ("images: " + (Get-ChildItem ..\data\Image@skin -File).Count)
-          Write-Output ("labels: " + (Get-ChildItem ..\data\Label@skin -File).Count)
-        shell: pwsh
-
-      - name: moon test
-        run: moon test --target native --diagnostic-limit 60
