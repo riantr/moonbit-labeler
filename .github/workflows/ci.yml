@@ -301,21 +301,27 @@ jobs:
   # reserved type name) without any job turning red. This job exists to
   # make that class of failure visible again.
   #
-  # `moon check` is the gate, not `moon test`, and the reason is worth
-  # stating rather than leaving as an unexplained gap. 16 tests in
+  # `moon test` runs too, and needs one extra step. 16 tests in
   # disk_io_test.mbt / image_decode_test.mbt / image_header_test.mbt read
   # the real shipped dataset (data/Image@skin, data/Label@skin), which is
   # gitignored per-deployment data -- only data/.gitkeep is tracked. In a
-  # clean checkout those 16 fail with `0 != 6`; copying the dataset in
-  # gives 361/361. Running `moon test` here would therefore be red for a
-  # reason that has nothing to do with the code, and committing ~800 KB
-  # of user images to satisfy it contradicts the ignore rule's stated
-  # intent. The other 345 tests are exercised locally by anyone who has
-  # the dataset.
+  # clean checkout those 16 fail with `0 != 6`; with the dataset in place
+  # the module is 361/361.
   #
-  # To close that properly the dataset-dependent tests need to skip when
-  # the fixture is absent rather than fail; that is a change to
-  # app_moui's own suite and was not made unilaterally.
+  # The obvious fix -- have the tests skip themselves when the fixture is
+  # missing -- is not expressible in MoonBit. `#skip("reason")` is
+  # static: it skips unconditionally, everywhere, including on a
+  # developer machine that has the dataset. `#cfg` takes compile-time
+  # constants only (`target="wasm"`, booleans), so "skip when this file
+  # does not exist at runtime" cannot be written. That was worth
+  # checking rather than assuming, because it decides the whole design.
+  #
+  # So the dataset is published as a mooncakes package
+  # (riantr/moonbit_labeler_sample_data), declared in app_moui/moon.mod
+  # and copied into data/ by a step below. That keeps ~800 KB of user
+  # images out of the repository without weakening any of the 16
+  # assertions -- one of them checks an exact decoded size of 517x371,
+  # which a synthesised fixture would have to fake.
   app-moui:
     name: check (app_moui, ubuntu, native)
     runs-on: ubuntu-latest
@@ -380,6 +386,11 @@ jobs:
       # just claimed was absent. Its non-zero exit is swallowed on
       # purpose; the real gate is the `moon check` after it, which fails
       # for any other reason too.
+      #
+      # That materialising check is also what pulls down
+      # riantr/moonbit_labeler_sample_data (declared in
+      # app_moui/moon.mod), which is what the step after this one copies
+      # into data/.
       - name: Migrate deprecated moon.mod.json in cached dependencies
         run: |
           moon check --target native >/dev/null 2>&1 || true
@@ -396,5 +407,38 @@ jobs:
             echo "no deprecated manifests found"
           fi
 
+      # 16 tests in disk_io_test.mbt / image_decode_test.mbt /
+      # image_header_test.mbt read the real shipped dataset, and
+      # data/Image@skin + data/Label@skin are gitignored per-deployment
+      # data -- only data/.gitkeep is tracked. MoonBit offers no way to
+      # skip a test conditionally: `#skip("reason")` is static, and
+      # `#cfg` only takes compile-time constants, so "skip when the
+      # fixture is absent" cannot be expressed. The dataset is therefore
+      # published as riantr/moonbit_labeler_sample_data and materialised
+      # here, which keeps ~800 KB of user images out of the repository
+      # without weakening those 16 assertions.
+      #
+      # moon has no version directory in the cache: the path is
+      # .mooncakes/<owner>/<module>/. Declared as a dependency in
+      # app_moui/moon.mod rather than fetched by URL, so the cache path
+      # above already covers it and the version bump is visible there.
+      - name: Materialise the sample dataset
+        run: |
+          set -eu
+          fixture=.mooncakes/riantr/moonbit_labeler_sample_data/src
+          if [ ! -d "$fixture/Image@skin" ]; then
+            echo "::error::fixture package not resolved at $fixture -- did moon.mod declare riantr/moonbit_labeler_sample_data?"
+            exit 1
+          fi
+          mkdir -p ../data
+          rm -rf ../data/Image@skin ../data/Label@skin
+          cp -r "$fixture/Image@skin" ../data/Image@skin
+          cp -r "$fixture/Label@skin" ../data/Label@skin
+          echo "images: $(ls -1 ../data/Image@skin | wc -l)"
+          echo "labels: $(ls -1 ../data/Label@skin | wc -l)"
+
       - name: moon check
         run: moon check --target native --diagnostic-limit 60
+
+      - name: moon test
+        run: moon test --target native --diagnostic-limit 60
