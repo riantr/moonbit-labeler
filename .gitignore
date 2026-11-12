@@ -68,6 +68,10 @@ staging-moonbit-image/
 *.disabled
 !app/moon.pkg.disabled
 
+# Python bytecode cache (scripts/make_zip.py); not source.
+__pycache__/
+*.pyc
+
 # Draft / proposal Markdown under doc/ (review-stage material, not source).
 # Real shipped docs live next to the code; PROPOSAL_*.md are working drafts
 # the user reviews locally before deciding whether to promote to README.
