@@ -100,7 +100,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > `resolve_asset_path` into `resolve_entry_path` in
 > `moonbit-community/proton/proton_app/facade_entry.mbt`.
 - Frontend only:                 `cd frontend && npm run dev` / `npm run build`
-- Headless JSON-RPC bridge:      `moonbit-labeler.exe --stdio` (CEF-free; same 24 ops over stdin/stdout)
+- Headless JSON-RPC bridge:      `moonbit-labeler.exe --stdio` (CEF-free; same 27 ops over stdin/stdout)
   See "Stdio JSON-RPC bridge" below for the wire protocol.
 - Launch packaged exe:           `_build/run.bat [--cef|--stdio]`
   (auto mode: CEF if `target/proton-dist/moonbit-labeler/libcef.dll` is present,
@@ -111,14 +111,22 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - `app/`                   — runnable entry. `main.mbt` routes to one of two modes:
   - CEF/Proton (default): `@proton.file(...).identifier(...).capability(...).run_or_abort()` —
     the 0.4.0 `App` builder API that loads `frontend/dist/index.html` into a CEF webview.
-  - `--stdio` (headless): dispatches the same 24 ops as JSON-RPC over stdin/stdout (see
+  - `--stdio` (headless): dispatches the same 27 ops as JSON-RPC over stdin/stdout (see
     "Stdio JSON-RPC bridge" below). Selected by passing `--stdio` as the first arg.
   `stdio_main.mbt` holds the stdio loop. Both modes share the `@labeler.dispatch_op`
   entry point in `extensions/labeler/dispatch.mbt`.
-- `extensions/labeler/`    — 24 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
+- `extensions/labeler/`    — 27 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
   and the pure-MoonBit `dispatch_op(op, payload) -> Json raise` entry point. In
   `extension.mbt`, each op is declared as a `@proton_contract.Command[Request, Reply]`
   and bound to the existing `op_*` handler via a `CommandRegistrar`.
+  Three sub-modules carry the newer features:
+  - `video_label.mbt` — the per-frame annotation model (`frame_labels`), plus
+    `read_video_label` / `write_video_label`.
+  - `media_tool.mbt` — ffmpeg / ffprobe discovery and the `tool_not_found` /
+    `tool_failed` / `bad_request` error codes the media ops report.
+  - `class_revision.mbt` — the class rename (`rename_class`): the rewrite lives
+    in the backend because a folder-wide rename touches every label file and the
+    on-disk schema is the backend's business.
 - `frontend/`              — Vite + vanilla-JS UI. `src/main.js` orchestrates IPC + canvas + state;
   `dist/` is inlined into the exe at `proton_cli package` time.
 - `data/`                  — local sample dataset (`Image@CARS.Part.01`, sibling `Label@<name>`).
@@ -128,6 +136,13 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   `benchmark.md`, `mutation_analysis.md`).
 - `tests/`, `qa/`          — black-box tests. `*_blackbox_test.mbt` at the repo root + Gherkin
   feature `image_codecs.feature`; frontend QA in `frontend/qa/webkit_picker_blackbox.test.mjs`.
+  The Node-driven stdio-bridge tests live in `tests/stdio/`:
+  `video_stdio_blackbox.test.mjs` (video path) and
+  `class_revision_stdio_blackbox.test.mjs` (class rename). They drive the
+  real `--stdio` bridge, so they need an executable with the CEF runtime
+  beside it — the packaged app under `target/proton-dist/moonbit-labeler/`,
+  not a bare `moon build` output (the app links against libcef even in
+  `--stdio` mode).
 - `target/proton-dist/`    — packaged exe + zip (gitignored).
 - `proton.project.json`    — 0.9.0 canonical app config: identifier, backend package path,
   frontend dev/build commands, product name + version + output dir + formats.
@@ -274,6 +289,14 @@ learn.
 - MoonBit package tests: `moon test` (covers `extensions/labeler/labeler_test.mbt`).
 - Repo-root black-box drivers (`component_blackbox_test.mbt`, `gherkin_blackbox_test.mbt`) and
   the Gherkin feature `image_codecs.feature` exercise the full labeler + image pipelines.
+- **Stdio-bridge black-box (Node):** `tests/stdio/*.test.mjs` drive the real
+  `--stdio` JSON-RPC bridge end to end — `class_revision_stdio_blackbox.test.mjs`
+  (the class rename) and `video_stdio_blackbox.test.mjs` (the video path). The
+  ops they exercise are async, so a MoonBit `test` block cannot call them;
+  these scripts are the only coverage of the async half. They need an
+  executable with the CEF runtime beside it, i.e. the packaged app under
+  `target/proton-dist/moonbit-labeler/` (a bare `moon build` output exits with
+  STATUS_DLL_NOT_FOUND — the app links against libcef even in `--stdio` mode).
 - Frontend black-box: `node frontend/qa/webkit_picker_blackbox.test.mjs`.
 - **CEF smoke test (post-build, pre-PR):** the CEF runtime exposes a Chromium
   DevTools Protocol endpoint. `_build/launch-detached.ps1` starts the
@@ -2974,21 +2997,21 @@ full-screen capture came back black, which is the harness flakiness
 ## Stdio JSON-RPC bridge
 
 The packaged exe (`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`) doubles as
-a CEF-free JSON-RPC server when launched with `--stdio`. Same 24 ops, same Request/Reply
+a CEF-free JSON-RPC server when launched with `--stdio`. Same 27 ops, same Request/Reply
 structs, same JSON wire format as the CEF path — useful for embedding the labeler backend
 in a Python Qt shell, scripts, or debug tooling.
 
 ```
 $ echo '{"id":1,"op":"list_images","payload":{"path":"data/Image@skin","extensions":["jpg"]}}' \
     | ./moonbit-labeler.exe --stdio
-{"type":"ready","ops":["list_images", ...24 ops...]}
+{"type":"ready","ops":["list_images", ...27 ops...]}
 {"id":1,"ok":true,"result":{"folder":"data/Image@skin","images":[...]}}
 {"type":"bye"}
 ```
 
 Wire format (one JSON object per line, newline-delimited):
 
-- Banner on startup: `{"type":"ready","ops":[...24 op names...]}`
+- Banner on startup: `{"type":"ready","ops":[...27 op names...]}`
 - Request: `{"id": <int|null>, "op": "<name>", "payload": <op-specific-json>}`
 - Response: `{"id": ..., "ok": true,  "result": <json>, "error": null}`
   or:       `{"id": ..., "ok": false, "result": null, "error": "<message>"}`

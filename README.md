@@ -97,6 +97,13 @@ directory is produced either way, so zip it yourself afterwards — see
 - **Custom class lists** — TXT (`id|name|#RRGGBB`) or JSON format,
   editable via the menubar, persisted next to the image folder as
   `classes.json`. Colors travel with each class.
+- **Class revision** — the class list is only a projection of the
+  annotation data, so a class annotated under a wrong name could not be
+  corrected. 工具 → 重命名类别 rewrites the `type` field of the
+  annotations that use it: either the current image's label document or
+  every label document of the dataset. The rename is previewed first
+  (how many annotations and files it touches) and confirmed before
+  anything is written; for a video it reaches every frame's set.
 
 ## Stack
 
@@ -122,9 +129,9 @@ don't match the documented target.
 ├── app/
 │   └── main.mbt                       # 0.9.0 entry: @proton.file(...) then app.identifier(...) / app.capability(...) / app.run_or_abort()
 ├── extensions/
-│   ├── labeler/                       # 24 IPC ops + the image/label/VOC/YOLO/COCO pipeline
+│   ├── labeler/                       # 27 IPC ops + the image/label/VOC/YOLO/COCO pipeline
 │   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
-│   │   ├── extension.mbt               # 0.9.0 extension registration (returns @proton_contract.Extension; 24 commands registered via @proton_extension.typed)
+│   │   ├── extension.mbt               # 0.9.0 extension registration (returns @proton_contract.Extension; 27 commands registered via @proton_extension.typed)
 │   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
 │   │   └── moon.pkg
 │   # Image codec lives in the shared riantr/moonbit_image@0.3.9 mooncake
@@ -245,13 +252,15 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 | `read_text` / `write_text` | frontend → backend | Read / write a UTF-8 text file |
 | `read_label` / `write_label` | frontend → backend | Read / write the on-disk label JSON for a given image path |
 | `scan_classes` / `save_classes` / `load_classes` / `load_classes_from_file` | frontend → backend | Manage the curated class list (TXT or JSON, by file path or by Image/Label dir scan) |
+| `rename_class` | frontend → backend | Rename a class across the annotations that use it — `scope` is `current` (one label document) or `folder` (every label document of the dataset), `apply: false` previews the counts |
 | `parse_label` / `serialize_label` | frontend → backend | Round-trip a label JSON through the shared normalizer (handles legacy + modern schema) |
 | `list_videos` / `read_video_info` / `read_video_frame` | frontend → backend | Video enumeration + per-frame decode (via `ffprobe / ffmpeg`) |
+| `read_video_label` / `write_video_label` | frontend → backend | Read / write the annotation set of one video frame (one JSON per video, one set per frame — see `doc/VIDEO_LABELING.md`) |
 | `export_voc_folder` / `export_yolo_folder` | frontend → backend | Batch export the current Image/Label folder to Pascal VOC XML or YOLO TXT |
 | `import_voc_folder` / `import_yolo_folder` / `import_coco_file` | frontend → backend | Batch import Pascal VOC XML / YOLO TXT / COCO JSON into a destination `Label@<dataset>` folder (see Features above) |
 | `pick_folder` | frontend → backend | Native folder picker; the only op that uses the request context. Spawns a PowerShell folder dialog on Windows (CEF 150's `CommandWindow.choose_directory` renders as an OpenFileDialog and returns an empty path, so it is bypassed) |
 
-All 24 rows above correspond 1:1 to the `contract.command(...)`
+All 27 ops above correspond 1:1 to the `contract.command(...)`
 declarations in `extensions/labeler/extension.mbt`.
 
 ## Vendored dependencies

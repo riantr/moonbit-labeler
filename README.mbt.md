@@ -121,7 +121,7 @@ in the system directory.
 ```
 .
 ├── app/                            # runnable entry (CEF + stdio)
-├── extensions/labeler/             # 24 IPC ops + label/VOC/YOLO/COCO pipeline
+├── extensions/labeler/             # 27 IPC ops + label/VOC/YOLO/COCO pipeline
 ├── frontend/                       # Vite + vanilla-JS UI (built into the exe at pack time)
 ├── moon.mod                        # deps: proton@0.4.0, proton_contract@0.4.0, moonbit_image@0.3.7, async@0.22.5
 ├── proton.project.json             # identifier, frontend, package (output dir, formats, version)
@@ -140,7 +140,7 @@ pub fn dispatch_op(op : String, payload : Json) -> Json raise
 
 This is what `app/stdio_main.mbt` calls, and what you can call from
 your own host (Python Qt shell, Go service, embedded WASM, etc.). The
-24 op names and their request/response JSON shapes are listed in
+27 op names and their request/response JSON shapes are listed in
 `extensions/labeler/extension.mbt` and the project README.
 
 ## License
