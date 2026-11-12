@@ -60,7 +60,7 @@ proton_cli package --format app
 
 # Ship it: zip the staged directory with the built-in tar
 cd target\proton-dist
-tar -a -cf moonbit-labeler-0.2.15.zip moonbit-labeler
+tar -a -cf moonbit-labeler-0.2.16.zip moonbit-labeler
 ```
 
 Use `--format app` rather than the bare `proton_cli package`: the default
@@ -254,7 +254,7 @@ tool:
 ```powershell
 proton_cli package --format app          # stage the app; skip the broken zip step
 cd target\proton-dist
-tar -a -cf moonbit-labeler-0.2.15.zip moonbit-labeler
+tar -a -cf moonbit-labeler-0.2.16.zip moonbit-labeler
 ```
 
 The result is self-contained: drop it on any Windows 10+ machine, unzip,
@@ -279,11 +279,11 @@ moon install riantr/LunaPack@0.1.20     # native build -> ~/.moon/bin/LunaPack.e
 proton_cli package --format app         # stage the app first
 LunaPack bundle `
   -i target/proton-dist/moonbit-labeler/moonbit-labeler.exe `
-  -o target/proton-dist/moonbit-labeler-0.2.15-bundle.exe `
+  -o target/proton-dist/moonbit-labeler-0.2.16-bundle.exe `
   --Files target/proton-dist/moonbit-labeler `
   --compression-method lz4 `
-  --name moonbit-labeler --version 0.2.15
-LunaPack verify target/proton-dist/moonbit-labeler-0.2.15-bundle.exe
+  --name moonbit-labeler --version 0.2.16
+LunaPack verify target/proton-dist/moonbit-labeler-0.2.16-bundle.exe
 ```
 
 Two things matter here. The `bundle` **subcommand** is used, never the
@@ -296,7 +296,7 @@ produces carries the payload but does not start on its own.
 Any bundle can be inspected without unpacking it:
 
 ```powershell
-LunaPack info target/proton-dist/moonbit-labeler-0.2.15-bundle.exe
+LunaPack info target/proton-dist/moonbit-labeler-0.2.16-bundle.exe
 ```
 
 ### What is inside the bundle
@@ -401,14 +401,14 @@ The backend is published to mooncakes.io, so another MoonBit project can
 depend on it without the CEF runtime and without this source tree:
 
 ```sh
-moon add riantr/moonbit_labeler@0.2.15
+moon add riantr/moonbit_labeler@0.2.16
 ```
 
 which pins the dependency in `moon.mod`:
 
 ```
 import {
-  "riantr/moonbit_labeler@0.2.15",
+  "riantr/moonbit_labeler@0.2.16",
 }
 ```
 

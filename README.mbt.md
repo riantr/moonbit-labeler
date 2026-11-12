@@ -89,7 +89,7 @@ yourself with the built-in `tar`:
 
 ```sh
 cd target/proton-dist
-tar -a -cf moonbit-labeler-0.2.15.zip moonbit-labeler
+tar -a -cf moonbit-labeler-0.2.16.zip moonbit-labeler
 ```
 
 The app finds its frontend through the resource directory
@@ -161,14 +161,14 @@ The backend is published to mooncakes.io, so another MoonBit project can
 depend on it without the CEF runtime and without the source tree:
 
 ```sh
-moon add riantr/moonbit_labeler@0.2.15
+moon add riantr/moonbit_labeler@0.2.16
 ```
 
 which pins the dependency in `moon.mod`:
 
 ```
 import {
-  "riantr/moonbit_labeler@0.2.15",
+  "riantr/moonbit_labeler@0.2.16",
 }
 ```
 

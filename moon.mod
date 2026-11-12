@@ -1,6 +1,6 @@
 name = "riantr/moonbit_labeler"
 
-version = "0.2.15"
+version = "0.2.16"
 
 import {
   "moonbit-community/proton@0.9.0",
