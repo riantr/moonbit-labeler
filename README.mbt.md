@@ -191,8 +191,8 @@ from how the package is built rather than from any rule of their own:
 
 A minimal consumer:
 
-```mbt nocheck
-// cmd/main/moon.pkg
+```
+# cmd/main/moon.pkg
 import {
   "riantr/moonbit_labeler/extensions/labeler",
   "moonbitlang/core/async",
@@ -204,25 +204,35 @@ supported_targets = "native"
 pkgtype(kind: "executable")
 
 options(
-  "allow-experimental-packages": [
-    "moonbitlang/core/async",
-  ],
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
 )
 ```
 
 ```mbt nocheck
 // cmd/main/main.mbt
-async fn main raise {
+
+///|
+async fn main {
   let ops = @labeler.dispatch_op_list()
   println("op count = " + ops.length().to_string())
 
-  let reply = @labeler.dispatch_op(
+  // `dispatch_op` is async and raises, so the error is handled here rather
+  // than letting `main` raise.
+  let text = @labeler.dispatch_op(
     "list_images",
     @json.parse("{\"path\":\"C:/some/images\"}"),
-  )
-  println(reply.stringify())
+  ).stringify() catch {
+    _ => "dispatch failed"
+  }
+  println(text)
 }
 ```
+
+The `catch` suffix — rather than `try expr catch { ... }` — is the
+canonical form: `moon fmt` drops a redundant `try` keyword. It also drops
+the `raise` qualifier from `async fn main raise { ... }`, so a `main` that
+raises is silently rewritten into code that no longer compiles. Handling
+the error inside `main` avoids that.
 
 `dispatch_op_list()` returns the 27 op names, and
 `parse_label_text(text, fallback_img_name) -> (String, String) raise`
@@ -231,7 +241,7 @@ touching the filesystem.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](https://github.com/riantr/moonbit-labeler/blob/main/LICENSE).
+MIT — see [LICENSE](https://github.com/riantr/moonbit-labeler/blob/main/LICENSE).
 
 The image codec comes from
 [`riantr/moonbit_image@0.3.9`](https://mooncakes.io/riantr/moonbit_image)
