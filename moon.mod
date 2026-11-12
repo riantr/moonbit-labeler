@@ -12,7 +12,7 @@ readme = "README.mbt.md"
 
 repository = "https://github.com/riantr/moonbit-labeler"
 
-license = "Apache-2.0"
+license = "MIT"
 
 keywords = [
   "labeling",
