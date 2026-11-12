@@ -35,6 +35,25 @@ schema variant rather than a domain requirement.
 └────────────────────────────────────────────────────────────────────┘
 ```
 
+## Download
+
+The desktop app is published as a GitHub release, not as part of this
+MoonBit package: mooncakes.io serves the **backend source**, and the
+runnable binaries are attached to the release.
+
+| Asset | Size | What it is |
+|---|---:|---|
+| [`moonbit-labeler-0.2.17-bundle.exe`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.17/moonbit-labeler-0.2.17-bundle.exe) | 247 MiB | One file — a self-extracting [LunaPack](https://github.com/riantr/LunaPack) bundle. Run it and it unpacks itself into a `.lunapack/` cache directory next to the executable. |
+| [`moonbit-labeler-0.2.17.zip`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.17/moonbit-labeler-0.2.17.zip) | 419 MiB | The staged application directory: `moonbit-labeler.exe` plus the CEF runtime beside it. |
+
+Release page: <https://github.com/riantr/moonbit-labeler/releases/tag/v0.2.17>
+
+Both are **Windows x86-64** and self-contained: unzip (or just run the
+bundle) on any Windows 10+ machine and double-click `moonbit-labeler.exe`.
+
+For the backend only, skip the 400 MB and depend on the published module
+instead — see [Use the backend as a library](#use-the-backend-as-a-library).
+
 ## Quick Start
 
 ```powershell
@@ -60,7 +79,7 @@ proton_cli package --format app
 
 # Ship it: zip the staged directory with the built-in tar
 cd target\proton-dist
-tar -a -cf moonbit-labeler-0.2.16.zip moonbit-labeler
+tar -a -cf moonbit-labeler-0.2.17.zip moonbit-labeler
 ```
 
 Use `--format app` rather than the bare `proton_cli package`: the default
@@ -272,7 +291,7 @@ tool:
 ```powershell
 proton_cli package --format app          # stage the app; skip the broken zip step
 cd target\proton-dist
-tar -a -cf moonbit-labeler-0.2.16.zip moonbit-labeler
+tar -a -cf moonbit-labeler-0.2.17.zip moonbit-labeler
 ```
 
 The result is self-contained: drop it on any Windows 10+ machine, unzip,
@@ -297,11 +316,11 @@ moon install riantr/LunaPack@0.1.20     # native build -> ~/.moon/bin/LunaPack.e
 proton_cli package --format app         # stage the app first
 LunaPack bundle `
   -i target/proton-dist/moonbit-labeler/moonbit-labeler.exe `
-  -o target/proton-dist/moonbit-labeler-0.2.16-bundle.exe `
+  -o target/proton-dist/moonbit-labeler-0.2.17-bundle.exe `
   --Files target/proton-dist/moonbit-labeler `
   --compression-method lz4 `
-  --name moonbit-labeler --version 0.2.16
-LunaPack verify target/proton-dist/moonbit-labeler-0.2.16-bundle.exe
+  --name moonbit-labeler --version 0.2.17
+LunaPack verify target/proton-dist/moonbit-labeler-0.2.17-bundle.exe
 ```
 
 Two things matter here. The `bundle` **subcommand** is used, never the
@@ -314,7 +333,7 @@ produces carries the payload but does not start on its own.
 Any bundle can be inspected without unpacking it:
 
 ```powershell
-LunaPack info target/proton-dist/moonbit-labeler-0.2.16-bundle.exe
+LunaPack info target/proton-dist/moonbit-labeler-0.2.17-bundle.exe
 ```
 
 ### What is inside the bundle
@@ -466,14 +485,14 @@ The backend is published to mooncakes.io, so another MoonBit project can
 depend on it without the CEF runtime and without this source tree:
 
 ```sh
-moon add riantr/moonbit_labeler@0.2.16
+moon add riantr/moonbit_labeler@0.2.17
 ```
 
 which pins the dependency in `moon.mod`:
 
 ```
 import {
-  "riantr/moonbit_labeler@0.2.16",
+  "riantr/moonbit_labeler@0.2.17",
 }
 ```
 
@@ -574,7 +593,7 @@ checks, builds and runs them:
 
 ```sh
 examples/consumer/run.sh          # the version in moon.mod, or the latest published one
-examples/consumer/run.sh 0.2.16   # a specific version
+examples/consumer/run.sh 0.2.17   # a specific version
 ```
 
 The `consumer (published package, ubuntu, native)` CI job runs exactly

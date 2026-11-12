@@ -16,6 +16,35 @@ dataset contains — but another dataset only requires a different image
 folder and class list. Likewise the CARS legacy schema is one supported
 schema variant, not a domain requirement.
 
+## Download the desktop app
+
+**This module is the backend, not the application.** What mooncakes.io
+serves here is the MoonBit *source* package: the "Download zip" link in
+the sidebar is that source, and `moon add riantr/moonbit_labeler@0.2.17`
+compiles it into your own project. The runnable desktop app is a separate
+download, produced by the release CI job and attached to the GitHub
+release:
+
+| Asset | Size | What it is |
+|---|---:|---|
+| [`moonbit-labeler-0.2.17-bundle.exe`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.17/moonbit-labeler-0.2.17-bundle.exe) | 247 MiB | One file. A self-extracting [LunaPack](https://github.com/riantr/LunaPack) bundle: run it and it unpacks itself into a `.lunapack/` cache directory next to the executable. |
+| [`moonbit-labeler-0.2.17.zip`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.17/moonbit-labeler-0.2.17.zip) | 419 MiB | The staged application directory: `moonbit-labeler.exe` plus the CEF runtime beside it. |
+
+Release page: <https://github.com/riantr/moonbit-labeler/releases/tag/v0.2.17>
+
+Both are **Windows x86-64** and need nothing installed: unzip (or just run
+the bundle) on any Windows 10+ machine and double-click
+`moonbit-labeler.exe`. The app finds its frontend through the resource
+directory (`<exe dir>/Resources`), so it starts from any working
+directory.
+
+If you only want the backend, take the module from this page instead — no
+CEF runtime, no 400 MB download:
+
+```sh
+moon add riantr/moonbit_labeler@0.2.17
+```
+
 ## Build from source
 
 ### Prerequisites
@@ -101,7 +130,7 @@ yourself with the built-in `tar`:
 
 ```sh
 cd target/proton-dist
-tar -a -cf moonbit-labeler-0.2.16.zip moonbit-labeler
+tar -a -cf moonbit-labeler-0.2.17.zip moonbit-labeler
 ```
 
 The app finds its frontend through the resource directory
@@ -173,14 +202,14 @@ The backend is published to mooncakes.io, so another MoonBit project can
 depend on it without the CEF runtime and without the source tree:
 
 ```sh
-moon add riantr/moonbit_labeler@0.2.16
+moon add riantr/moonbit_labeler@0.2.17
 ```
 
 which pins the dependency in `moon.mod`:
 
 ```
 import {
-  "riantr/moonbit_labeler@0.2.16",
+  "riantr/moonbit_labeler@0.2.17",
 }
 ```
 

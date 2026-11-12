@@ -169,7 +169,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   frontend dev/build commands, product name + version + output dir + formats.
   (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration; the 0.2.5 → 0.3.3
   migration kept the same `proton.project.json` schema, as did 0.4.0 and 0.9.0.)
-- `moon.mod`               — `riantr/moonbit_labeler` v0.2.16, depends on `moonbit-community/proton@0.9.0`,
+- `moon.mod`               — `riantr/moonbit_labeler` v0.2.17, depends on `moonbit-community/proton@0.9.0`,
   `proton_contract@0.9.0`, and `riantr/moonbit_image@0.3.9`.
   The async runtime is **not** a declared dependency any more: it comes from the
   toolchain's builtin `moonbitlang/core` module, so `moonbitlang/core/async` is
