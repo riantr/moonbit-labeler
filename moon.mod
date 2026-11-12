@@ -1,6 +1,6 @@
 name = "riantr/moonbit_labeler"
 
-version = "0.2.14"
+version = "0.2.15"
 
 import {
   "moonbit-community/proton@0.9.0",
@@ -24,7 +24,7 @@ keywords = [
   "json-rpc",
 ]
 
-description = "Image / video labeling backend for the MoonBit Labeler app: 24 async ops over @fs/@json for folder browsing, image IO, label IO, schema normalization (parse/serialize round-trip), class management, and VOC/YOLO/COCO export. The op_handlers are pure async MoonBit functions and can be wired into any IPC layer (Proton/CEF, stdio JSON-RPC, HTTP, WASM, custom bridge). Includes a `dispatch_op(op, payload) -> Json raise` entry point in 0.2.0+ for embedding outside the CEF runtime."
+description = "Image / video labeling backend for the MoonBit Labeler app: 27 async ops over @fs/@json for folder browsing, image IO, label IO, schema normalization (parse/serialize round-trip), class management (including the class rename), per-frame video labels, and VOC/YOLO/COCO export. The op_handlers are pure async MoonBit functions and can be wired into any IPC layer (Proton/CEF, stdio JSON-RPC, HTTP, WASM, custom bridge). Includes a `dispatch_op(op, payload) -> Json raise` entry point in 0.2.0+ for embedding outside the CEF runtime."
 
 options(
   warn_list: "",
