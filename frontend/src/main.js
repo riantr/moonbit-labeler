@@ -147,8 +147,9 @@ const state = {
   currentVideoIdx: -1,
   videoMeta: null,         // { width, height, fps, frameCount, durationMs, codec, ok }
   currentFrame: 0,
-  frameLabels: new Map(),  // frame -> { img_name, infos, bindings, frames }
-  diskJson: null,          // most recent on-disk JSON for the active video
+  // Frames the active video's label document annotates, kept in step
+  // by video.js from the backend's `read_video_label` reply.
+  annotatedFrames: [],
 };
 
 const els = {
@@ -279,8 +280,7 @@ function setMedia({ images = [], videos = [] } = {}) {
   state.currentVideo = null;
   state.videoMeta = null;
   state.currentFrame = 0;
-  state.frameLabels = new Map();
-  state.diskJson = null;
+  state.annotatedFrames = [];
   setTimelineVisible(false);
 
   // Merge for the sidebar list. Images go on top, videos below, each
@@ -755,8 +755,7 @@ function selectImage(idx) {
   state.currentVideoIdx = -1;
   state.currentVideo = null;
   state.videoMeta = null;
-  state.frameLabels = new Map();
-  state.diskJson = null;
+  state.annotatedFrames = [];
   // Single monotonic token shared by the image and label legs. Bumping
   // it here lets every in-flight callback (file:// onload, decode, IPC
   // label read) drop their result the moment the user navigates away.
@@ -2213,6 +2212,10 @@ async function runMenuAction(action) {
         if (cr?.classes) { state.classes = cr.classes; renderClassList(); }
       }
       break;
+    case "rename-class-current":
+    case "rename-class-folder":
+      await runRenameClass(action === "rename-class-folder" ? "folder" : "current");
+      break;
     case "add-prefix":
     case "add-suffix":
     case "remove-prefix":
@@ -2287,6 +2290,146 @@ async function runMenuAction(action) {
     default:
       console.warn("unknown menubar action:", action);
   }
+}
+
+/**
+ * Rename a class across the annotations that use it.
+ *
+ * The sidebar's class list is only a *projection* of the annotation
+ * data — `scan_classes` counts the `"type"` strings it finds in the
+ * label files — so a class that had been annotated under a wrong name
+ * could not be corrected at all. The backend owns the rewrite
+ * (`rename_class`) because a folder-wide rename touches every label
+ * file on disk and the on-disk schema is the backend's business.
+ *
+ * `scope` is "current" (the one label document) or "folder" (every
+ * label document of the dataset).
+ */
+async function runRenameClass(scope) {
+  // The class to rename: the one selected in the sidebar, or whatever
+  // the user typed into the class box.
+  const selected = state.classes[state.classIndex];
+  const from = (selected?.name || state.classType || "").trim();
+  if (!from) {
+    flashHint("请先在类别列表中选择要重命名的类别", "info");
+    return;
+  }
+  const scopeText = scope === "folder" ? "整个数据集" : "当前图";
+  const raw = window.prompt(
+    `把类别 "${from}" 重命名为（作用于${scopeText}）:`,
+    from,
+  );
+  if (raw === null) return;
+  const to = raw.trim();
+  if (!to) {
+    flashHint("新类别名为空，未修改", "info");
+    return;
+  }
+  if (to === from) {
+    flashHint("新旧类别名相同，未修改", "info");
+    return;
+  }
+  const path = currentMediaPath();
+  if (!path) {
+    flashHint("请先打开一张图片或一个视频", "info");
+    return;
+  }
+  try {
+    // Write what is pending first. The rename rewrites the file on
+    // disk, so an unsaved edit would either be lost, or would land on
+    // top of the renamed file and put the old class name back.
+    await flushSave();
+    // Preview before writing anything, so the user sees how many
+    // annotations the rename touches.
+    const preview = await invokeLabeler("rename_class", {
+      image_path: path, from, to, scope, apply: false,
+    });
+    if (!preview || !preview.changed_annotations) {
+      flashHint(`没有标注使用类别 "${from}"`, "info");
+      return;
+    }
+    const files = preview.changed_files || 0;
+    const ok = window.confirm(
+      `将 ${files} 个标注文件里的 ${preview.changed_annotations} 处标注\n` +
+      `从 "${from}" 改为 "${to}"。\n\n确定继续吗？`,
+    );
+    if (!ok) return;
+    const reply = await invokeLabeler("rename_class", {
+      image_path: path, from, to, scope, apply: true,
+    });
+    // The class list is a projection of the annotations, so it has to
+    // be re-scanned for the sidebar to show the new name.
+    await refreshClassList();
+    // The in-memory label still carries the old name. Replace it with
+    // the renamed document, or a later autosave would write the old
+    // name back over the rename.
+    await refreshCurrentLabel(reply);
+    // The renamed class was the active one — keep the class box in
+    // step so the next annotation uses the new name.
+    const idx = state.classes.findIndex((c) => c.name === to);
+    if (idx >= 0) {
+      selectClass(idx);
+    } else if (state.classType === from) {
+      state.classType = to;
+      if (els.classInput) els.classInput.value = to;
+    }
+    flashHint(
+      `已把 ${reply?.changed_annotations ?? 0} 处标注的类别从 "${from}" 改为 "${to}"`,
+      "ok",
+    );
+  } catch (err) {
+    flashHint(`重命名类别失败: ${err}`, "info");
+  }
+}
+
+/**
+ * The path of the media the canvas is showing: the current image, or
+ * the current video in video mode.
+ */
+function currentMediaPath() {
+  if (state.mediaKind === "video") {
+    return state.currentVideo?.path || "";
+  }
+  return state.images[state.currentIndex]?.path || "";
+}
+
+/**
+ * Re-scan the class list so the sidebar shows the renamed class.
+ */
+async function refreshClassList() {
+  if (!state.folder) return;
+  const cr = await invokeLabeler("scan_classes", { image_path: state.folder });
+  if (cr?.classes) {
+    state.classes = cr.classes;
+    renderClassList();
+  }
+}
+
+/**
+ * Replace the in-memory label with the renamed document the backend
+ * returned, so a later autosave cannot write the old class name back.
+ *
+ * In video mode the in-memory label holds only the *current frame's*
+ * annotation set while the backend returns the whole document, so the
+ * frame is read back through the video controller instead.
+ */
+async function refreshCurrentLabel(reply) {
+  if (state.mediaKind === "video") {
+    if (videoController && reply?.current_content) {
+      await videoController.reloadCurrentFrame();
+    }
+    return;
+  }
+  if (!reply?.current_content) return;
+  try {
+    state.label = JSON.parse(reply.current_content);
+  } catch (err) {
+    console.error("[rename_class] bad current_content:", err);
+    return;
+  }
+  state.dirty = false;
+  updateDirtyBadge();
+  requestAnimationFrame(() => renderAnnotations());
 }
 
 function zoomMenu(factor) {

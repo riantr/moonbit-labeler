@@ -2,18 +2,28 @@
 //
 // Video = a sequence of static frames. We reuse the existing canvas /
 // annotation / autosave stack by treating each frame as a tiny in-memory
-// label document and serializing the union back to disk on every save.
+// label document and handing each frame's document to the backend, which
+// owns the on-disk schema.
 //
-// The on-disk schema is documented in docs/VIDEO_LABELING.md:
+// The on-disk schema is documented in doc/VIDEO_LABELING.md:
+//
 //   {
 //     "img_name": "<video>.mp4",
-//     "frames": [<frame numbers this annotation set applies to>],
-//     "infos":   [...],
-//     "bindings":[...]
+//     "infos": [], "bindings": [], "frames": [],   // the default set
+//     "frame_labels": [
+//       { "frames": [12], "infos": [ ... ], "bindings": [ ... ] },
+//       { "frames": [24, 25], "infos": [ ... ], "bindings": [ ... ] }
+//     ]
 //   }
 //
+// The backend (`read_video_label` / `write_video_label`) keeps one
+// annotation set per frame (or per group of frames). That is the whole
+// reason the merge lives there and not here: an earlier version of this
+// file merged every frame's objects into one flat union before writing,
+// so a box drawn on frame 5 silently reappeared on frame 9.
+//
 // Public API (used by main.js):
-//   - createVideoController(deps) -> { on, ... }
+//   - createVideoController(deps) -> { selectVideo, selectFrame, ... }
 //
 // `deps` provides hooks into the main app:
 //   - invokeLabeler(op, payload): IPC
@@ -22,12 +32,15 @@
 //   - showEmptyHint(text), flashHint(msg, kind)
 //   - setTimelineVisible(boolean)
 //   - updateFrameReadout(frame, total, fps, coverage)
+//   - onFrameLoaded({w, h}), markLabeled(path)
 //
 // main.js only needs to wire three things into its existing keyboard /
 // file-list handlers:
 //   - on item click  -> selectVideo(idx) instead of selectImage
 //   - prev/next item -> support either media type
 //   - keyboard ←/→   -> step frame when in video mode
+
+import { serializeLabel } from "./label.js";
 
 export function createVideoController(deps) {
   const {
@@ -45,16 +58,36 @@ export function createVideoController(deps) {
   let _frameLoadToken = 0;
   let _videoMetaCache = new Map(); // path -> { width, height, fps, frameCount, durationMs }
 
+  /// Turn a backend failure code into something a user can act on. The
+  /// backend speaks English and machine-readable codes; the UI speaks
+  /// Chinese.
+  function describeToolError(error, message) {
+    if (error === "tool_not_found") {
+      return (
+        "未找到 ffmpeg/ffprobe。视频标注需要这两个工具：" +
+        "请先安装 ffmpeg 并把它加入 PATH" +
+        "（或设置 MOONBIT_LABELER_FFMPEG 环境变量指向可执行文件）。"
+      );
+    }
+    if (error === "tool_failed") {
+      return `ffmpeg 执行失败：${message || "未知错误"}`;
+    }
+    if (error === "bad_request") {
+      return message || "请求无效";
+    }
+    return message || "未知错误";
+  }
+
   /** Fetch ffprobe info for one video. Cached per-path. */
   async function getVideoMeta(path) {
     if (_videoMetaCache.has(path)) return _videoMetaCache.get(path);
     try {
       const reply = await invokeLabeler("read_video_info", { path });
-      // CEF/Proton 0.2.5 reply is the raw `ReadVideoInfoReply` struct:
-      // top-level `{ width, height, fps, frame_count, codec,
-      // duration_ms }` (no `ok` wrapper). Treat a non-zero width as
-      // "we got something" — `read_video_info` raises on the moonside
-      // when ffprobe fails, so any reply means success.
+      // The reply is the raw `ReadVideoInfoReply` struct: top-level
+      // `{ width, height, fps, frame_count, codec, duration_ms, ok,
+      // error, message }` — there is no `{ ok, result }` wrapper in CEF
+      // mode. `ok` is false when ffprobe is missing or failed, and
+      // `error` says which.
       const meta = {
         width: reply?.width || 0,
         height: reply?.height || 0,
@@ -62,52 +95,43 @@ export function createVideoController(deps) {
         frameCount: reply?.frame_count || reply?.frameCount || 0,
         durationMs: reply?.duration_ms || reply?.durationMs || 0,
         codec: reply?.codec || "",
-        ok: !!(reply && (reply.width || reply.height)),
+        ok: reply?.ok === true,
+        error: reply?.error || "",
+        message: reply?.message || "",
       };
       _videoMetaCache.set(path, meta);
       return meta;
     } catch (err) {
       console.error("[video] read_video_info failed:", err);
-      return { width: 0, height: 0, fps: 0, frameCount: 0, durationMs: 0, codec: "", ok: false };
+      return {
+        width: 0, height: 0, fps: 0, frameCount: 0, durationMs: 0,
+        codec: "", ok: false, error: "tool_failed",
+        message: String(err),
+      };
     }
-  }
-
-  /** Build an empty per-frame label doc. */
-  function emptyFrameLabel(frame) {
-    return {
-      img_name: getState().currentVideo?.name || "",
-      infos: [],
-      bindings: [],
-      frames: [frame],
-    };
   }
 
   /** Select a video file and load frame 0 by default. */
   async function selectVideo(idx) {
     const st = getState();
     if (idx < 0 || idx >= st.videos.length) return;
-    if (st.dirty) {
-      // Best-effort flush before swapping items. The caller should not
-      // depend on this; the main selectImage path handles dirty flushes
-      // too. We rely on the same autosave path.
-    }
     const item = st.videos[idx];
+    // Persist whatever the previous video had pending before switching.
+    await flushCurrentFrame();
     setState({
       currentVideoIdx: idx,
       currentVideo: item,
       currentFrame: 0,
-      frameLabels: new Map(),
-      diskJson: null,
+      annotatedFrames: [],
     });
     setTimelineVisible(true);
     showEmptyHint("读取视频信息…");
     const meta = await getVideoMeta(item.path);
-    if (!meta.ok) {
-      flashHint(`无法读取视频元数据: ${item.name}`, "info");
-    }
     setState({ videoMeta: meta });
-    await loadLabelForFrame(item, 0);
-    await loadAndShowFrame(item, 0);
+    if (!meta.ok) {
+      flashHint(describeToolError(meta.error, meta.message), "info");
+    }
+    await selectFrame(0);
   }
 
   /** Switch to a different frame within the currently selected video. */
@@ -115,7 +139,6 @@ export function createVideoController(deps) {
     const st = getState();
     if (!st.currentVideo) return;
     const meta = st.videoMeta || (await getVideoMeta(st.currentVideo.path));
-    if (!setState) return;
     const max = (meta.frameCount || 0) > 0 ? meta.frameCount - 1 : 0;
     const clamped = Math.max(0, Math.min(max, Math.floor(frame)));
     // Persist any pending edits for the current frame before switching.
@@ -127,62 +150,45 @@ export function createVideoController(deps) {
   }
 
   /**
-   * Read the per-frame label from the in-memory `frameLabels` cache or
-   * the on-disk JSON. We keep the cache so multiple save()s within a
-   * session don't drift the in-memory document.
+   * Read the annotation set that applies to `frame`. The backend owns the
+   * projection, so the frontend never has to know how the on-disk
+   * document is structured.
    */
   async function loadLabelForFrame(item, frame) {
     const st = getState();
-    if (st.frameLabels.has(frame)) {
-      setState({ label: st.frameLabels.get(frame), loadedFromDisk: true });
-      renderAnnotations();
-      return;
-    }
-    // Read the on-disk JSON once for the whole video, then project to
-    // this frame. Subsequent calls hit the in-memory cache.
-    let disk = st.diskJson;
-    if (!disk) {
-      const token = ++_frameLoadToken;
-      try {
-        const reply = await invokeLabeler("read_label", { image_path: item.path });
-        if (token !== _frameLoadToken) return; // a newer nav preempted us
-        if (reply?.found && reply.content) {
-          const { parseLabel } = await import("./label.js");
-          disk = await parseLabel(reply.content, item.name);
-          if (!disk) {
-            disk = { img_name: item.name, infos: [], bindings: [], frames: [] };
-          }
-        } else {
-          disk = { img_name: item.name, infos: [], bindings: [], frames: [] };
+    const token = ++_frameLoadToken;
+    try {
+      const reply = await invokeLabeler("read_video_label", {
+        path: item.path,
+        frame,
+      });
+      if (token !== _frameLoadToken) return; // a newer nav preempted us
+      let label = { img_name: item.name, infos: [], bindings: [], frames: [frame] };
+      if (reply?.content) {
+        try {
+          label = JSON.parse(reply.content);
+        } catch (err) {
+          console.error("[video] read_video_label returned bad JSON:", err);
         }
-        setState({ diskJson: disk });
-        if (reply?.found) {
-          st.labeledPaths.add(item.path);
-        }
-      } catch (err) {
-        if (token !== _frameLoadToken) return;
-        console.error("[video] read_label failed:", err);
-        disk = { img_name: item.name, infos: [], bindings: [], frames: [] };
-        setState({ diskJson: disk });
       }
+      setState({
+        label,
+        loadedFromDisk: true,
+        annotatedFrames: reply?.annotated_frames || [],
+      });
+      if (reply?.found) {
+        st.labeledPaths.add(item.path);
+      }
+      renderAnnotations();
+    } catch (err) {
+      if (token !== _frameLoadToken) return;
+      console.error("[video] read_video_label failed:", err);
+      setState({
+        label: { img_name: item.name, infos: [], bindings: [], frames: [frame] },
+        loadedFromDisk: false,
+      });
+      renderAnnotations();
     }
-    // Project the per-frame subset. The "applies to all frames" case is
-    // represented by an empty `frames` array; we then show the same label
-    // on every frame. (We could special-case this to also write it back
-    // per-frame on save; for MVP we just always set frames = [frame] when
-    // a user adds an annotation.)
-    const frameSet = new Set(disk.frames || []);
-    const appliesToAll = frameSet.size === 0;
-    const isInScope = appliesToAll || frameSet.has(frame);
-    const projected = {
-      img_name: disk.img_name,
-      infos: isInScope ? disk.infos : [],
-      bindings: isInScope ? disk.bindings : [],
-      frames: [frame],
-    };
-    st.frameLabels.set(frame, projected);
-    setState({ label: projected, loadedFromDisk: true });
-    renderAnnotations();
   }
 
   /**
@@ -195,13 +201,21 @@ export function createVideoController(deps) {
     showEmptyHint("加载帧…");
     const els = st.els;
     try {
-      const reply = await invokeLabeler("read_video_frame", { path: item.path, frame });
+      const reply = await invokeLabeler("read_video_frame", {
+        path: item.path,
+        frame,
+      });
       if (token !== _frameLoadToken) return;
-      // CEF/Proton 0.2.5 reply is the raw `ReadVideoFrameReply`:
-      // top-level `{ base64, mime, width, height }` (no `ok` wrapper).
-      // moonside raises on ffmpeg failure, so any reply with base64
-      // means success.
-      if (!reply || !reply.base64) {
+      // The reply is the raw `ReadVideoFrameReply` struct: top-level
+      // `{ base64, mime, width, height, ok, error, message }`. The op
+      // reports a missing or broken ffmpeg through `ok`/`error` rather
+      // than raising, so the UI can say something useful.
+      if (!reply || reply.ok === false) {
+        showEmptyHint(describeToolError(reply?.error, reply?.message));
+        flashHint(describeToolError(reply?.error, reply?.message), "info");
+        return;
+      }
+      if (!reply.base64) {
         showEmptyHint(`无法抽帧 #${frame}`);
         return;
       }
@@ -230,81 +244,47 @@ export function createVideoController(deps) {
   }
 
   /**
-   * Persist the current frame's in-memory edits into the cache, and
-   * update the coverage stat. Called from the main autosave path.
+   * Write the current frame's in-memory edits to disk. Only the current
+   * frame is touched: the backend merges it into the document and leaves
+   * every other frame's annotations exactly as they were.
    */
   async function flushCurrentFrame() {
     const st = getState();
     if (!st.currentVideo) return;
     if (!st.dirty) return;
     const frame = st.currentFrame;
-    const next = {
-      img_name: st.label.img_name || st.currentVideo.name,
-      infos: st.label.infos,
-      bindings: st.label.bindings,
+    const content = await serializeLabel({
+      img_name: st.label?.img_name || st.currentVideo.name,
+      infos: st.label?.infos || [],
+      bindings: st.label?.bindings || [],
       frames: [frame],
-    };
-    st.frameLabels.set(frame, next);
+    });
+    const reply = await invokeLabeler("write_video_label", {
+      path: st.currentVideo.path,
+      frame,
+      content,
+    });
+    setState({ dirty: false });
+    // Keep the annotated-frame list in step with what we just wrote.
+    const annotated = Array.from(new Set([...(st.annotatedFrames || []), frame])).sort(
+      (a, b) => a - b,
+    );
+    setState({ annotatedFrames: annotated });
+    st.labeledPaths.add(st.currentVideo.path);
+    if (deps.markLabeled) deps.markLabeled(st.currentVideo.path);
     updateCoverage();
+    return reply;
   }
 
   /**
-   * Merge the per-frame cache back into a single on-disk document and
-   * write it. Frame 0 in the cache is always preserved; we union the
-   * remaining frames that the user has touched.
+   * Save the current frame. The autosave path in main.js calls this.
    */
   async function flushSave() {
-    const st = getState();
-    if (!st.currentVideo) return;
     await flushCurrentFrame();
-    const framesTouched = Array.from(st.frameLabels.keys()).sort((a, b) => a - b);
-    if (framesTouched.length === 0) return;
-    // Merge: take the FIRST frame's infos as the seed (they are usually
-    // identical across the video anyway), but keep `frames` as the union
-    // of touched frames. We keep a simple, deterministic merge: each
-    // frame's label is its own document; we union their `infos`/
-    // `bindings` IDs, deduplicating by id. This way the same id used
-    // across frames is preserved (track-friendly).
-    const idSet = new Set();
-    const mergedInfos = [];
-    const mergedBindings = [];
-    for (const f of framesTouched) {
-      const lbl = st.frameLabels.get(f);
-      if (!lbl) continue;
-      for (const a of lbl.infos || []) {
-        if (!idSet.has(a.id)) {
-          idSet.add(a.id);
-          mergedInfos.push(a);
-        }
-      }
-      for (const b of lbl.bindings || []) {
-        if (!idSet.has(b.id)) {
-          idSet.add(b.id);
-          mergedBindings.push(b);
-        }
-      }
-    }
-    const { serializeLabel } = await import("./label.js");
-    const out = {
-      img_name: st.currentVideo.name,
-      frames: framesTouched,
-      infos: mergedInfos,
-      bindings: mergedBindings,
-    };
-    const content = await serializeLabel(out);
-    await invokeLabeler("write_label", {
-      image_path: st.currentVideo.path,
-      content,
-    });
-    // Update diskJson to the freshly-saved form so the next dirty check
-    // can compare against it.
-    setState({ diskJson: structuredClone(out), dirty: false });
-    st.labeledPaths.add(st.currentVideo.path);
-    if (deps.markLabeled) deps.markLabeled(st.currentVideo.path);
   }
 
   /** Copy the current frame's annotations to the next frame. */
-  function copyFrameToNext() {
+  async function copyFrameToNext() {
     const st = getState();
     if (!st.currentVideo) return;
     const cur = st.currentFrame;
@@ -314,28 +294,37 @@ export function createVideoController(deps) {
       flashHint("已经到最后一帧了", "info");
       return;
     }
-    const cur_lbl = st.frameLabels.get(cur) || st.label;
+    const cur_lbl = st.label;
     if (!cur_lbl || (cur_lbl.infos || []).length === 0) {
       flashHint("当前帧没有可复制的标注", "info");
       return;
     }
-    // Deep-clone the per-frame label so the same IDs land on the next
-    // frame. Using structuredClone keeps the ID stable, which is what
-    // track-aware consumers want.
-    const cloned = structuredClone({
-      ...cur_lbl,
+    // The copy keeps the object ids, so a downstream consumer can still
+    // follow one object across frames, but the two frames' point
+    // coordinates are independent: editing one does not move the other.
+    const content = await serializeLabel({
+      img_name: cur_lbl.img_name || st.currentVideo.name,
+      infos: structuredClone(cur_lbl.infos || []),
+      bindings: structuredClone(cur_lbl.bindings || []),
       frames: [next],
     });
-    st.frameLabels.set(next, cloned);
-    setState({ dirty: true });
-    updateCoverage();
+    await invokeLabeler("write_video_label", {
+      path: st.currentVideo.path,
+      frame: next,
+      content,
+    });
+    const annotated = Array.from(new Set([...(st.annotatedFrames || []), next])).sort(
+      (a, b) => a - b,
+    );
+    setState({ annotatedFrames: annotated });
     flashHint(`已复制第 ${cur} 帧标注到第 ${next} 帧`, "info");
+    await selectFrame(next);
   }
 
   function updateCoverage() {
     const st = getState();
     if (!st.currentVideo) return;
-    const n = st.frameLabels.size;
+    const n = (st.annotatedFrames || []).length;
     if (deps.updateFrameReadout) {
       deps.updateFrameReadout(
         st.currentFrame,
@@ -353,6 +342,21 @@ export function createVideoController(deps) {
     await selectFrame(st.currentFrame + delta);
   }
 
+  /**
+   * Re-read the current frame's annotation set from disk.
+   *
+   * The class-revision op rewrites the whole video document on disk;
+   * the frontend only holds the *current frame's* set in memory, so
+   * the frame has to be read back after such a rewrite. Nothing is
+   * flushed here — the in-memory set is exactly what the rewrite just
+   * replaced, so writing it back would undo the rename.
+   */
+  async function reloadCurrentFrame() {
+    const st = getState();
+    if (!st.currentVideo) return;
+    await loadLabelForFrame(st.currentVideo, st.currentFrame);
+  }
+
   return {
     selectVideo,
     selectFrame,
@@ -360,6 +364,7 @@ export function createVideoController(deps) {
     copyFrameToNext,
     flushSave,
     flushCurrentFrame,
+    reloadCurrentFrame,
     getVideoMeta,
     clearCache: () => _videoMetaCache.clear(),
   };
