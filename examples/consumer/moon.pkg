@@ -1,0 +1,12 @@
+import {
+  "riantr/moonbit_labeler/extensions/labeler",
+  "moonbitlang/core/async",
+}
+
+supported_targets = "native"
+
+pkgtype(kind: "executable")
+
+options(
+  "allow-experimental-packages": [ "moonbitlang/core/async" ],
+)

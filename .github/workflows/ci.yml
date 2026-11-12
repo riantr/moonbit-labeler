@@ -170,6 +170,64 @@ jobs:
           -p riantr/moonbit_labeler/extensions/labeler
           --target native --diagnostic-limit 40
 
+  # The published package has to stay usable from ANOTHER MoonBit
+  # project. `moon check` and `moon test` inside this repository prove
+  # that the SOURCE compiles and behaves; they say nothing about the
+  # copy on mooncakes.io, which is the one a consumer actually resolves.
+  # The metadata a consumer sees -- the package path, the
+  # `supported_targets = "+native"` constraint, the dependency pins --
+  # exists only in the registry copy, so that is where a packaging
+  # mistake hides.
+  #
+  # This job therefore does what a real consumer does: scaffold a
+  # throwaway module, `moon add riantr/moonbit_labeler` from the
+  # registry, drop in the very same sample that lives in
+  # examples/consumer/, then check it, build it and run it.
+  #
+  # The script is the one a developer can also run locally, so the CI
+  # job and the README cannot drift apart from each other.
+  #
+  # Linux rather than Windows, on purpose: the package declares
+  # `supported_targets = "+native"`, so the claim worth testing is that
+  # it is consumable as a native library on a platform other than the
+  # one the GUI ships on.
+  consumer:
+    name: consumer (published package, ubuntu, native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install moon
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+
+      # Same cold-runner registry problem as the other ubuntu jobs: a
+      # fresh checkout has an empty index and `.mooncakes/` is
+      # gitignored, so nothing can resolve until the index is fetched.
+      - name: Fetch registry index
+        run: moon update
+
+      # Proton's module-level prebuild runs `pkg-config --cflags
+      # gtk+-3.0 x11` unconditionally on Linux and throws if either
+      # package is missing. The prebuild is module-level, so it fires
+      # for the consumer module too -- `extensions/labeler` imports
+      # `moonbit-community/proton/core` and `proton/extension`, so the
+      # proton module is in the dependency graph either way.
+      #
+      # The CEF SDK itself is NOT needed here: the prebuild only
+      # computes a path under ~/.proton/store, and the link config it
+      # produces is keyed to `proton/internal/native/ffi`, which the
+      # consumer never builds. `moon check` and `moon run` on the
+      # consumer never reach that package.
+      - name: Install Proton's Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev
+
+      - name: Consumer check (registry round-trip)
+        run: bash examples/consumer/run.sh
+
   # Windows run builds the CEF/Proton exe + verifies the smoke
   # pipeline (frontend build + staging + CDP screenshot).
   test-windows:

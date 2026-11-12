@@ -1,0 +1,6 @@
+# The consumer runner (examples/consumer/run.sh) is a POSIX shell script
+# that the Linux CI job executes directly. A CRLF checkout would break it:
+# `set -euo pipefail\r` is not a command, and every line would carry a
+# stray carriage return. This repository has core.autocrlf=true on the
+# Windows side, so shell scripts are pinned to LF on every platform.
+*.sh text eol=lf
