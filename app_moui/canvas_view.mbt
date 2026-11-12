@@ -144,7 +144,7 @@ pub fn canvas_view(model : Model) -> @moui.View[Msg] {
       x: (ev.position.x - model.pan.x) / model.zoom,
       y: (ev.position.y - model.pan.y) / model.zoom,
     }
-    let canvas_pt : Point = { x: ev.position.x, y: ev.position.y }
+    let canvas_pt : Point = { x: ev.position.x, y: ev.position.y, }
     match ev.phase {
       // Phase 5.8 — mode-aware dispatch. Pre-5.8 every phase routed
       // to the Select-tool handlers, so with the Rect/Polygon/
@@ -234,9 +234,7 @@ pub fn canvas_view(model : Model) -> @moui.View[Msg] {
   // closure — it carries **no position payload**. That's fine here
   // because the polygon vertices already live in `model.draftPoints`;
   // no coordinates are needed to commit.
-  let final_view : @moui.View[Msg] = after_secondary.on_double_tap(
-    DoubleTapped,
-  )
+  let final_view : @moui.View[Msg] = after_secondary.on_double_tap(DoubleTapped)
   final_view
 }
 
@@ -393,7 +391,7 @@ pub fn static_cache_key(model : Model) -> String {
 /// simple per-model derived integer; follow-up could track a
 /// real monotonic counter bumped by every LabelLoaded / SetMode
 /// / ModifyHandle handler in update().
-pub fn static_cache_revision(_model : Model) -> Int {
+pub fn static_cache_revision(_model : Model) -> Int32 {
   // 0 is a fine sentinel — runtime treats (key, rev) pairs
   // identically when both key and rev match. Bumping this is
   // only needed if the same logical content could be re-rendered
@@ -529,6 +527,7 @@ fn issue_static_commands(
       frame: zoomed,
       opacity: 1.0,
       fit: model.fitMode,
+      src_rect: None,
     })
   }
   // 3. Annotations (drawn in iteration order; later wins z-order).
@@ -952,12 +951,7 @@ fn draw_binding_arrow(
     pan,
     zoom,
   )
-  let to_pt : Point = img_to_screen(
-    binding_centroid(to),
-    dst_origin,
-    pan,
-    zoom,
-  )
+  let to_pt : Point = img_to_screen(binding_centroid(to), dst_origin, pan, zoom)
   // Same yellow as canvas.js's "#fbbf24" (a 3-bit web color).
   let color : @core.Color = @core.Color::rgba(r=0.984, g=0.749, b=0.141, a=1.0)
   let head_len : Double = 8.0
@@ -1061,7 +1055,7 @@ fn draw_binding_arrow(
 /// points; for Polygon we average all vertices; for
 /// Keypoint the single point is its own centroid.
 pub fn binding_centroid(ann : Annotation) -> Point {
-  let n : Int = ann.points.length()
+  let n : Int32 = ann.points.length()
   if n == 0 {
     return { x: 0.0, y: 0.0, }
   }

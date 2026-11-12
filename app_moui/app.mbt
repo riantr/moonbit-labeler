@@ -14,19 +14,21 @@
 // ─────────────────────────────────────────────────────────────────
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum MediaKind {
   Image
   Video
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum Mode {
   Select
   Rect
   Polygon
   Keypoint
   EditBinding
-} derive(Debug, Eq)
+}
 
 ///|
 /// Phase 5.9 — canonical display caption for each drawing tool.
@@ -93,45 +95,52 @@ pub fn mode_after_commit(created : Shape) -> Mode {
 }
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum ClassType {
   Object
   Tag
   Binding
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum ToastKind {
   Info
   Warn
   Error
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug)
 pub(all) enum Layer {
   Static
   Dynamic
-} derive(Debug)
+}
 
 ///|
+#derive(Debug)
 pub(all) enum OpResult {
   Ok(String, String) // op name, result json (raw text)
   Err(String, String) // op name, error message
-} derive(Debug)
+}
 
 ///|
+#derive(Debug)
 pub(all) struct Point {
   x : Double
   y : Double
-} derive(Debug)
+}
 
 ///|
+#derive(Debug, Eq)
 pub(all) enum Shape {
   Rect
   Polygon
   Keypoint
-} derive(Debug, Eq)
+}
 
 ///|
+#derive(Debug)
 pub(all) struct Annotation {
   id : String
   shape : Shape
@@ -145,14 +154,15 @@ pub(all) struct Annotation {
   // directly in tests). classType is intentionally NOT
   // duplicated here — we look it up from classes when needed.
   class_id : String
-} derive(Debug)
+}
 
 ///|
+#derive(Debug)
 pub(all) struct Binding {
   id : String
   from : String
   to : String
-} derive(Debug)
+}
 
 ///|
 /// Phase 5.10 — image decode metadata. We deliberately don't
@@ -161,57 +171,64 @@ pub(all) struct Binding {
 /// diff'd + cloned on every update by the runtime. Instead
 /// the metadata is exposed via this struct, and the pixel
 /// bytes live in a side table (5.10.x+ work).
+#derive(Debug)
 pub(all) struct ImageDecodedMeta {
-  width : Int
-  height : Int
-  byte_length : Int
+  width : Int32
+  height : Int32
+  byte_length : Int32
   pixel_format : String
-} derive(Debug)
+}
 
 ///|
 /// Active drag state — when Some, the next CursorMoved should
 /// move the (id, handle_idx) handle instead of selecting a new
 /// annotation. Begun by BeginDragHandle, ended by EndDragHandle.
+#derive(Debug)
 pub(all) struct DragState {
   ann_id : String
-  handle_idx : Int
+  handle_idx : Int32
   start_img_pt : Point
-} derive(Debug)
+}
 
 ///|
+#derive(Debug)
 pub(all) struct ImageEntry {
   name : String
   path : String
-  size_bytes : Int
-} derive(Debug)
+  size_bytes : Int32
+}
 
 ///|
+#derive(Debug)
 pub(all) struct VideoEntry {
   name : String
   path : String
-  frame_count : Int
-} derive(Debug)
+  frame_count : Int32
+}
 
 ///|
+#derive(Debug)
 pub(all) struct ClassEntry {
   id : String
   name : String
   is_default : Bool
-} derive(Debug)
+}
 
 ///|
+#derive(Debug)
 pub(all) struct Label {
   raw_json : String
   dirty : Bool
-} derive(Debug)
+}
 
 ///|
+#derive(Debug)
 pub(all) struct Model {
   folder : String
   labelFolder : String
   images : Array[ImageEntry]
   videos : Array[VideoEntry]
-  currentIndex : Int
+  currentIndex : Int32
   mediaKind : MediaKind
   label : Label
   labelPath : String
@@ -284,7 +301,7 @@ pub(all) struct Model {
   toastMessage : String?
   toastKind : ToastKind
   statusMessage : String
-} derive(Debug)
+}
 
 ///|
 pub fn Model::new() -> Model {
@@ -420,10 +437,7 @@ fn default_demo_annotations() -> Array[Annotation] {
   let rect : Annotation = {
     id: "rect-1",
     shape: Rect,
-    points: [
-      { x: 40.0, y: 40.0, },
-      { x: 140.0, y: 140.0, },
-    ],
+    points: [{ x: 40.0, y: 40.0, }, { x: 140.0, y: 140.0, }],
     class_id: "",
   }
   // Triangle in the upper-right quadrant (3 points).
@@ -454,13 +468,7 @@ fn default_demo_annotations() -> Array[Annotation] {
 /// a small arrow head at the `to` end, so the smoke
 /// screenshot exercises the binding rendering path.
 fn default_demo_bindings() -> Array[Binding] {
-  [
-    {
-      id: "bind-1",
-      from: "rect-1",
-      to: "kp-1",
-    },
-  ]
+  [{ id: "bind-1", from: "rect-1", to: "kp-1", }]
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -476,7 +484,7 @@ pub(all) enum Msg {
   LoadFolderFailed(String, String)
   ScanClasses(String)
   ClassesLoaded(Array[ClassEntry])
-  SelectIndex(Int)
+  SelectIndex(Int32)
   // Phase 5.17 — the sidebar's class rows were `@views.button`s with
   // no `on_click` at all: they rendered as pressable and did nothing.
   // 5.13 finally brought them on screen (they had been clipped off
@@ -515,7 +523,7 @@ pub(all) enum Msg {
   // selected (so the shortcut doesn't delete an arbitrary
   // annotation or accidentally fire mid-typing).
   DeleteSelectedAnnotation
-  ModifyHandle(String, Int, Point)
+  ModifyHandle(String, Int32, Point)
   CursorMoved(Point, Point)
   CursorLeft
   Zoom(Double)
@@ -553,9 +561,9 @@ pub(all) enum Msg {
   SetDefaultClass(String)
   SetSettingOpacity(Double)
   SetSettingPolygonClosePx(Double)
-  SetSettingAutosaveMs(Int)
+  SetSettingAutosaveMs(Int32)
   SwitchMediaKind(MediaKind)
-  LoadVideoFrame(Int)
+  LoadVideoFrame(Int32)
   // Phase 5.2 — image source load + fit-mode toggle.
   // LoadTestImage(path, natural_w, natural_h) — caller supplies the
   //   natural pixel size (read from the JPEG/PNG header or
@@ -570,7 +578,7 @@ pub(all) enum Msg {
   // "caller must guess the image dimensions" requirement that
   // 5.2's LoadTestImage had.
   LoadImage(String)
-  ImageLoaded(String, Int, Int)
+  ImageLoaded(String, Int32, Int32)
   LoadImageFailed(String, String)
   ClearImage
   SetFitMode(@core.ImageFit)
@@ -615,7 +623,7 @@ pub(all) enum Msg {
   // Phase 5.5 — added `start_img_pt` so the handler doesn't
   // need to read model.cursorImgPt (which may be None on the
   // first drag frame, before any CursorMoved has fired).
-  BeginDragHandle(String, Int, Point)
+  BeginDragHandle(String, Int32, Point)
   EndDragHandle
   // Phase 5.6 — pointer went down on the canvas. Carries
   // (img_pt, canvas_pt) in the same shape as CursorMoved.
@@ -673,7 +681,7 @@ pub(all) enum Msg {
   // them via a status bar / progress UI without holding the
   // raw pixel buffer in the Model struct (we'd otherwise bloat
   // every Model update with multi-MB pixel data).
-  ImageDecoded(String, Int, Int, Int, String)
+  ImageDecoded(String, Int32, Int32, Int32, String)
   OpResult(OpResult)
   ExportVoc(String)
   ExportYolo(String)
@@ -815,7 +823,7 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
     // which stays in Keypoint mode so the user can rapidly drop
     // several points without re-clicking the toolbar — the same
     // behaviour as the legacy frontend's keypoint tool).
-    AddRect(p1, p2) => {
+    AddRect(p1, p2) =>
       // Degenerate (a click with no drag) → no annotation, and leave
       // the mode alone so the user isn't kicked out of Rect tool by
       // an accidental click.
@@ -844,8 +852,7 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
           @moui.Effect::none(),
         )
       }
-    }
-    AddPolygon(pts) => {
+    AddPolygon(pts) =>
       // A polygon needs 3 distinct-enough vertices to enclose area;
       // fewer is a stray click or an in-progress draft.
       if pts.length() < 3 {
@@ -871,7 +878,6 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
           @moui.Effect::none(),
         )
       }
-    }
     AddKeypoint(pt) => {
       let ann : Annotation = {
         id: next_annotation_id(model),
@@ -904,11 +910,8 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
       // source annotation to set `bindingFromId`, then click the
       // target). Resolve the target by hit-test, ignoring the source
       // itself so a click on the source can't create a self-loop.
-      let target : String? = match hit_test_body(
-        pt,
-        model.annotations,
-        body_hit_radius,
-      ) {
+      let target : String? = match
+        hit_test_body(pt, model.annotations, body_hit_radius) {
         Some(id) => if id == from_id { None } else { Some(id) }
         None => None
       }
@@ -997,11 +1000,7 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         }
         pts.push(pt)
         (
-          {
-            ..model,
-            draftPoints: pts,
-            dynamicLayerDirty: true,
-          },
+          { ..model, draftPoints: pts, dynamicLayerDirty: true, },
           @moui.Effect::none(),
         )
       }
@@ -1012,36 +1011,25 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
       // rules live here, not in the view closure, so they're
       // testable and consistent across tools.
       match model.mode {
-        Rect => {
+        Rect =>
           if model.draftPoints.length() >= 2 {
             (
               model,
               @moui.Effect::send(
-                AddRect(
-                  model.draftPoints[0],
-                  model.draftPoints[1],
-                ),
+                AddRect(model.draftPoints[0], model.draftPoints[1]),
               ),
             )
           } else {
             // A click with no drag — drop the draft silently rather
             // than leaving a 1px rect behind.
-            (
-              { ..model, draftPoints: [], },
-              @moui.Effect::none(),
-            )
+            ({ ..model, draftPoints: [], }, @moui.Effect::none())
           }
-        }
-        Polygon => {
+        Polygon =>
           if model.draftPoints.length() >= 3 {
-            (
-              model,
-              @moui.Effect::send(AddPolygon(model.draftPoints)),
-            )
+            (model, @moui.Effect::send(AddPolygon(model.draftPoints)))
           } else {
             (model, @moui.Effect::none())
           }
-        }
         _ => (model, @moui.Effect::none())
       }
     DoubleTapped =>
@@ -1051,16 +1039,12 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
       // Selection is deliberately NOT re-run in Polygon mode —
       // committing a polygon shouldn't also change what's selected.
       match model.mode {
-        Polygon => {
+        Polygon =>
           if model.draftPoints.length() >= 3 {
-            (
-              model,
-              @moui.Effect::send(AddPolygon(model.draftPoints)),
-            )
+            (model, @moui.Effect::send(AddPolygon(model.draftPoints)))
           } else {
             (model, @moui.Effect::none())
           }
-        }
         _ =>
           (
             { ..model, zoomDragMode: !model.zoomDragMode, },
@@ -1077,11 +1061,7 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
           kept.push(model.draftPoints[i])
         }
         (
-          {
-            ..model,
-            draftPoints: kept,
-            dynamicLayerDirty: true,
-          },
+          { ..model, draftPoints: kept, dynamicLayerDirty: true, },
           @moui.Effect::none(),
         )
       }
@@ -1470,13 +1450,7 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
       }
     }
     RenameInput(text) =>
-      (
-        {
-          ..model,
-          renameBuffer: text,
-        },
-        @moui.Effect::none(),
-      )
+      ({ ..model, renameBuffer: text, }, @moui.Effect::none())
     CommitRename => {
       let id = model.editingClassId
       if id == "" {
@@ -1508,16 +1482,17 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         )
       }
     }
-    CancelRename => (
-      {
-        ..model,
-        editingClassId: "",
-        renameBuffer: "",
-        statusMessage: "Rename cancelled",
-        staticLayerDirty: true,
-      },
-      @moui.Effect::none(),
-    )
+    CancelRename =>
+      (
+        {
+          ..model,
+          editingClassId: "",
+          renameBuffer: "",
+          statusMessage: "Rename cancelled",
+          staticLayerDirty: true,
+        },
+        @moui.Effect::none(),
+      )
     // Phase 5.19 — the class list was half-built: `AddClass` appended
     // an entry, and rename / delete / set-default were all no-op
     // stubs. None of them need I/O — they are pure model edits, so
@@ -1550,10 +1525,7 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         // default — "set the default to a class that doesn't exist"
         // must not mean "there is no default".
         (
-          {
-            ..model,
-            statusMessage: "No such class: " + id,
-          },
+          { ..model, statusMessage: "No such class: " + id, },
           @moui.Effect::none(),
         )
       } else {
@@ -1583,7 +1555,8 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
     // that also rewrote `ann.class_id` here would be a no-op
     // (`id -> id`); the first draft of this arm had exactly that, and
     // it is removed rather than kept as decoration.
-    UpdateClass(id, new_name) => (renamed_class(model, id, new_name), @moui.Effect::none())
+    UpdateClass(id, new_name) =>
+      (renamed_class(model, id, new_name), @moui.Effect::none())
     // Delete must not leave a dangling reference. `class_lookup_name`
     // falls back to rendering the annotation's **own id** when its
     // class cannot be resolved, so a surviving `class_id` pointing at
@@ -1594,7 +1567,11 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
       let existed : Bool = kept.length() != model.classes.length()
       let cleared : Array[Annotation] = model.annotations.map(ann => {
         ..ann,
-        class_id: if ann.class_id == id { "" } else { ann.class_id },
+        class_id: if ann.class_id == id {
+          ""
+        } else {
+          ann.class_id
+        },
       })
       (
         {
@@ -1677,7 +1654,11 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         {
           ..model,
           label: { raw_json: model.label.raw_json, dirty: false, },
-          statusMessage: if ok { "Saved " + path } else { "Save failed" },
+          statusMessage: if ok {
+            "Saved " + path
+          } else {
+            "Save failed"
+          },
         },
         @moui.Effect::none(),
       )
@@ -1963,25 +1944,23 @@ pub fn update(model : Model, msg : Msg) -> (Model, @moui.Effect[Msg]) {
         model.annotations,
         model.selectedId,
       )
-      let armed : (String, Int)? = if model.zoomDragMode {
+      let armed : (String, Int32)? = if model.zoomDragMode {
         None
       } else {
         match sel {
-          Some(sel_id) => hit_test_handle(
-            img_pt,
-            model.annotations,
-            sel_id,
-            handle_hit_radius,
-          )
+          Some(sel_id) =>
+            hit_test_handle(
+              img_pt,
+              model.annotations,
+              sel_id,
+              handle_hit_radius,
+            )
           None => None
         }
       }
       let drag : DragState? = match armed {
-        Some((ann_id, handle_idx)) => Some({
-          ann_id,
-          handle_idx,
-          start_img_pt: img_pt,
-        })
+        Some((ann_id, handle_idx)) =>
+          Some({ ann_id, handle_idx, start_img_pt: img_pt, })
         None => None
       }
       (
@@ -2040,8 +2019,8 @@ pub let binding_id_prefix : String = "bind-"
 fn first_free_suffix(
   taken : Array[String],
   prefix : String,
-  from : Int,
-) -> Int {
+  from : Int32,
+) -> Int32 {
   let n = taken.length()
   let mut candidate = from
   let mut searching = true
@@ -2073,11 +2052,8 @@ fn next_annotation_id(model : Model) -> String {
   for ann in model.annotations {
     taken.push(ann.id)
   }
-  annotation_id_prefix + first_free_suffix(
-    taken,
-    annotation_id_prefix,
-    1,
-  ).to_string()
+  annotation_id_prefix +
+  first_free_suffix(taken, annotation_id_prefix, 1).to_string()
 }
 
 ///|
@@ -2150,7 +2126,7 @@ fn default_class_id(model : Model) -> String {
 /// omission is an intermediate state that never reaches the user.
 /// A direct `state_for_image_change` call, by contrast, still leaves
 /// the previous pixels in place.
-pub fn state_for_image_change(model : Model, idx : Int) -> Model {
+pub fn state_for_image_change(model : Model, idx : Int32) -> Model {
   let name : String = if idx >= 0 && idx < model.images.length() {
     model.images[idx].name
   } else {
@@ -2177,7 +2153,11 @@ pub fn state_for_image_change(model : Model, idx : Int) -> Model {
     pan: { x: 0.0, y: 0.0, },
     zoom: 1.0,
     fitMode: @core.ImageFit::Contain,
-    statusMessage: if name == "" { "No image" } else { "Image: " + name },
+    statusMessage: if name == "" {
+      "No image"
+    } else {
+      "Image: " + name
+    },
     staticLayerDirty: true,
     dynamicLayerDirty: true,
   }
@@ -2200,7 +2180,7 @@ pub fn folder_loaded(
   folder : String,
   label_folder : String,
 ) -> Model {
-  let n : Int = images.length()
+  let n : Int32 = images.length()
   let loaded = state_for_image_change(model, if n > 0 { 0 } else { -1 })
   {
     ..loaded,
@@ -2309,7 +2289,7 @@ pub fn read_label_into(model : Model, image_path : String) -> Model {
 /// reasoning: stale pixels are visibly stale, whereas misattributed
 /// annotations are silent), so the load has to overwrite it — which is
 /// what `image_pixels_loaded` does, and only on a successful decode.
-pub fn image_selected(model : Model, idx : Int) -> Model {
+pub fn image_selected(model : Model, idx : Int32) -> Model {
   let reset : Model = state_for_image_change(model, idx)
   if idx >= 0 && idx < reset.images.length() {
     let with_label : Model = read_label_into(reset, reset.images[idx].path)
@@ -2356,7 +2336,11 @@ pub fn renamed_class(model : Model, id : String, new_name : String) -> Model {
   }
   let renamed : Array[ClassEntry] = model.classes.map(c => {
     ..c,
-    name: if c.id == id { new_name } else { c.name },
+    name: if c.id == id {
+      new_name
+    } else {
+      c.name
+    },
   })
   {
     ..model,
@@ -2374,14 +2358,31 @@ pub fn renamed_class(model : Model, id : String, new_name : String) -> Model {
 /// hit-test* code tolerates either order, but storing the canonical
 /// order keeps the on-disk JSON stable and makes the eight handles
 /// index-meaningful.
-fn normalize_rect_corners(
-  a : Point,
-  b : Point,
-) -> (Point, Point) {
-  let tl : Point = { x: if a.x < b.x { a.x } else { b.x },
-                     y: if a.y < b.y { a.y } else { b.y } }
-  let br : Point = { x: if a.x > b.x { a.x } else { b.x },
-                     y: if a.y > b.y { a.y } else { b.y } }
+fn normalize_rect_corners(a : Point, b : Point) -> (Point, Point) {
+  let tl : Point = {
+    x: if a.x < b.x {
+      a.x
+    } else {
+      b.x
+    },
+    y: if a.y < b.y {
+      a.y
+    } else {
+      b.y
+    },
+  }
+  let br : Point = {
+    x: if a.x > b.x {
+      a.x
+    } else {
+      b.x
+    },
+    y: if a.y > b.y {
+      a.y
+    } else {
+      b.y
+    },
+  }
   (tl, br)
 }
 
@@ -2411,7 +2412,7 @@ fn mutate_annotation(
   f : (Annotation) -> Annotation?,
 ) -> (Model, @moui.Effect[Msg]) {
   let n = model.annotations.length()
-  let mut found_idx : Int = -1
+  let mut found_idx : Int32 = -1
   let mut replacement : Annotation? = None
   let mut i = 0
   while i < n {
@@ -2493,14 +2494,8 @@ pub fn program() -> @moui.Program[Model, Msg] {
 /// post-drag model to `program_with_init` so the smoke
 /// screenshot shows the rect-1 BR corner at its
 /// drag-end position instead of the original `(140, 140)`.
-pub fn program_with_init(
-  initial : Model,
-) -> @moui.Program[Model, Msg] {
-  @moui.Program::new(
-    init=() => (initial, @moui.Effect::none()),
-    update~,
-    view~,
-  )
+pub fn program_with_init(initial : Model) -> @moui.Program[Model, Msg] {
+  @moui.Program::new(init=() => (initial, @moui.Effect::none()), update~, view~)
 }
 
 // ─────────────────────────────────────────────────────────────────

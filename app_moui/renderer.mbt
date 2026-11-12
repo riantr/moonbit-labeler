@@ -27,7 +27,7 @@
 /// renderer session exposes `present_count()` as a thunk so
 /// the runtime can poll how many frames we've actually
 /// blitted. Useful for tests + smoke harnesses.
-let present_count : Ref[Int] = { val: 0 }
+let present_count : Ref[Int32] = { val: 0, }
 
 ///|
 /// Module-local "current metrics" snapshot. The resize
@@ -49,7 +49,7 @@ let current_metrics : Ref[@core.SurfaceMetrics] = {
 /// is Phase 14; tests call `load_bytes` directly). Keeping
 /// it module-local rather than on the RendererSession avoids
 /// any churn in the Moui renderer-session shape.
-let image_cache : Ref[ImageCache] = { val: ImageCache::new() }
+let image_cache : Ref[ImageCache] = { val: ImageCache::new(), }
 
 ///|
 /// Phase 5.23 — the cache cap, in entries.
@@ -65,7 +65,7 @@ let image_cache : Ref[ImageCache] = { val: ImageCache::new() }
 /// is generous enough to cover a normal paging session. A real LRU
 /// needs per-entry recency tracking, which is not worth it until the
 /// cap is demonstrably too aggressive.
-let image_cache_max_entries : Int = 64
+let image_cache_max_entries : Int32 = 64
 
 ///|
 /// Phase 5.23 — register a decoded image in the module-local cache
@@ -77,8 +77,8 @@ let image_cache_max_entries : Int = 64
 /// the general name is the one production code should reach for.
 pub fn register_image_in_renderer(
   source : String,
-  width : Int,
-  height : Int,
+  width : Int32,
+  height : Int32,
   bytes : Bytes,
 ) -> Bool {
   // Evict *before* inserting, so the entry being added survives. A
@@ -109,7 +109,7 @@ pub fn image_in_renderer(source : String) -> Bool {
 /// The dimensions of a cached image, or `None` if it is not cached.
 /// Paired with `image_in_renderer` so a cache hit can update
 /// `Model::imageNaturalSize` without re-probing the file's header.
-pub fn image_size_in_renderer(source : String) -> (Int, Int)? {
+pub fn image_size_in_renderer(source : String) -> (Int32, Int32)? {
   match image_cache.val.get(source) {
     Some(d) => Some((d.width, d.height))
     None => None
@@ -129,8 +129,8 @@ pub fn image_size_in_renderer(source : String) -> (Int, Int)? {
 /// the bytes (mismatched length, zero width/height, etc).
 pub fn register_test_image_in_renderer(
   source : String,
-  width : Int,
-  height : Int,
+  width : Int32,
+  height : Int32,
   bytes : Bytes,
 ) -> Bool {
   register_image_in_renderer(source, width, height, bytes)
@@ -174,9 +174,7 @@ pub fn make_renderer_provider() -> @render.RendererProvider {
 /// RendererSession closures (resize / render_frame / etc.)
 /// are minimal no-ops that produce a flat-grey frame each
 /// paint; a future Phase 11 wires Skia calls in render_frame.
-fn bind_renderer(
-  surface : @render.HostSurface,
-) -> @render.RendererBindResult {
+fn bind_renderer(surface : @render.HostSurface) -> @render.RendererBindResult {
   // Need a native surface to blit to. On Windows the
   // backend populates this with an HWND-backed
   // NativeSurface; on other platforms (or in tests) it's
@@ -207,7 +205,10 @@ fn bind_renderer(
         ),
       )
     }
-    None => Rejected("app_moui Phase 10.2 renderer needs a native surface (HWND); got None")
+    None =>
+      Rejected(
+        "app_moui Phase 10.2 renderer needs a native surface (HWND); got None",
+      )
   }
 }
 
@@ -233,9 +234,9 @@ fn render_placeholder_frame(
   match surface.cpu_present() {
     Some(present_target) => {
       let metrics : @core.SurfaceMetrics = current_metrics.val
-      let width : Int = metrics.logical_size.width.to_int()
-      let height : Int = metrics.logical_size.height.to_int()
-      let row_bytes : Int = width * 4 // BGRA8888 = 4 bytes/px
+      let width : Int32 = metrics.logical_size.width.to_int()
+      let height : Int32 = metrics.logical_size.height.to_int()
+      let row_bytes : Int32 = width * 4 // BGRA8888 = 4 bytes/px
       // Allocate a fresh BGRA buffer and rasterize the Moui
       // view tree into it. `PixelBuffer::new` initializes to
       // the clear color; `rasterize_draw_frame` walks the
@@ -271,7 +272,7 @@ fn render_placeholder_frame(
 /// Phase 10.2 — test helper: get the count of frames blitted
 /// since the last reset. Used by the smoke harness to verify
 /// at least one frame made it through the render pipeline.
-pub fn test_present_count() -> Int {
+pub fn test_present_count() -> Int32 {
   present_count.val
 }
 

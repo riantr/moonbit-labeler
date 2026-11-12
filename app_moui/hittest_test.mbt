@@ -158,7 +158,7 @@ test "apply_handle_move — rect BR corner drag (handle 4) keeps TL fixed" {
     points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
     class_id: "",
   }
-  let moved = apply_handle_move(ann, 4, { x: 200.0, y: 250.0 })
+  let moved = apply_handle_move(ann, 4, { x: 200.0, y: 250.0, })
   match moved {
     Some(new_ann) => {
       // TL (p1) is unchanged.
@@ -184,7 +184,7 @@ test "apply_handle_move — rect BL corner drag (handle 6) updates both axes" {
     points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
     class_id: "",
   }
-  let moved = apply_handle_move(ann, 6, { x: 5.0, y: 130.0 })
+  let moved = apply_handle_move(ann, 6, { x: 5.0, y: 130.0, })
   match moved {
     Some(new_ann) => {
       // TL (p1): x = new_pt.x, y unchanged.
@@ -208,7 +208,7 @@ test "apply_handle_move — rect T edge-mid drag (handle 1) moves TL.y only" {
     points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
     class_id: "",
   }
-  let moved = apply_handle_move(ann, 1, { x: 60.0, y: 5.0 })
+  let moved = apply_handle_move(ann, 1, { x: 60.0, y: 5.0, })
   match moved {
     Some(new_ann) => {
       // TL.x unchanged, TL.y = new_pt.y.
@@ -232,7 +232,7 @@ test "apply_handle_move — rect L edge-mid drag (handle 7) moves TL.x only" {
     points: [{ x: 10.0, y: 20.0, }, { x: 110.0, y: 120.0, }],
     class_id: "",
   }
-  let moved = apply_handle_move(ann, 7, { x: 5.0, y: 70.0 })
+  let moved = apply_handle_move(ann, 7, { x: 5.0, y: 70.0, })
   match moved {
     Some(new_ann) => {
       // TL.x = new_pt.x, TL.y unchanged.
@@ -304,7 +304,7 @@ test "rect corner order — BR-first rect keeps all 8 handles and drags the grab
   assert_eq(hs[0].y, 120.0)
   // Dragging handle 0 must move the corner it actually sits on:
   // points[0], the visually bottom-right one.
-  let moved = apply_handle_move(ann, 0, { x: 150.0, y: 160.0 })
+  let moved = apply_handle_move(ann, 0, { x: 150.0, y: 160.0, })
   match moved {
     Some(m) => {
       assert_eq(m.points[0].x, 150.0)
@@ -329,9 +329,9 @@ test "rect corner order — BR-first rect is still hit-testable by body (5.7)" {
     class_id: "",
   }
   // Interior point.
-  assert_eq(hit_test_body({ x: 60.0, y: 70.0 }, [ann], 4.0), Some("flipped"))
+  assert_eq(hit_test_body({ x: 60.0, y: 70.0, }, [ann], 4.0), Some("flipped"))
   // Well outside.
-  assert_true(hit_test_body({ x: 200.0, y: 200.0 }, [ann], 4.0) is None)
+  assert_true(hit_test_body({ x: 200.0, y: 200.0, }, [ann], 4.0) is None)
 }
 
 ///|

@@ -72,11 +72,15 @@
 /// This wraps `riantr/moonbit_image::image_dimensions` and squashes
 /// its `DecodeError` raise into a `None` return so callers don't
 /// have to install a sub-error handler.
-pub fn probe_image_dimensions(data : Bytes) -> (Int, Int)? {
-  match (try? @moonbit_image.image_dimensions(data)) {
-    Ok((w, h, _format)) => Some((w, h))
-    Err(_) => None
+pub fn probe_image_dimensions(data : Bytes) -> (Int32, Int32)? {
+  // Note: no bare `Ok` / `Err` here. MoUI exports its own `OpResult`
+  // constructors, and in this package the bare names resolve to those
+  // rather than to the builtin `Result`. `try ... catch` with an
+  // early return sidesteps the collision entirely.
+  let (w, h, _format) = @moonbit_image.image_dimensions(data) catch {
+    _ => return None
   }
+  Some((w, h))
 }
 
 ///|
@@ -104,10 +108,9 @@ pub fn probe_image_dimensions(data : Bytes) -> (Int, Int)? {
 /// explicit "user wants to see the image" trigger, not on
 /// every cursor move.
 pub fn decode_image_bytes(data : Bytes) -> @moonbit_image.Image? {
-  match (try? @moonbit_image.decode(data)) {
-    Ok(img) => Some(img)
-    Err(_) => None
-  }
+  // Same MoUI `OpResult` collision as `probe_image_dimensions` above.
+  let img = @moonbit_image.decode(data) catch { _ => return None }
+  Some(img)
 }
 
 ///|
@@ -116,10 +119,10 @@ pub fn decode_image_bytes(data : Bytes) -> @moonbit_image.Image? {
 /// name) for the model layer. Useful when the caller doesn't
 /// need the raw pixel data (e.g. a future progress-bar UI that
 /// shows "1920×1080, 8.3 MB decoded, RGBA8").
-pub fn decode_image_metadata(data : Bytes) -> (Int, Int, Int, String)? {
+pub fn decode_image_metadata(data : Bytes) -> (Int32, Int32, Int32, String)? {
   match decode_image_bytes(data) {
     Some(img) => {
-      let meta : (Int, Int, Int, String) = (
+      let meta : (Int32, Int32, Int32, String) = (
         img.width,
         img.height,
         img.data.length(),
@@ -156,7 +159,7 @@ pub fn decode_image_metadata(data : Bytes) -> (Int, Int, Int, String)? {
 ///       `extern "C"` declarations (we tried `Pointer`, `@ffi.Pointer`,
 ///       and bare alias names; all rejected at check time with
 ///       "type undefined").
-pub fn probe_image_dimensions_path(path : String) -> (Int, Int)? {
+pub fn probe_image_dimensions_path(path : String) -> (Int32, Int32)? {
   // Phase 5.22 — this is a real implementation now. It used to be a
   // documented stub that unconditionally returned `None`, on the
   // theory that a sync function could not read a file. That theory
@@ -181,9 +184,10 @@ pub fn probe_image_dimensions_path(path : String) -> (Int, Int)? {
 /// `LoadImage(path)` handler in `app.mbt` once MoUI's update fn
 /// becomes `async fn` (or a public sync→async bridge lands in
 /// MoonBit 0.21.x+).
-pub async fn probe_image_dimensions_path_async(path : String) -> (Int, Int)? {
-  let data_ref : &@io.Data = @fs.read_file(path)
-  let bytes : Bytes = data_ref.binary()
+pub async fn probe_image_dimensions_path_async(
+  path : String,
+) -> (Int32, Int32)? {
+  let bytes = @fs.read_binary(path)
   probe_image_dimensions(bytes)
 }
 
@@ -210,7 +214,7 @@ pub async fn probe_image_dimensions_path_async(path : String) -> (Int, Int)? {
 /// `load_bytes`' own length check. Validation lives in one place
 /// instead of being re-implemented per arm.
 pub fn to_rgba8_bytes(img : @moonbit_image.Image) -> Bytes {
-  let pixels : Int = img.width * img.height
+  let pixels : Int32 = img.width * img.height
   match img.format {
     RGBA8 => img.data
     RGB8 => widen_rgb8(img, pixels)
@@ -222,14 +226,14 @@ pub fn to_rgba8_bytes(img : @moonbit_image.Image) -> Bytes {
 ///|
 /// RGB8 (3 bytes/px) -> RGBA8. See `to_rgba8_bytes` for the clamping
 /// and alpha policy.
-fn widen_rgb8(img : @moonbit_image.Image, pixels : Int) -> Bytes {
+fn widen_rgb8(img : @moonbit_image.Image, pixels : Int32) -> Bytes {
   let data : Bytes = img.data
-  let available : Int = data.length() / 3
-  let count : Int = if pixels < available { pixels } else { available }
+  let available : Int32 = data.length() / 3
+  let count : Int32 = if pixels < available { pixels } else { available }
   let out : Array[Byte] = []
-  let mut i : Int = 0
+  let mut i : Int32 = 0
   while i < count {
-    let s : Int = i * 3
+    let s : Int32 = i * 3
     out.push(data[s])
     out.push(data[s + 1])
     out.push(data[s + 2])
@@ -242,11 +246,15 @@ fn widen_rgb8(img : @moonbit_image.Image, pixels : Int) -> Bytes {
 ///|
 /// Gray8 (1 byte/px) -> RGBA8 by replicating the sample into R, G and
 /// B. See `to_rgba8_bytes` for the clamping and alpha policy.
-fn widen_gray8(img : @moonbit_image.Image, pixels : Int) -> Bytes {
+fn widen_gray8(img : @moonbit_image.Image, pixels : Int32) -> Bytes {
   let data : Bytes = img.data
-  let count : Int = if pixels < data.length() { pixels } else { data.length() }
+  let count : Int32 = if pixels < data.length() {
+    pixels
+  } else {
+    data.length()
+  }
   let out : Array[Byte] = []
-  let mut i : Int = 0
+  let mut i : Int32 = 0
   while i < count {
     let g : Byte = data[i]
     out.push(g)
@@ -263,14 +271,14 @@ fn widen_gray8(img : @moonbit_image.Image, pixels : Int) -> Bytes {
 /// unlike the other two widening arms: this format already carries
 /// one, and dropping it would discard information the encoder chose
 /// to write.
-fn widen_graya8(img : @moonbit_image.Image, pixels : Int) -> Bytes {
+fn widen_graya8(img : @moonbit_image.Image, pixels : Int32) -> Bytes {
   let data : Bytes = img.data
-  let available : Int = data.length() / 2
-  let count : Int = if pixels < available { pixels } else { available }
+  let available : Int32 = data.length() / 2
+  let count : Int32 = if pixels < available { pixels } else { available }
   let out : Array[Byte] = []
-  let mut i : Int = 0
+  let mut i : Int32 = 0
   while i < count {
-    let s : Int = i * 2
+    let s : Int32 = i * 2
     let g : Byte = data[s]
     out.push(g)
     out.push(g)

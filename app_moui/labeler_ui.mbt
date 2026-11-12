@@ -302,7 +302,11 @@ pub fn build_labeler_ui_view(
   // than 1e9, the column resolves [88, 392, 24] inside 504, and the
   // status bar lands flush at `y = 480`.
   let canvas_frame_w : Double = if width > 180.0 { width - 180.0 } else { 1.0 }
-  let canvas_frame_h : Double = if height > 112.0 { height - 112.0 } else { 1.0 }
+  let canvas_frame_h : Double = if height > 112.0 {
+    height - 112.0
+  } else {
+    1.0
+  }
   let canvas : @moui.View[Msg] = @views.frame(
     canvas_view(model),
     max_width=canvas_frame_w,
@@ -478,7 +482,7 @@ pub fn chrome_typography_scale() -> @core.TypographyScale {
 /// widths — it is what made the Phase 5.10 shortcut row render at a
 /// 304-px pitch.
 pub fn chrome_spacing_scale() -> @core.SpacingScale {
-  { xs: 2.0, sm: 1.0, md: 3.0, lg: 4.0, xl: 6.0 }
+  { xs: 2.0, sm: 1.0, md: 3.0, lg: 4.0, xl: 6.0, }
 }
 
 ///|
@@ -722,6 +726,7 @@ fn sidebar_folder_rows(
   rows
 }
 
+///|
 /// Phase 5.17 — the highlight for a sidebar row.
 ///
 /// Same shape as `mode_button_variant` (5.9), for the same reason: a
@@ -802,7 +807,11 @@ fn sidebar_class_rows(
     // state was unreachable: `activeClassId` starts empty but nothing
     // could return it to empty, so the first class the user clicked
     // was permanent for the rest of the session.
-    let target : String = if cls.id == model.activeClassId { "" } else { cls.id }
+    let target : String = if cls.id == model.activeClassId {
+      ""
+    } else {
+      cls.id
+    }
     // Phase 5.21 — while this row is the one being renamed, the name
     // button becomes a controlled text field. `on_input` types into
     // `renameBuffer` and `on_submit` commits, so the view only ever
@@ -897,11 +906,7 @@ fn sidebar_class_rows(
       ]
     }
     rows.push(
-      @views.frame(
-        @views.row(parts, spacing=2.0),
-        width=160.0,
-        height=16.0,
-      ),
+      @views.frame(@views.row(parts, spacing=2.0), width=160.0, height=16.0),
     )
   }
   rows
@@ -937,12 +942,12 @@ fn parse_class_type(_name : String) -> ClassType {
 ///   |          |                             |
 ///   +----------+-----------------------------+
 pub fn build_labeler_ui_demo_frame(
-  width : Int,
-  height : Int,
+  width : Int32,
+  height : Int32,
 ) -> @core.DrawFrame {
   let commands : Array[@core.DrawCommand] = []
-  let sidebar_w : Int = 200
-  let toolbar_h : Int = 40
+  let sidebar_w : Int32 = 200
+  let toolbar_h : Int32 = 40
   let dark_bg : @core.Color = @core.Color::rgba(r=0.10, g=0.10, b=0.12, a=1.0)
   let sidebar_bg : @core.Color = @core.Color::rgba(
     r=0.16,
@@ -1031,9 +1036,9 @@ pub fn build_labeler_ui_demo_frame(
   )
   // 6. Four tool buttons.
   let tool_labels : Array[String] = ["R", "S", "P", "D"]
-  let mut i : Int = 0
+  let mut i : Int32 = 0
   while i < tool_labels.length() {
-    let x : Int = 8 + i * 40
+    let x : Int32 = 8 + i * 40
     commands.push(
       @core.DrawCommand::FillRoundedRect(
         @core.RoundedRect::new(
@@ -1064,9 +1069,9 @@ pub fn build_labeler_ui_demo_frame(
   let folder_names : Array[String] = [
     "CARS.Part", "CARS.Body", "BAGS.Xray", "TNT.Lab",
   ]
-  let mut fi : Int = 0
+  let mut fi : Int32 = 0
   while fi < folder_names.length() {
-    let fy : Int = toolbar_h + 30 + fi * 22
+    let fy : Int32 = toolbar_h + 30 + fi * 22
     commands.push(
       @core.DrawCommand::FillRect(
         @core.Rect::new(
@@ -1096,7 +1101,7 @@ pub fn build_labeler_ui_demo_frame(
     fi = fi + 1
   }
   // 8. Class chips.
-  let chip_y_start : Int = toolbar_h + 130
+  let chip_y_start : Int32 = toolbar_h + 130
   commands.push(
     @core.DrawCommand::DrawText(
       @core.TextRun::new(
@@ -1115,9 +1120,9 @@ pub fn build_labeler_ui_demo_frame(
   let chip_names : Array[String] = [
     "knife", "gun", "batt", "liq", "botl", "bomb",
   ]
-  let mut ci : Int = 0
+  let mut ci : Int32 = 0
   while ci < chip_names.length() {
-    let cy : Int = chip_y_start + ci * 20
+    let cy : Int32 = chip_y_start + ci * 20
     commands.push(
       @core.DrawCommand::FillRoundedRect(
         @core.RoundedRect::new(

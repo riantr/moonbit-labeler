@@ -63,8 +63,15 @@ test "image_cache_get_or_inject_hit_then_miss" {
     None => fail("expected Some from get_or_inject (miss)")
   }
   // Second call: hit, returns same data without re-injecting.
-  let second : DecodedImage? = cache.get_or_inject("foo.bmp", 99, 99, tiny_rgba())
-  guard second is Some(d) else { fail("expected Some from get_or_inject (hit)") }
+  let second : DecodedImage? = cache.get_or_inject(
+    "foo.bmp",
+    99,
+    99,
+    tiny_rgba(),
+  )
+  guard second is Some(d) else {
+    fail("expected Some from get_or_inject (hit)")
+  }
   // Hit returns the original (2, 1) not the requested (99, 99).
   assert_eq(d.width, 2)
   assert_eq(d.height, 1)
@@ -75,25 +82,13 @@ test "image_cache_get_or_inject_hit_then_miss" {
 test "image_cache_load_bytes_validates_input" {
   let cache : ImageCache = ImageCache::new()
   // Zero width.
-  assert_eq(
-    cache.load_bytes("bad.png", 0, 1, Bytes::new(0)) is None,
-    true,
-  )
+  assert_eq(cache.load_bytes("bad.png", 0, 1, Bytes::new(0)) is None, true)
   // Zero height.
-  assert_eq(
-    cache.load_bytes("bad.png", 1, 0, Bytes::new(0)) is None,
-    true,
-  )
+  assert_eq(cache.load_bytes("bad.png", 1, 0, Bytes::new(0)) is None, true)
   // Length mismatch: 2x1 needs 8 bytes, provide 4.
-  assert_eq(
-    cache.load_bytes("bad.png", 2, 1, Bytes::new(4)) is None,
-    true,
-  )
+  assert_eq(cache.load_bytes("bad.png", 2, 1, Bytes::new(4)) is None, true)
   // Negative width.
-  assert_eq(
-    cache.load_bytes("bad.png", -1, 1, Bytes::new(0)) is None,
-    true,
-  )
+  assert_eq(cache.load_bytes("bad.png", -1, 1, Bytes::new(0)) is None, true)
   // None of these failed loads should appear in the cache.
   assert_eq(cache.get("bad.png"), None)
 }

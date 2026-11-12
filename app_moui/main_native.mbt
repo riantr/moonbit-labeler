@@ -123,22 +123,18 @@ fn main {
   // real annotations instead of the synthetic fixture. `build_demo_drag_model`
   // above still supplies the viewport and is the fallback.
   let init_model : Model = match build_real_data_demo() {
-    Some(real) => {
-      ..real,
-      viewport: @core.Size::new(
-        width=window_logical_width,
-        height=window_logical_height,
-      ),
-    }
+    Some(real) =>
+      {
+        ..real,
+        viewport: @core.Size::new(
+          width=window_logical_width,
+          height=window_logical_height,
+        ),
+      }
     None => init_model
   }
-  let program : @moui.Program[Model, Msg] = program_with_init(
-    init_model,
-  )
-  let runtime : @runtime.AppRuntime = @runtime.new_program(
-    program~,
-    size~,
-  )
+  let program : @moui.Program[Model, Msg] = program_with_init(init_model)
+  let runtime : @runtime.AppRuntime = @runtime.new_program(program~, size~)
   // Phase 17 — smoke auto-exit: pass `--smoke` on the
   // command line to make the windows backend exit after the
   // first frame is presented. Used by `_build/run_smoke.ps1`
@@ -165,11 +161,13 @@ fn main {
   // "at least one renderer provider is required" (Phase 10.1
   // bug). The placeholder paints a flat-grey frame; a real
   // Skia/Direct2D renderer lands in a follow-up batch.
-  @runtime
-  .run_app("MoonBit Labeler", runtime)
+  @apphost.run_app("MoonBit Labeler", runtime)
   .render(make_renderer_provider())
   .backend(
-    @windows.entry(options=@windows.WindowsHostAppOptions::new(), smoke_options~),
+    @windows.entry(
+      options=@windows.WindowsHostAppOptions::new(),
+      smoke_options~,
+    ),
   )
   .run()
 }
@@ -208,16 +206,13 @@ fn build_demo_drag_model() -> Model {
   let base : Model = Model::new()
   let (m1, _) = update(
     base,
-    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+    CanvasPressed({ x: 140.0, y: 140.0, }, { x: 140.0, y: 140.0, }),
   )
   let (m2, _) = update(
     m1,
-    CursorMoved({ x: 175.0, y: 175.0 }, { x: 175.0, y: 175.0 }),
+    CursorMoved({ x: 175.0, y: 175.0, }, { x: 175.0, y: 175.0, }),
   )
-  let (m3, _) = update(
-    m2,
-    ModifyHandle("rect-1", 4, { x: 175.0, y: 175.0 }),
-  )
+  let (m3, _) = update(m2, ModifyHandle("rect-1", 4, { x: 175.0, y: 175.0, }))
   let (m4, _) = update(m3, EndDragHandle)
   // Phase 5.8 — then draw a *brand new* annotation with the Rect
   // tool, so the smoke screenshot also proves creation works (not
@@ -235,9 +230,12 @@ fn build_demo_drag_model() -> Model {
   // The dispatched sequence is exactly what the canvas's
   // mode-aware `on_drag` sends in Rect mode: BeginDraft on press,
   // UpdateDraft per drag frame, CommitDraft on release → AddRect.
-  let (d1, _) = update(armed, BeginDraft({ x: 8.0, y: 96.0 }))
-  let (d2, _) = update(d1, UpdateDraft({ x: 46.0, y: 190.0 }))
-  let (d3, _) = update(d2, AddRect({ x: 8.0, y: 96.0 }, { x: 46.0, y: 190.0 }))
+  let (d1, _) = update(armed, BeginDraft({ x: 8.0, y: 96.0, }))
+  let (d2, _) = update(d1, UpdateDraft({ x: 46.0, y: 190.0, }))
+  let (d3, _) = update(
+    d2,
+    AddRect({ x: 8.0, y: 96.0, }, { x: 46.0, y: 190.0, }),
+  )
   // `AddRect` resets the mode back to Select (a bare click must not
   // silently keep drawing), so drawing a second rect needs the tool
   // re-armed — which is precisely the loop the toolbar now closes
@@ -251,11 +249,11 @@ fn build_demo_drag_model() -> Model {
   // (`ButtonVariant::Primary`) against four `Ghost` is the
   // user-visible half of Phase 5.9 either way.
   let (rearmed, _) = update(d3, SetMode(Rect))
-  let (e1, _) = update(rearmed, BeginDraft({ x: 118.0, y: 148.0 }))
-  let (e2, _) = update(e1, UpdateDraft({ x: 192.0, y: 196.0 }))
+  let (e1, _) = update(rearmed, BeginDraft({ x: 118.0, y: 148.0, }))
+  let (e2, _) = update(e1, UpdateDraft({ x: 192.0, y: 196.0, }))
   let (e3, _) = update(
     e2,
-    AddRect({ x: 118.0, y: 148.0 }, { x: 192.0, y: 196.0 }),
+    AddRect({ x: 118.0, y: 148.0, }, { x: 192.0, y: 196.0, }),
   )
   // Phase 5.11 — finish in the middle of a polygon so the smoke
   // screenshot shows the new rubber-band segment: two committed
@@ -275,11 +273,11 @@ fn build_demo_drag_model() -> Model {
   // reachable with the polygon tool active, so this is the honest
   // state to capture.
   let (polygon_armed, _) = update(e3, SetMode(Polygon))
-  let (poly1, _) = update(polygon_armed, PushDraft({ x: 20.0, y: 20.0 }))
-  let (poly2, _) = update(poly1, PushDraft({ x: 60.0, y: 10.0 }))
+  let (poly1, _) = update(polygon_armed, PushDraft({ x: 20.0, y: 20.0, }))
+  let (poly2, _) = update(poly1, PushDraft({ x: 60.0, y: 10.0, }))
   let (poly3, _) = update(
     poly2,
-    CursorMoved({ x: 95.0, y: 25.0 }, { x: 95.0, y: 25.0 }),
+    CursorMoved({ x: 95.0, y: 25.0, }, { x: 95.0, y: 25.0, }),
   )
   // Phase 5.21 — also leave the second class row mid-rename, so the
   // smoke screenshot shows a live `@views.text_field`. A cold start
@@ -312,10 +310,7 @@ fn build_demo_drag_model() -> Model {
 /// without `data/` still produces a working screenshot instead of a
 /// blank one. That is why this returns `Model?`.
 fn build_real_data_demo() -> Model? {
-  let candidates : Array[String] = [
-    "data/Image@skin",
-    "../data/Image@skin",
-  ]
+  let candidates : Array[String] = ["data/Image@skin", "../data/Image@skin"]
   for folder in candidates {
     match scan_folder(folder) {
       Some(scan) =>
@@ -361,8 +356,8 @@ fn build_real_data_demo() -> Model? {
 /// Returns `true` if the cache accepted the bytes (cache hit
 /// path works on the next paint), `false` otherwise.
 fn register_synthetic_test_image() -> Bool {
-  let w : Int = 200
-  let h : Int = 200
+  let w : Int32 = 200
+  let h : Int32 = 200
   register_test_image_in_renderer(
     "_phase5_2_synthetic",
     w,

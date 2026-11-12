@@ -231,6 +231,7 @@ test "scan_folder — readable but empty folder is Some (5.22)" {
   }
 }
 
+///|
 test "scan_folder — the fixture folder yields sorted images + Label@skin (5.26)" {
   let folder = p526_materialise()
   match scan_folder(folder) {

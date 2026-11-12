@@ -24,7 +24,7 @@
 // will accept) with width=1920, height=1080.
 
 ///|
-fn png_header(w : Int, h : Int) -> Bytes {
+fn png_header(w : Int32, h : Int32) -> Bytes {
   let bytes : Array[Byte] = []
   // 8-byte PNG signature.
   bytes.push(b'\x89')
@@ -76,7 +76,7 @@ fn png_header(w : Int, h : Int) -> Bytes {
 // (LE u32). 26 bytes total.
 
 ///|
-fn bmp_header(w : Int, h : Int) -> Bytes {
+fn bmp_header(w : Int32, h : Int32) -> Bytes {
   let bytes : Array[Byte] = []
   bytes.push(b'B')
   bytes.push(b'M')
@@ -107,7 +107,7 @@ fn bmp_header(w : Int, h : Int) -> Bytes {
 // height (BE u32) + 3 channels + 1 colourspace. 14 bytes total.
 
 ///|
-fn qoi_header(w : Int, h : Int) -> Bytes {
+fn qoi_header(w : Int32, h : Int32) -> Bytes {
   let bytes : Array[Byte] = []
   bytes.push(b'q')
   bytes.push(b'o')
@@ -135,7 +135,7 @@ fn qoi_header(w : Int, h : Int) -> Bytes {
 // 10 bytes total.
 
 ///|
-fn gif_header(w : Int, h : Int) -> Bytes {
+fn gif_header(w : Int32, h : Int32) -> Bytes {
   let bytes : Array[Byte] = []
   bytes.push(b'G')
   bytes.push(b'I')
@@ -161,7 +161,7 @@ fn gif_header(w : Int, h : Int) -> Bytes {
 // reads offsets 12/14 from a >= 18-byte buffer.
 
 ///|
-fn tga_header(w : Int, h : Int) -> Bytes {
+fn tga_header(w : Int32, h : Int32) -> Bytes {
   let bytes : Array[Byte] = []
   bytes.push(b'\x00') // id_length
   bytes.push(b'\x00') // cmap_type
@@ -195,77 +195,77 @@ fn tga_header(w : Int, h : Int) -> Bytes {
 ///|
 test "probe_image_dimensions — PNG 1920x1080 round-trip" {
   let bytes : Bytes = png_header(1920, 1080)
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="Some((1920, 1080))")
 }
 
 ///|
 test "probe_image_dimensions — PNG small 4x4 square" {
   let bytes : Bytes = png_header(4, 4)
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="Some((4, 4))")
 }
 
 ///|
 test "probe_image_dimensions — PNG non-square 800x600" {
   let bytes : Bytes = png_header(800, 600)
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="Some((800, 600))")
 }
 
 ///|
 test "probe_image_dimensions — PNG large 3840x2160 (4K)" {
   let bytes : Bytes = png_header(3840, 2160)
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="Some((3840, 2160))")
 }
 
 ///|
 test "probe_image_dimensions — BMP 1920x1080 round-trip" {
   let bytes : Bytes = bmp_header(1920, 1080)
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="Some((1920, 1080))")
 }
 
 ///|
 test "probe_image_dimensions — BMP small 32x32" {
   let bytes : Bytes = bmp_header(32, 32)
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="Some((32, 32))")
 }
 
 ///|
 test "probe_image_dimensions — QOI 256x128 round-trip" {
   let bytes : Bytes = qoi_header(256, 128)
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="Some((256, 128))")
 }
 
 ///|
 test "probe_image_dimensions — GIF 100x100 round-trip" {
   let bytes : Bytes = gif_header(100, 100)
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="Some((100, 100))")
 }
 
 ///|
 test "probe_image_dimensions — TGA 64x32 round-trip" {
   let bytes : Bytes = tga_header(64, 32)
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="Some((64, 32))")
 }
 
 ///|
 test "probe_image_dimensions — empty bytes returns None" {
   let bytes : Bytes = b""
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="None")
 }
 
 ///|
 test "probe_image_dimensions — junk bytes returns None" {
   let bytes : Bytes = b"not an image at all just random ascii text 12345"
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="None")
 }
 
@@ -273,7 +273,7 @@ test "probe_image_dimensions — junk bytes returns None" {
 test "probe_image_dimensions — PNG with truncated header returns None" {
   // Only 8 bytes — less than the 33 minimum for png_dimensions.
   let bytes : Bytes = b"\x89PNG\r\n\x1A\n"
-  let result : (Int, Int)? = probe_image_dimensions(bytes)
+  let result : (Int32, Int32)? = probe_image_dimensions(bytes)
   inspect(result, content="None")
 }
 
@@ -304,7 +304,7 @@ test "probe_image_dimensions — PNG with wrong chunk type returns None" {
 /// `moonbitlang/x/fs` is a synchronous fs API; see `disk_io.mbt` and
 /// the test below, which reads a real image from `data/`.
 test "probe_image_dimensions_path — non-existent path returns None" {
-  let result : (Int, Int)? = probe_image_dimensions_path(
+  let result : (Int32, Int32)? = probe_image_dimensions_path(
     "/this/path/definitely/does/not/exist.jpg",
   )
   inspect(result, content="None")
@@ -364,7 +364,7 @@ test "probe_image_dimensions_path — each fixture image reports its own size (5
 /// (`test "probe_image_dimensions_path — reads a real image off disk"`),
 /// this one only has to confirm it still does not raise.
 test "probe_image_dimensions_path — sync call returns cleanly" {
-  let result : (Int, Int)? = probe_image_dimensions_path("dummy.jpg")
+  let result : (Int32, Int32)? = probe_image_dimensions_path("dummy.jpg")
   inspect(result, content="None")
 }
 
@@ -418,7 +418,7 @@ test "decode_image_bytes — junk bytes returns None" {
 /// Phase 5.10 — `decode_image_metadata` returns `None` for
 /// invalid input (mirrors the decode_image_bytes behaviour).
 test "decode_image_metadata — empty bytes returns None" {
-  let result : (Int, Int, Int, String)? = decode_image_metadata(b"")
+  let result : (Int32, Int32, Int32, String)? = decode_image_metadata(b"")
   inspect(result, content="None")
 }
 
@@ -469,7 +469,7 @@ test "decode_image_bytes — PNG 4x4 returns Some(Image) with matching dims" {
 /// produced by an encoder would decode here.
 test "decode_image_metadata — PNG 4x4 returns valid metadata tuple" {
   let bytes : Bytes = png_header(4, 4)
-  let meta : (Int, Int, Int, String)? = decode_image_metadata(bytes)
+  let meta : (Int32, Int32, Int32, String)? = decode_image_metadata(bytes)
   match meta {
     Some((w, h, byte_len, fmt)) => {
       assert_eq(w, 4)
@@ -487,7 +487,7 @@ test "decode_image_metadata — PNG 4x4 returns valid metadata tuple" {
 /// in 5.6, the full decode supports in 5.10).
 test "decode_image_metadata — BMP 32x32 returns valid metadata" {
   let bytes : Bytes = bmp_header(32, 32)
-  let meta : (Int, Int, Int, String)? = decode_image_metadata(bytes)
+  let meta : (Int32, Int32, Int32, String)? = decode_image_metadata(bytes)
   match meta {
     Some((w, h, byte_len, _fmt)) => {
       assert_eq(w, 32)
@@ -504,7 +504,7 @@ test "decode_image_metadata — BMP 32x32 returns valid metadata" {
 /// height at byte 8).
 test "decode_image_metadata — QOI 256x128 returns valid metadata" {
   let bytes : Bytes = qoi_header(256, 128)
-  let meta : (Int, Int, Int, String)? = decode_image_metadata(bytes)
+  let meta : (Int32, Int32, Int32, String)? = decode_image_metadata(bytes)
   match meta {
     Some((w, h, _byte_len, _fmt)) => {
       assert_eq(w, 256)
@@ -528,6 +528,6 @@ test "decode_image_metadata — QOI 256x128 returns valid metadata" {
 /// path and these tests extend with real `async test` blocks
 /// driven from a fixture file in `data/Image@fixture/`.
 test "probe_image_dimensions_path — empty string returns None" {
-  let result : (Int, Int)? = probe_image_dimensions_path("")
+  let result : (Int32, Int32)? = probe_image_dimensions_path("")
   inspect(result, content="None")
 }

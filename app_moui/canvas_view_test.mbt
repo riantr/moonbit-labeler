@@ -159,7 +159,7 @@ test "hit_test_select — image-natural coords make hit-test DPR-invariant" {
   // within the 12 px radius regardless of the window's DPR — because
   // canvas_view pre-inverts (canvas_pt - pan) / zoom before this call,
   // the canvas_pt passed in IS already image-natural.
-  let hit : (String, Int)? = hit_test_handle(
+  let hit : (String, Int32)? = hit_test_handle(
     { x: 105.0, y: 105.0, },
     annotations,
     ann_id,
@@ -178,7 +178,7 @@ test "hit_test_select — image-natural coords make hit-test DPR-invariant" {
 /// issue at least one FillRect (background) and one FillRect
 /// (placeholder), but ZERO DrawImage / cursor-crosshair stroke
 /// pairs; the dynamic layer must NOT issue any background FillRect.
-fn count_draw_kinds(cmds : Array[@core.DrawCommand]) -> (Int, Int, Int) {
+fn count_draw_kinds(cmds : Array[@core.DrawCommand]) -> (Int32, Int32, Int32) {
   let mut fill = 0
   let mut stroke = 0
   let mut draw_image = 0
@@ -1530,8 +1530,8 @@ test "polygon — emits fill DrawPath + stroke DrawPath (5.12.B)" {
   let pctx = @common.PaintContext::new()
   draw_static_layer(pctx, model, frame)
   let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
-  let mut path_with_fill : Int = 0
-  let mut path_with_stroke : Int = 0
+  let mut path_with_fill : Int32 = 0
+  let mut path_with_stroke : Int32 = 0
   for c in cmds {
     match c {
       @core.DrawCommand::DrawPath(spec) => {
@@ -2963,7 +2963,7 @@ fn count_dashes_and_arrow(cmd : @core.DrawCommand) -> (Bool, Bool) {
   // returns (is_dash_line, is_arrow_head)
   match cmd {
     @core.DrawCommand::DrawPath(spec) => {
-      let n_verbs : Int = spec.verbs.length()
+      let n_verbs : Int32 = spec.verbs.length()
       // dash = [MoveTo, LineTo] = 2 verbs; arrow = [MoveTo, LineTo, LineTo, Close] = 4 verbs
       if n_verbs == 2 {
         (true, false)
@@ -3015,8 +3015,8 @@ test "bindings — dashed line emits expected dash count (5.17)" {
   let pctx = @common.PaintContext::new()
   draw_static_layer(pctx, model, frame)
   let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
-  let mut dash_count : Int = 0
-  let mut arrow_count : Int = 0
+  let mut dash_count : Int32 = 0
+  let mut arrow_count : Int32 = 0
   for c in cmds {
     let (is_dash, is_arrow) = count_dashes_and_arrow(c)
     if is_dash {
@@ -3085,7 +3085,7 @@ test "bindings — dashed segments spaced at 10-px period (5.17)" {
   // Each start should fall on the 10-px grid: starts[0] = 50
   // (centroid x), starts[i] = starts[0] + 10 * i.
   let mut expected : Double = 50.0
-  let mut i : Int = 0
+  let mut i : Int32 = 0
   while i < starts.length() {
     let diff : Double = starts[i] - expected
     // diff should be in [-0.5, 0.5] — within half a px of the grid.
@@ -3132,7 +3132,7 @@ test "bindings — short binding emits at least 1 dash (5.17)" {
   let pctx = @common.PaintContext::new()
   draw_static_layer(pctx, model, frame)
   let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
-  let mut dash_count : Int = 0
+  let mut dash_count : Int32 = 0
   for c in cmds {
     let (is_dash, _) = count_dashes_and_arrow(c)
     if is_dash {
@@ -3239,8 +3239,8 @@ test "label text halo — halo colour is rgba(0,0,0,0.55), colour is body (5.18)
   let pctx = @common.PaintContext::new()
   draw_static_layer(pctx, model, frame)
   let cmds : Array[@core.DrawCommand] = @common.PaintContext::finish(pctx)
-  let mut halo_count : Int = 0
-  let mut color_count : Int = 0
+  let mut halo_count : Int32 = 0
+  let mut color_count : Int32 = 0
   for c in cmds {
     match c {
       @core.DrawCommand::DrawText(text_run) =>
@@ -3487,11 +3487,8 @@ test "Pan — zoom-drag mode: marks both layers dirty (5.19)" {
 /// `new_pt` and the static layer is dirty + the label is dirty.
 test "ModifyHandle — Rect BR corner resize mutates points + invalidates cache (5.4)" {
   let model : Model = Model::new()
-  let new_pt : Point = { x: 175.0, y: 175.0 }
-  let (next, _) = update(
-    model,
-    ModifyHandle("rect-1", 4, new_pt),
-  )
+  let new_pt : Point = { x: 175.0, y: 175.0, }
+  let (next, _) = update(model, ModifyHandle("rect-1", 4, new_pt))
   // Locate the rect-1 annotation in the next model.
   let mut found : Annotation? = None
   for ann in next.annotations {
@@ -3520,11 +3517,8 @@ test "ModifyHandle — Rect BR corner resize mutates points + invalidates cache 
 /// the targeted vertex (other vertices unchanged).
 test "ModifyHandle — Polygon vertex move preserves other vertices (5.4)" {
   let model : Model = Model::new()
-  let new_pt : Point = { x: 200.0, y: 250.0 }
-  let (next, _) = update(
-    model,
-    ModifyHandle("poly-1", 1, new_pt),
-  )
+  let new_pt : Point = { x: 200.0, y: 250.0, }
+  let (next, _) = update(model, ModifyHandle("poly-1", 1, new_pt))
   let mut found : Annotation? = None
   for ann in next.annotations {
     if ann.id == "poly-1" {
@@ -3559,7 +3553,7 @@ test "ModifyHandle — unknown id is a no-op (5.4)" {
   }
   let (next, _) = update(
     model,
-    ModifyHandle("does-not-exist", 0, { x: 0.0, y: 0.0 }),
+    ModifyHandle("does-not-exist", 0, { x: 0.0, y: 0.0, }),
   )
   assert_false(next.staticLayerDirty)
   assert_false(next.label.dirty)
@@ -3581,7 +3575,7 @@ test "drag sequence — BeginDragHandle + CursorMoved + EndDragHandle (5.4/5.5)"
   // lookup; the cursor position can be passed directly.
   let (m1, _) = update(
     model,
-    BeginDragHandle("rect-1", 4, { x: 140.0, y: 140.0 }),
+    BeginDragHandle("rect-1", 4, { x: 140.0, y: 140.0, }),
   )
   assert_true(m1.dragState is Some(_))
   // Step 2: CursorMoved while dragging should dispatch a
@@ -3589,7 +3583,7 @@ test "drag sequence — BeginDragHandle + CursorMoved + EndDragHandle (5.4/5.5)"
   // cursor positions in the model.
   let (m2, _eff) = update(
     m1,
-    CursorMoved({ x: 170.0, y: 170.0 }, { x: 170.0, y: 170.0 }),
+    CursorMoved({ x: 170.0, y: 170.0, }, { x: 170.0, y: 170.0, }),
   )
   match m2.cursorImgPt {
     Some(p) => {
@@ -3601,10 +3595,7 @@ test "drag sequence — BeginDragHandle + CursorMoved + EndDragHandle (5.4/5.5)"
   // The Effect::send carries the ModifyHandle — we verify by
   // feeding it back through update (no inspection of the
   // Effect payload — Effect values aren't easily testable).
-  let (m3, _) = update(
-    m2,
-    ModifyHandle("rect-1", 4, { x: 170.0, y: 170.0 }),
-  )
+  let (m3, _) = update(m2, ModifyHandle("rect-1", 4, { x: 170.0, y: 170.0, }))
   // Step 3: annotation now reflects the drag end position.
   let mut found : Annotation? = None
   for ann in m3.annotations {
@@ -3633,7 +3624,7 @@ test "CursorMoved — no dragState: hit-test path (5.4)" {
   let model : Model = Model::new()
   let (next, _) = update(
     model,
-    CursorMoved({ x: 1000.0, y: 1000.0 }, { x: 1000.0, y: 1000.0 }),
+    CursorMoved({ x: 1000.0, y: 1000.0, }, { x: 1000.0, y: 1000.0, }),
   )
   assert_eq(next.selectedId, None)
   match next.cursorImgPt {
@@ -3661,7 +3652,7 @@ test "CursorMoved — with dragState: preserves dragState (5.4)" {
   }
   let (next, _) = update(
     model,
-    CursorMoved({ x: 170.0, y: 170.0 }, { x: 170.0, y: 170.0 }),
+    CursorMoved({ x: 170.0, y: 170.0, }, { x: 170.0, y: 170.0, }),
   )
   match next.dragState {
     Some(d) => {
@@ -3697,7 +3688,7 @@ test "BeginDragHandle — uses explicit start_img_pt, not cursorImgPt (5.5)" {
   }
   let (next, _) = update(
     model,
-    BeginDragHandle("rect-1", 4, { x: 50.0, y: 60.0 }),
+    BeginDragHandle("rect-1", 4, { x: 50.0, y: 60.0, }),
   )
   match next.dragState {
     Some(d) => {
@@ -3720,7 +3711,7 @@ test "BeginDragHandle — works with cursorImgPt = None (5.5)" {
   let model : Model = Model::new()
   let (next, _) = update(
     model,
-    BeginDragHandle("rect-1", 4, { x: 100.0, y: 100.0 }),
+    BeginDragHandle("rect-1", 4, { x: 100.0, y: 100.0, }),
   )
   match next.dragState {
     Some(d) => {
@@ -3745,7 +3736,7 @@ test "on_drag Started phase logic — cursor over selected handle arms BeginDrag
   // rect-1's BR corner is at (140, 140). Cursor at (140, 140)
   // should hit handle 4 (the BR handle).
   let hit = hit_test_handle(
-    { x: 140.0, y: 140.0 },
+    { x: 140.0, y: 140.0, },
     model.annotations,
     "rect-1",
     12.0,
@@ -3760,7 +3751,7 @@ test "on_drag Started phase logic — cursor over selected handle arms BeginDrag
   // Verify that BeginDragHandle with the hit args sets dragState.
   let (next, _) = update(
     model,
-    BeginDragHandle("rect-1", 4, { x: 140.0, y: 140.0 }),
+    BeginDragHandle("rect-1", 4, { x: 140.0, y: 140.0, }),
   )
   assert_true(next.dragState is Some(_))
 }
@@ -3776,14 +3767,17 @@ test "on_drag Started phase logic — cursor NOT over handle does not arm drag (
   // rect-1's BR is at (140, 140); a cursor at (10, 10) is
   // far from any handle (12 px radius) or body.
   let hit = hit_test_handle(
-    { x: 10.0, y: 10.0 },
+    { x: 10.0, y: 10.0, },
     model.annotations,
     "rect-1",
     12.0,
   )
   assert_true(hit is None)
   // Model remains unchanged (no dragState set).
-  let (next, _) = update(model, CursorMoved({ x: 10.0, y: 10.0 }, { x: 10.0, y: 10.0 }))
+  let (next, _) = update(
+    model,
+    CursorMoved({ x: 10.0, y: 10.0, }, { x: 10.0, y: 10.0, }),
+  )
   assert_true(next.dragState is None)
 }
 
@@ -3830,7 +3824,7 @@ test "CanvasPressed — first click on a handle selects AND arms drag in one pre
   // Press directly on it — no prior selection, no prior cursor move.
   let (next, _) = update(
     model,
-    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+    CanvasPressed({ x: 140.0, y: 140.0, }, { x: 140.0, y: 140.0, }),
   )
   // Selected the owning annotation...
   assert_eq(next.selectedId, Some("rect-1"))
@@ -3858,7 +3852,7 @@ test "CanvasPressed — press on body selects without arming drag (5.6)" {
   // >12 px from every handle.
   let (next, _) = update(
     model,
-    CanvasPressed({ x: 90.0, y: 90.0 }, { x: 90.0, y: 90.0 }),
+    CanvasPressed({ x: 90.0, y: 90.0, }, { x: 90.0, y: 90.0, }),
   )
   assert_eq(next.selectedId, Some("rect-1"))
   assert_true(next.dragState is None)
@@ -3871,7 +3865,7 @@ test "CanvasPressed — press on empty canvas clears selection (5.6)" {
   let model : Model = { ..Model::new(), selectedId: Some("rect-1"), }
   let (next, _) = update(
     model,
-    CanvasPressed({ x: 199.0, y: 199.0 }, { x: 199.0, y: 199.0 }),
+    CanvasPressed({ x: 199.0, y: 199.0, }, { x: 199.0, y: 199.0, }),
   )
   assert_true(next.selectedId is None)
   assert_true(next.dragState is None)
@@ -3888,7 +3882,7 @@ test "CanvasPressed — re-select across annotations arms the new one (5.6)" {
   // selection must be dropped in favour of poly-1.
   let (next, _) = update(
     model,
-    CanvasPressed({ x: 110.0, y: 30.0 }, { x: 110.0, y: 30.0 }),
+    CanvasPressed({ x: 110.0, y: 30.0, }, { x: 110.0, y: 30.0, }),
   )
   assert_eq(next.selectedId, Some("poly-1"))
   match next.dragState {
@@ -3913,7 +3907,7 @@ test "CanvasPressed — does not dirty the static layer (5.6)" {
   }
   let (next, _) = update(
     model,
-    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+    CanvasPressed({ x: 140.0, y: 140.0, }, { x: 140.0, y: 140.0, }),
   )
   assert_false(next.staticLayerDirty)
   assert_true(next.dynamicLayerDirty)
@@ -3930,19 +3924,16 @@ test "CanvasPressed arm → CursorMoved actually resizes the rect (5.6)" {
   // Press on rect-1's BR handle at (140, 140).
   let (m1, _) = update(
     model,
-    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+    CanvasPressed({ x: 140.0, y: 140.0, }, { x: 140.0, y: 140.0, }),
   )
   // Drag to (175, 175): CursorMoved with dragState Some routes to
   // ModifyHandle; feed the resulting Msg back explicitly (Effect
   // values aren't inspectable from test code).
   let (m2, _) = update(
     m1,
-    CursorMoved({ x: 175.0, y: 175.0 }, { x: 175.0, y: 175.0 }),
+    CursorMoved({ x: 175.0, y: 175.0, }, { x: 175.0, y: 175.0, }),
   )
-  let (m3, _) = update(
-    m2,
-    ModifyHandle("rect-1", 4, { x: 175.0, y: 175.0 }),
-  )
+  let (m3, _) = update(m2, ModifyHandle("rect-1", 4, { x: 175.0, y: 175.0, }))
   let mut found : Annotation? = None
   for ann in m3.annotations {
     if ann.id == "rect-1" {
@@ -3981,7 +3972,7 @@ test "CanvasPressed — zoomDragMode suppresses the handle-drag arm (5.7)" {
   // handle at (140, 140)).
   let (next, _) = update(
     model,
-    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+    CanvasPressed({ x: 140.0, y: 140.0, }, { x: 140.0, y: 140.0, }),
   )
   // No drag armed...
   assert_true(next.dragState is None)
@@ -3998,7 +3989,7 @@ test "CanvasPressed — zoomDragMode off still arms the drag (5.7 control)" {
   let model : Model = { ..Model::new(), zoomDragMode: false, }
   let (next, _) = update(
     model,
-    CanvasPressed({ x: 140.0, y: 140.0 }, { x: 140.0, y: 140.0 }),
+    CanvasPressed({ x: 140.0, y: 140.0, }, { x: 140.0, y: 140.0, }),
   )
   assert_true(next.dragState is Some(_))
   assert_eq(next.selectedId, Some("rect-1"))
@@ -4026,7 +4017,7 @@ test "AddRect — creates a new annotation with a fresh id (5.8)" {
   // isn't ambiguous.
   let (next, _) = update(
     model,
-    AddRect({ x: 10.0, y: 10.0 }, { x: 60.0, y: 60.0 }),
+    AddRect({ x: 10.0, y: 10.0, }, { x: 60.0, y: 60.0, }),
   )
   assert_eq(next.annotations.length(), before + 1)
   let last = next.annotations[next.annotations.length() - 1]
@@ -4054,9 +4045,15 @@ test "AddRect — degenerate (zero-area) rect is ignored (5.8)" {
   let model : Model = { ..Model::new(), mode: Rect, }
   let before = model.annotations.length()
   // Same x (vertical line) and same y (horizontal line).
-  let (m1, _) = update(model, AddRect({ x: 30.0, y: 10.0 }, { x: 30.0, y: 90.0 }))
+  let (m1, _) = update(
+    model,
+    AddRect({ x: 30.0, y: 10.0, }, { x: 30.0, y: 90.0, }),
+  )
   assert_eq(m1.annotations.length(), before)
-  let (m2, _) = update(model, AddRect({ x: 10.0, y: 30.0 }, { x: 90.0, y: 30.0 }))
+  let (m2, _) = update(
+    model,
+    AddRect({ x: 10.0, y: 30.0, }, { x: 90.0, y: 30.0, }),
+  )
   assert_eq(m2.annotations.length(), before)
   // Also: the mode is NOT reset by a degenerate rect, so a stray
   // click doesn't kick the user out of the Rect tool.
@@ -4072,7 +4069,7 @@ test "AddRect — normalises corners to TL/BR regardless of drag direction (5.8)
   // Drag from bottom-right up to top-left.
   let (next, _) = update(
     model,
-    AddRect({ x: 80.0, y: 90.0 }, { x: 20.0, y: 10.0 }),
+    AddRect({ x: 80.0, y: 90.0, }, { x: 20.0, y: 10.0, }),
   )
   let last = next.annotations[next.annotations.length() - 1]
   // points[0] must be the top-left (min x, min y).
@@ -4092,15 +4089,15 @@ test "AddPolygon — requires 3 vertices (5.8)" {
   let before = model.annotations.length()
   let (m1, _) = update(
     model,
-    AddPolygon([{ x: 10.0, y: 10.0 }, { x: 20.0, y: 20.0 }]),
+    AddPolygon([{ x: 10.0, y: 10.0, }, { x: 20.0, y: 20.0, }]),
   )
   assert_eq(m1.annotations.length(), before)
   let (m2, _) = update(
     model,
     AddPolygon([
-      { x: 10.0, y: 10.0 },
-      { x: 30.0, y: 10.0 },
-      { x: 20.0, y: 30.0 },
+      { x: 10.0, y: 10.0, },
+      { x: 30.0, y: 10.0, },
+      { x: 20.0, y: 30.0, },
     ]),
   )
   assert_eq(m2.annotations.length(), before + 1)
@@ -4120,7 +4117,7 @@ test "AddPolygon — requires 3 vertices (5.8)" {
 test "AddKeypoint — creates a point and STAYS in Keypoint mode (5.8)" {
   let model : Model = { ..Model::new(), mode: Keypoint, }
   let before = model.annotations.length()
-  let (next, _) = update(model, AddKeypoint({ x: 42.0, y: 43.0 }))
+  let (next, _) = update(model, AddKeypoint({ x: 42.0, y: 43.0, }))
   assert_eq(next.annotations.length(), before + 1)
   let last = next.annotations[next.annotations.length() - 1]
   assert_eq(last.shape, Keypoint)
@@ -4130,7 +4127,7 @@ test "AddKeypoint — creates a point and STAYS in Keypoint mode (5.8)" {
   // Stays in the tool.
   assert_eq(next.mode, Keypoint)
   // Second keypoint gets the next id, not a duplicate.
-  let (m2, _) = update(next, AddKeypoint({ x: 44.0, y: 45.0 }))
+  let (m2, _) = update(next, AddKeypoint({ x: 44.0, y: 45.0, }))
   assert_eq(m2.annotations[m2.annotations.length() - 1].id, "ann-2")
 }
 
@@ -4140,11 +4137,14 @@ test "AddKeypoint — creates a point and STAYS in Keypoint mode (5.8)" {
 /// next id.
 test "AddRect — ids are collision-free and deterministic (5.8)" {
   let model : Model = { ..Model::new(), mode: Rect, }
-  let (m1, _) = update(model, AddRect({ x: 1.0, y: 1.0 }, { x: 5.0, y: 5.0 }))
+  let (m1, _) = update(model, AddRect({ x: 1.0, y: 1.0, }, { x: 5.0, y: 5.0, }))
   assert_eq(m1.annotations[m1.annotations.length() - 1].id, "ann-1")
-  let (m2, _) = update(m1, AddRect({ x: 6.0, y: 6.0 }, { x: 9.0, y: 9.0 }))
+  let (m2, _) = update(m1, AddRect({ x: 6.0, y: 6.0, }, { x: 9.0, y: 9.0, }))
   assert_eq(m2.annotations[m2.annotations.length() - 1].id, "ann-2")
-  let (m3, _) = update(m2, AddRect({ x: 10.0, y: 10.0 }, { x: 12.0, y: 12.0 }))
+  let (m3, _) = update(
+    m2,
+    AddRect({ x: 10.0, y: 10.0, }, { x: 12.0, y: 12.0, }),
+  )
   assert_eq(m3.annotations[m3.annotations.length() - 1].id, "ann-3")
   // All distinct.
   assert_eq(m3.annotations.length(), 6)
@@ -4161,16 +4161,10 @@ test "AddBinding — resolves target by hit-test, rejects self-loop (5.8)" {
   }
   let before = model.bindings.length()
   // (60, 170) is kp-1's own point — must NOT create a self-binding.
-  let (m1, _) = update(
-    model,
-    AddBinding("kp-1", { x: 60.0, y: 170.0 }),
-  )
+  let (m1, _) = update(model, AddBinding("kp-1", { x: 60.0, y: 170.0, }))
   assert_eq(m1.bindings.length(), before)
   // (90, 90) is inside rect-1 — that IS a valid binding target.
-  let (m2, _) = update(
-    model,
-    AddBinding("kp-1", { x: 90.0, y: 90.0 }),
-  )
+  let (m2, _) = update(model, AddBinding("kp-1", { x: 90.0, y: 90.0, }))
   assert_eq(m2.bindings.length(), before + 1)
   let b = m2.bindings[m2.bindings.length() - 1]
   assert_eq(b.from, "kp-1")
@@ -4196,14 +4190,14 @@ test "AddRect — inherits the default class id (5.8)" {
   }
   let (next, _) = update(
     with_default,
-    AddRect({ x: 1.0, y: 1.0 }, { x: 5.0, y: 5.0 }),
+    AddRect({ x: 1.0, y: 1.0, }, { x: 5.0, y: 5.0, }),
   )
   let last = next.annotations[next.annotations.length() - 1]
   assert_eq(last.class_id, "c2")
   // No classes at all → "" (id-as-label fallback).
   let (none, _) = update(
-    { ..Model::new(), mode: Rect, classes: [] },
-    AddRect({ x: 1.0, y: 1.0 }, { x: 5.0, y: 5.0 }),
+    { ..Model::new(), mode: Rect, classes: [], },
+    AddRect({ x: 1.0, y: 1.0, }, { x: 5.0, y: 5.0, }),
   )
   assert_eq(none.annotations[none.annotations.length() - 1].class_id, "")
 }
@@ -4221,23 +4215,23 @@ test "AddRect — inherits the default class id (5.8)" {
 test "UpdateDraft — grows to 2 points then moves the second (5.8)" {
   let model : Model = { ..Model::new(), mode: Rect, }
   // Empty draft → appends.
-  let (m1, _) = update(model, UpdateDraft({ x: 10.0, y: 10.0 }))
+  let (m1, _) = update(model, UpdateDraft({ x: 10.0, y: 10.0, }))
   assert_eq(m1.draftPoints.length(), 1)
   assert_eq(m1.draftPoints[0].x, 10.0)
   // One point → grows to 2 (this is the frame that makes the Rect
   // tool work at all).
-  let (m2, _) = update(m1, UpdateDraft({ x: 20.0, y: 20.0 }))
+  let (m2, _) = update(m1, UpdateDraft({ x: 20.0, y: 20.0, }))
   assert_eq(m2.draftPoints.length(), 2)
   assert_eq(m2.draftPoints[0].x, 10.0)
   assert_eq(m2.draftPoints[1].x, 20.0)
   // Two points → stays 2, and only the second moves.
-  let (m3, _) = update(m2, UpdateDraft({ x: 30.0, y: 30.0 }))
+  let (m3, _) = update(m2, UpdateDraft({ x: 30.0, y: 30.0, }))
   assert_eq(m3.draftPoints.length(), 2)
   assert_eq(m3.draftPoints[0].x, 10.0)
   assert_eq(m3.draftPoints[1].x, 30.0)
   // Still 2 after many more frames (no runaway growth).
-  let (m4, _) = update(m3, UpdateDraft({ x: 40.0, y: 40.0 }))
-  let (m5, _) = update(m4, UpdateDraft({ x: 50.0, y: 50.0 }))
+  let (m4, _) = update(m3, UpdateDraft({ x: 40.0, y: 40.0, }))
+  let (m5, _) = update(m4, UpdateDraft({ x: 50.0, y: 50.0, }))
   assert_eq(m5.draftPoints.length(), 2)
   assert_eq(m5.draftPoints[1].x, 50.0)
   // Draft updates only dirty the DYNAMIC layer — the draft preview
@@ -4253,20 +4247,17 @@ test "UpdateDraft — grows to 2 points then moves the second (5.8)" {
 test "CommitDraft — rect mode commits 2 points, drops a 1-point click (5.8)" {
   let model : Model = { ..Model::new(), mode: Rect, }
   // One point → no Add* effect, draft cleared.
-  let (m1, _) = update(model, BeginDraft({ x: 10.0, y: 10.0 }))
+  let (m1, _) = update(model, BeginDraft({ x: 10.0, y: 10.0, }))
   let (m2, _) = update(m1, CommitDraft)
   assert_eq(m2.draftPoints.length(), 0)
   // Two points → the Add* Msg is dispatched (verified by feeding
   // the same commit's effect target back through AddRect).
-  let (m3, _) = update(m1, UpdateDraft({ x: 40.0, y: 40.0 }))
+  let (m3, _) = update(m1, UpdateDraft({ x: 40.0, y: 40.0, }))
   assert_eq(m3.draftPoints.length(), 2)
   let (m4, _) = update(m3, CommitDraft)
   // The draft survives CommitDraft (AddPolygon/AddRect clears it
   // when it runs), so the round-trip is AddRect(draft[0],draft[1]).
-  let (m5, _) = update(
-    m4,
-    AddRect(m4.draftPoints[0], m4.draftPoints[1]),
-  )
+  let (m5, _) = update(m4, AddRect(m4.draftPoints[0], m4.draftPoints[1]))
   assert_eq(m5.draftPoints.length(), 0)
   assert_eq(m5.annotations.length(), model.annotations.length() + 1)
 }
@@ -4282,23 +4273,26 @@ test "DoubleTapped — polygon commits, other modes toggle zoom-drag (5.8)" {
     ..Model::new(),
     mode: Polygon,
     draftPoints: [
-      { x: 10.0, y: 10.0 },
-      { x: 30.0, y: 10.0 },
-      { x: 20.0, y: 30.0 },
+      { x: 10.0, y: 10.0, },
+      { x: 30.0, y: 10.0, },
+      { x: 20.0, y: 30.0, },
     ],
   }
   let (toggled, _) = update(poly, DoubleTapped)
   // Must NOT have toggled zoom mode.
   assert_false(toggled.zoomDragMode)
-  let (committed, _) = update(
-    toggled,
-    AddPolygon(toggled.draftPoints),
+  let (committed, _) = update(toggled, AddPolygon(toggled.draftPoints))
+  assert_eq(
+    committed.annotations.length(),
+    Model::new().annotations.length() + 1,
   )
-  assert_eq(committed.annotations.length(), Model::new().annotations.length() + 1)
   // Polygon mode with only 2 vertices → no commit.
   let (short, _) = update(
-    { ..Model::new(), mode: Polygon,
-      draftPoints: [{ x: 10.0, y: 10.0 }, { x: 20.0, y: 20.0 }] },
+    {
+      ..Model::new(),
+      mode: Polygon,
+      draftPoints: [{ x: 10.0, y: 10.0, }, { x: 20.0, y: 20.0, }],
+    },
     DoubleTapped,
   )
   assert_false(short.zoomDragMode)
@@ -4438,16 +4432,13 @@ test "draft teardown — FinishDraft / CancelDraft dirty the dynamic layer only 
 test "toolbar [Rect] → SetMode → drag creates a rect (5.9)" {
   let (m0, _) = update(Model::new(), SetMode(Mode::Rect))
   assert_eq(m0.mode, Mode::Rect)
-  let before : Int = m0.annotations.length()
+  let before : Int32 = m0.annotations.length()
   let (m1, _) = update(m0, BeginDraft({ x: 20.0, y: 20.0, }))
   let (m2, _) = update(m1, UpdateDraft({ x: 60.0, y: 80.0, }))
   let (m3, _) = update(m2, CommitDraft)
   // CommitDraft dispatches AddRect(draft[0], draft[1]) rather than
   // mutating in place, so feed that Msg back to finish the chain.
-  let (m4, _) = update(
-    m3,
-    AddRect(m3.draftPoints[0], m3.draftPoints[1]),
-  )
+  let (m4, _) = update(m3, AddRect(m3.draftPoints[0], m3.draftPoints[1]))
   assert_eq(m4.annotations.length(), before + 1)
   let created = m4.annotations[before]
   assert_eq(created.shape, Shape::Rect)
@@ -4469,7 +4460,7 @@ test "toolbar [Rect] → SetMode → drag creates a rect (5.9)" {
 test "toolbar [Polygon] → SetMode → 3 vertices + double-tap creates a polygon (5.9)" {
   let (m0, _) = update(Model::new(), SetMode(Mode::Polygon))
   assert_eq(m0.mode, Mode::Polygon)
-  let before : Int = m0.annotations.length()
+  let before : Int32 = m0.annotations.length()
   let (m1, _) = update(m0, PushDraft({ x: 30.0, y: 30.0, }))
   let (m2, _) = update(m1, PushDraft({ x: 90.0, y: 40.0, }))
   let (m3, _) = update(m2, PushDraft({ x: 50.0, y: 95.0, }))
@@ -4494,7 +4485,7 @@ test "toolbar [Polygon] → SetMode → 3 vertices + double-tap creates a polygo
 /// as well as the AddKeypoint path.
 test "toolbar [Keypoint] → SetMode → press places a keypoint and stays armed (5.9)" {
   let (m0, _) = update(Model::new(), SetMode(Mode::Keypoint))
-  let before : Int = m0.annotations.length()
+  let before : Int32 = m0.annotations.length()
   let (m1, _) = update(m0, AddKeypoint({ x: 55.0, y: 65.0, }))
   assert_eq(m1.annotations.length(), before + 1)
   // Stays armed for the next point.
@@ -4541,12 +4532,12 @@ test "toolbar [Select] → SetMode restores handle dragging (5.9)" {
 test "mode reset after creation — AddRect returns to Select, AddKeypoint stays (5.9)" {
   let (after_rect, _) = update(
     Model::new(),
-    AddRect({ x: 0.0, y: 0.0 }, { x: 20.0, y: 20.0 }),
+    AddRect({ x: 0.0, y: 0.0, }, { x: 20.0, y: 20.0, }),
   )
   assert_eq(after_rect.mode, Mode::Select)
   let (after_kp, _) = update(
     { ..Model::new(), mode: Keypoint, },
-    AddKeypoint({ x: 5.0, y: 5.0 }),
+    AddKeypoint({ x: 5.0, y: 5.0, }),
   )
   assert_eq(after_kp.mode, Mode::Keypoint)
 }
@@ -4559,8 +4550,11 @@ test "mode reset after creation — AddRect returns to Select, AddKeypoint stays
 /// immediately obvious.
 test "AddRect — a stray click neither creates an annotation nor disarms the tool (5.9)" {
   let armed : Model = { ..Model::new(), mode: Rect, }
-  let before : Int = armed.annotations.length()
-  let (next, _) = update(armed, AddRect({ x: 7.0, y: 7.0 }, { x: 7.0, y: 7.0 }))
+  let before : Int32 = armed.annotations.length()
+  let (next, _) = update(
+    armed,
+    AddRect({ x: 7.0, y: 7.0, }, { x: 7.0, y: 7.0, }),
+  )
   assert_eq(next.annotations.length(), before)
   assert_eq(next.mode, Mode::Rect)
 }
@@ -4588,9 +4582,9 @@ test "AddRect — a stray click neither creates an annotation nor disarms the to
 /// contract, not an accident, so it gets a test.
 test "PopDraft — stops at one vertex and never removes the anchor (5.10)" {
   let base : Model = { ..Model::new(), mode: Polygon, }
-  let (p1, _) = update(base, PushDraft({ x: 10.0, y: 10.0 }))
-  let (p2, _) = update(p1, PushDraft({ x: 20.0, y: 20.0 }))
-  let (p3, _) = update(p2, PushDraft({ x: 30.0, y: 30.0 }))
+  let (p1, _) = update(base, PushDraft({ x: 10.0, y: 10.0, }))
+  let (p2, _) = update(p1, PushDraft({ x: 20.0, y: 20.0, }))
+  let (p3, _) = update(p2, PushDraft({ x: 30.0, y: 30.0, }))
   assert_eq(p3.draftPoints.length(), 3)
   let (d1, _) = update(p3, PopDraft)
   assert_eq(d1.draftPoints.length(), 2)
@@ -4633,16 +4627,13 @@ test "PopDraft — an empty draft is a complete no-op, no repaint (5.10)" {
 /// drawing a rect must not take the rect away with it.
 test "CancelDraft — clears draft and disarms binding, scene untouched (5.10)" {
   let pristine : Model = Model::new()
-  let ann_count : Int = pristine.annotations.length()
-  let binding_count : Int = pristine.bindings.length()
+  let ann_count : Int32 = pristine.annotations.length()
+  let binding_count : Int32 = pristine.bindings.length()
   let busy : Model = {
     ..pristine,
     mode: EditBinding,
     bindingFromId: Some("rect-1"),
-    draftPoints: [
-      { x: 10.0, y: 10.0 },
-      { x: 20.0, y: 20.0 },
-    ],
+    draftPoints: [{ x: 10.0, y: 10.0, }, { x: 20.0, y: 20.0, }],
   }
   let (next, _) = update(busy, CancelDraft)
   // Draft gone, arm gone, tool back to Select.
@@ -4722,27 +4713,26 @@ test "DeleteSelectedAnnotation — drops the binding, keeps the far-end annotati
 /// the canvas; a band with no cursor would be invisible. Both must be
 /// absent, not degenerate.
 test "polygon rubber band — needs both a committed vertex and a cursor (5.11)" {
-  let cur : Point = { x: 50.0, y: 50.0 }
-  let zero : Point = { x: 0.0, y: 0.0 }
+  let cur : Point = { x: 50.0, y: 50.0, }
+  let zero : Point = { x: 0.0, y: 0.0, }
   // No committed vertex: nothing to hang the band off.
-  assert_true(
-    polygon_rubber_band([], Some(cur), zero, 1.0, zero) is None,
-  )
+  assert_true(polygon_rubber_band([], Some(cur), zero, 1.0, zero) is None)
   // No cursor: nothing for the band to point at.
   assert_true(
     polygon_rubber_band(
-      [{ x: 10.0, y: 10.0 }, { x: 20.0, y: 20.0 }],
+      [{ x: 10.0, y: 10.0, }, { x: 20.0, y: 20.0, }],
       None,
       zero,
       1.0,
       zero,
-    ) is None,
+    )
+    is None,
   )
   // Neither.
   assert_true(polygon_rubber_band([], None, zero, 1.0, zero) is None)
   // Sanity: the input is otherwise valid.
   assert_true(
-    polygon_rubber_band([{ x: 10.0, y: 10.0 }], Some(cur), zero, 1.0, zero)
+    polygon_rubber_band([{ x: 10.0, y: 10.0, }], Some(cur), zero, 1.0, zero)
     is Some(_),
   )
 }
@@ -4753,13 +4743,19 @@ test "polygon rubber band — needs both a committed vertex and a cursor (5.11)"
 /// shape instead of extending it, which is the whole visual difference
 /// between "extending" and "already closed".
 test "polygon rubber band — anchors on the last committed vertex (5.11)" {
-  let zero : Point = { x: 0.0, y: 0.0 }
+  let zero : Point = { x: 0.0, y: 0.0, }
   let pts : Array[Point] = [
-    { x: 10.0, y: 10.0 },
-    { x: 20.0, y: 5.0 },
-    { x: 30.0, y: 25.0 },
+    { x: 10.0, y: 10.0, },
+    { x: 20.0, y: 5.0, },
+    { x: 30.0, y: 25.0, },
   ]
-  let band = polygon_rubber_band(pts, Some({ x: 99.0, y: 99.0 }), zero, 1.0, zero)
+  let band = polygon_rubber_band(
+    pts,
+    Some({ x: 99.0, y: 99.0, }),
+    zero,
+    1.0,
+    zero,
+  )
   assert_true(band is Some(_))
   match band {
     Some((from, to)) => {
@@ -4772,12 +4768,18 @@ test "polygon rubber band — anchors on the last committed vertex (5.11)" {
   }
   // Appending a 4th vertex moves the anchor, and nothing else.
   let pts2 : Array[Point] = [
-    { x: 10.0, y: 10.0 },
-    { x: 20.0, y: 5.0 },
-    { x: 30.0, y: 25.0 },
-    { x: 40.0, y: 40.0 },
+    { x: 10.0, y: 10.0, },
+    { x: 20.0, y: 5.0, },
+    { x: 30.0, y: 25.0, },
+    { x: 40.0, y: 40.0, },
   ]
-  let band2 = polygon_rubber_band(pts2, Some({ x: 99.0, y: 99.0 }), zero, 1.0, zero)
+  let band2 = polygon_rubber_band(
+    pts2,
+    Some({ x: 99.0, y: 99.0, }),
+    zero,
+    1.0,
+    zero,
+  )
   match band2 {
     Some((from, to)) => {
       assert_eq(from.x, 40.0)
@@ -4797,11 +4799,11 @@ test "polygon rubber band — anchors on the last committed vertex (5.11)" {
 /// numbers, so the test states the invariant ("same transform") and
 /// not a copy of the formula.
 test "polygon rubber band — follows pan, zoom and the fit-contain offset (5.11)" {
-  let pts : Array[Point] = [{ x: 12.0, y: 34.0 }]
-  let cur : Point = { x: 56.0, y: 78.0 }
-  let zero : Point = { x: 0.0, y: 0.0 }
-  let pan : Point = { x: -7.0, y: 11.0 }
-  let dst : Point = { x: 100.0, y: 200.0 }
+  let pts : Array[Point] = [{ x: 12.0, y: 34.0, }]
+  let cur : Point = { x: 56.0, y: 78.0, }
+  let zero : Point = { x: 0.0, y: 0.0, }
+  let pan : Point = { x: -7.0, y: 11.0, }
+  let dst : Point = { x: 100.0, y: 200.0, }
   for zoom in [0.5, 1.0, 2.5, 4.0] {
     let band = polygon_rubber_band(pts, Some(cur), pan, zoom, dst)
     assert_true(band is Some(_))
@@ -4826,10 +4828,10 @@ test "polygon rubber band — follows pan, zoom and the fit-contain offset (5.11
 /// the band until two vertices exist would hide the feedback for the
 /// one step where it is most useful.
 test "polygon rubber band — shows after a single vertex (5.11)" {
-  let zero : Point = { x: 0.0, y: 0.0 }
+  let zero : Point = { x: 0.0, y: 0.0, }
   let band = polygon_rubber_band(
-    [{ x: 5.0, y: 5.0 }],
-    Some({ x: 25.0, y: 15.0 }),
+    [{ x: 5.0, y: 5.0, }],
+    Some({ x: 25.0, y: 15.0, }),
     zero,
     1.0,
     zero,
@@ -4943,7 +4945,7 @@ test "mode_after_commit — depends on the shape, not the mode that was active (
     // settles on is the rule's answer, not the starting mode.
     let (after, _) = update(
       armed,
-      AddRect({ x: 0.0, y: 0.0 }, { x: 20.0, y: 20.0 }),
+      AddRect({ x: 0.0, y: 0.0, }, { x: 20.0, y: 20.0, }),
     )
     assert_eq(after.mode, mode_after_commit(Rect))
     assert_eq(after.mode, Select)
@@ -4961,7 +4963,7 @@ test "Add handlers all agree with mode_after_commit (5.16)" {
   for starting in every_mode() {
     let (rect_model, _) = update(
       { ..Model::new(), mode: starting, },
-      AddRect({ x: 4.0, y: 6.0 }, { x: 40.0, y: 50.0 }),
+      AddRect({ x: 4.0, y: 6.0, }, { x: 40.0, y: 50.0, }),
     )
     assert_eq(rect_model.mode, mode_after_commit(Rect))
   }
@@ -4970,9 +4972,9 @@ test "Add handlers all agree with mode_after_commit (5.16)" {
     let (poly_model, _) = update(
       { ..Model::new(), mode: starting, },
       AddPolygon([
-        { x: 10.0, y: 10.0 },
-        { x: 40.0, y: 12.0 },
-        { x: 25.0, y: 45.0 },
+        { x: 10.0, y: 10.0, },
+        { x: 40.0, y: 12.0, },
+        { x: 25.0, y: 45.0, },
       ]),
     )
     assert_eq(poly_model.mode, mode_after_commit(Polygon))
@@ -4983,7 +4985,7 @@ test "Add handlers all agree with mode_after_commit (5.16)" {
   for starting in every_mode() {
     let (kp_model, _) = update(
       { ..Model::new(), mode: starting, },
-      AddKeypoint({ x: 12.0, y: 34.0 }),
+      AddKeypoint({ x: 12.0, y: 34.0, }),
     )
     assert_eq(kp_model.mode, mode_after_commit(Keypoint))
     assert_eq(kp_model.mode, Keypoint)
@@ -5006,8 +5008,8 @@ test "cancel always disarms, even from keypoint (5.16)" {
   assert_eq(cancelled.mode, Select)
   assert_eq(cancelled.draftPoints.length(), 0)
   // And the draft-cancel path agrees.
-  let (p1, _) = update(armed, PushDraft({ x: 5.0, y: 5.0 }))
-  let (p2, _) = update(p1, PushDraft({ x: 9.0, y: 9.0 }))
+  let (p1, _) = update(armed, PushDraft({ x: 5.0, y: 5.0, }))
+  let (p2, _) = update(p1, PushDraft({ x: 9.0, y: 9.0, }))
   let (finished, _) = update(p2, FinishDraft)
   assert_eq(finished.mode, Select)
   assert_eq(finished.draftPoints.length(), 0)
@@ -5052,13 +5054,13 @@ test "SetActiveClass — records the class and new annotations get it (5.17)" {
   // handler, not by reading the field. `Model::new()` already
   // carries three demo annotations with `class_id == ""`, so index
   // from the count rather than from 0.
-  let before : Int = gun.annotations.length()
-  let (kp, _) = update(gun, AddKeypoint({ x: 30.0, y: 30.0 }))
+  let before : Int32 = gun.annotations.length()
+  let (kp, _) = update(gun, AddKeypoint({ x: 30.0, y: 30.0, }))
   assert_eq(kp.annotations[before].class_id, "gun")
   // Switching class retargets the next annotation, and the first one
   // keeps the class it was given.
   let (batt, _) = update(kp, SetActiveClass("batt"))
-  let (kp2, _) = update(batt, AddKeypoint({ x: 40.0, y: 40.0 }))
+  let (kp2, _) = update(batt, AddKeypoint({ x: 40.0, y: 40.0, }))
   assert_eq(kp2.annotations[before].class_id, "gun")
   assert_eq(kp2.annotations[kp2.annotations.length() - 1].class_id, "batt")
 }
@@ -5131,7 +5133,12 @@ test "SelectIndex — the previous image's annotations and label do not follow (
   let base : Model = Model::new()
   assert_true(base.annotations.length() > 0)
   let (next, _) = update(
-    { ..base, label: { raw_json: "{\"a\":1}", dirty: true, }, labelPath: "x.json", loadedFromDisk: true, },
+    {
+      ..base,
+      label: { raw_json: "{\"a\":1}", dirty: true, },
+      labelPath: "x.json",
+      loadedFromDisk: true,
+    },
     SelectIndex(1),
   )
   assert_eq(next.currentIndex, 1)
@@ -5153,10 +5160,10 @@ test "SelectIndex — in-progress drawing state and viewport reset (5.18)" {
     ..Model::new(),
     mode: Keypoint,
     selectedId: Some("rect-1"),
-    draftPoints: [{ x: 1.0, y: 2.0 }, { x: 3.0, y: 4.0 }],
+    draftPoints: [{ x: 1.0, y: 2.0, }, { x: 3.0, y: 4.0, }],
     bindingFromId: Some("rect-1"),
-    cursorImgPt: Some({ x: 9.0, y: 9.0 }),
-    cursorCanvasPt: Some({ x: 8.0, y: 8.0 }),
+    cursorImgPt: Some({ x: 9.0, y: 9.0, }),
+    cursorCanvasPt: Some({ x: 8.0, y: 8.0, }),
     pan: { x: 30.0, y: 40.0, },
     zoom: 3.5,
   }
@@ -5250,7 +5257,7 @@ test "SetDefaultClass — exactly one class is the default (5.19)" {
   assert_eq(defaults.length(), 1)
   assert_eq(defaults[0].id, "c3")
   // And it is what a new annotation gets with no session override.
-  let (kp, _) = update(next, AddKeypoint({ x: 4.0, y: 4.0 }))
+  let (kp, _) = update(next, AddKeypoint({ x: 4.0, y: 4.0, }))
   assert_eq(kp.annotations[kp.annotations.length() - 1].class_id, "c3")
 }
 
@@ -5273,13 +5280,13 @@ test "SetDefaultClass vs SetActiveClass — session wins, clearing falls back (5
   // The project default is untouched by a session choice.
   assert_true(over.classes[0].is_default)
   // Session wins for new annotations.
-  let (a, _) = update(over, AddKeypoint({ x: 1.0, y: 1.0 }))
+  let (a, _) = update(over, AddKeypoint({ x: 1.0, y: 1.0, }))
   assert_eq(a.annotations[a.annotations.length() - 1].class_id, "c2")
   // Clearing the session choice (what a second click on the active row
   // dispatches) falls back to the project default, not to empty.
   let (cleared, _) = update(over, SetActiveClass(""))
   assert_eq(cleared.activeClassId, "")
-  let (b, _) = update(cleared, AddKeypoint({ x: 2.0, y: 2.0 }))
+  let (b, _) = update(cleared, AddKeypoint({ x: 2.0, y: 2.0, }))
   assert_eq(b.annotations[b.annotations.length() - 1].class_id, "c1")
 }
 
@@ -5297,7 +5304,7 @@ test "UpdateClass — renames the display name and leaves annotations alone (5.1
     ..Model::new(),
     classes: [{ id: "c1", name: "knife", is_default: true, }],
   }
-  let (with_ann, _) = update(tagged, AddKeypoint({ x: 6.0, y: 6.0 }))
+  let (with_ann, _) = update(tagged, AddKeypoint({ x: 6.0, y: 6.0, }))
   let before_id = with_ann.annotations[with_ann.annotations.length() - 1].class_id
   assert_eq(before_id, "c1")
   let (renamed, _) = update(with_ann, UpdateClass("c1", "blade"))
@@ -5325,8 +5332,11 @@ test "DeleteClass — removes the class and clears every reference to it (5.19)"
     ],
     activeClassId: "c2",
   }
-  let (with_ann, _) = update(loaded, AddKeypoint({ x: 7.0, y: 7.0 }))
-  assert_eq(with_ann.annotations[with_ann.annotations.length() - 1].class_id, "c2")
+  let (with_ann, _) = update(loaded, AddKeypoint({ x: 7.0, y: 7.0, }))
+  assert_eq(
+    with_ann.annotations[with_ann.annotations.length() - 1].class_id,
+    "c2",
+  )
   let (next, _) = update(with_ann, DeleteClass("c2"))
   assert_eq(next.classes.length(), 1)
   assert_eq(next.classes[0].id, "c1")
@@ -5393,7 +5403,7 @@ test "default_demo_classes — real entries, and deliberately no default (5.20)"
   // The consequence: `default_class_id` is private, so assert the
   // observable result — a new annotation is assigned nothing, so its
   // label falls back to its own id.
-  let (kp, _) = update(base, AddKeypoint({ x: 3.0, y: 3.0 }))
+  let (kp, _) = update(base, AddKeypoint({ x: 3.0, y: 3.0, }))
   assert_eq(kp.annotations[kp.annotations.length() - 1].class_id, "")
 }
 
@@ -5445,7 +5455,9 @@ test "sidebar — project default and session choice are independent (5.20)" {
     @style.ButtonVariant::Primary,
   )
   assert_eq(
-    sidebar_row_variant(d.classes.filter(c => c.id == gun)[0].id == d.activeClassId),
+    sidebar_row_variant(
+      d.classes.filter(c => c.id == gun)[0].id == d.activeClassId,
+    ),
     @style.ButtonVariant::Ghost,
   )
   // Now the session choice on a different class: the star must not
@@ -5455,7 +5467,9 @@ test "sidebar — project default and session choice are independent (5.20)" {
   assert_true(s.classes.filter(c => c.id == gun)[0].is_default)
   assert_true(!s.classes.filter(c => c.id == knife)[0].is_default)
   assert_eq(
-    sidebar_row_variant(s.classes.filter(c => c.id == knife)[0].id == s.activeClassId),
+    sidebar_row_variant(
+      s.classes.filter(c => c.id == knife)[0].id == s.activeClassId,
+    ),
     @style.ButtonVariant::Primary,
   )
   assert_eq(

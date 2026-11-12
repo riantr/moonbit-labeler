@@ -39,7 +39,7 @@
 ///|
 /// Hex digit value. `Char::to_int` for the code point, offset from the
 /// digit/letter's own code point.
-fn p523_hexval(c : Char) -> Int {
+fn p523_hexval(c : Char) -> Int32 {
   if c >= '0' && c <= '9' {
     c.to_int() - '0'.to_int()
   } else if c >= 'a' && c <= 'f' {
@@ -54,9 +54,9 @@ fn p523_hexval(c : Char) -> Int {
 fn p523_hex(s : String) -> Bytes {
   let chars : Array[Char] = s.to_array()
   let out : Array[Byte] = []
-  let mut i : Int = 0
+  let mut i : Int32 = 0
   while i + 1 < chars.length() {
-    let v : Int = p523_hexval(chars[i]) * 16 + p523_hexval(chars[i + 1])
+    let v : Int32 = p523_hexval(chars[i]) * 16 + p523_hexval(chars[i + 1])
     out.push(v.to_byte())
     i = i + 2
   }
@@ -236,10 +236,15 @@ test "to_rgba8_bytes — every colour type widens to exactly w*h*4 (5.23)" {
 test "to_rgba8_bytes — a non-image file never reaches the cache (5.26)" {
   ignore(p526_materialise())
   assert_eq(
-    load_image_into_cache(p526_label_folder() + "/BIOMEDICA_P0_JCAS-4-2-g001.json"),
+    load_image_into_cache(
+      p526_label_folder() + "/BIOMEDICA_P0_JCAS-4-2-g001.json",
+    ),
     None,
   )
-  assert_eq(load_image_into_cache(p526_image_folder() + "/p526_absent.jpg"), None)
+  assert_eq(
+    load_image_into_cache(p526_image_folder() + "/p526_absent.jpg"),
+    None,
+  )
 }
 
 // ── the real disk path ─────────────────────────────────────────────
@@ -317,10 +322,7 @@ test "SelectIndex — the canvas points at the selected image (5.26)" {
   assert_eq(loaded.images.length(), 6)
   let (model, _) = update(loaded, SelectIndex(4))
   assert_eq(model.currentIndex, 4)
-  assert_eq(
-    model.imageSource,
-    folder + "/BIOMEDICA_P0_JCAS-4-2-g001.jpg",
-  )
+  assert_eq(model.imageSource, folder + "/BIOMEDICA_P0_JCAS-4-2-g001.jpg")
   // Natural size drives fit-contain, so it has to be the file's real
   // dimensions or the picture is stretched. 13x10 for this fixture.
   assert_eq(model.imageNaturalSize.x, 13.0)

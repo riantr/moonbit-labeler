@@ -12,6 +12,7 @@
 
 import {
   "wzzc-dev/moui",
+  "wzzc-dev/moui/apphost",
   "wzzc-dev/moui/core",
   "wzzc-dev/moui/render",
   "wzzc-dev/moui/views",
@@ -21,11 +22,11 @@ import {
   "wzzc-dev/moui/views/style",
   "wzzc-dev/moui/runtime",
   "wzzc-dev/moui/backend/windows",
-  "moonbitlang/async/fs",
-  "moonbitlang/async/io",
+  "moonbitlang/core/async/fs",
   "moonbitlang/x/fs" @xfs,
   "riantr/moonbit_image",
   "moonbitlang/core/env",
+  "moonbitlang/core/json",
   "moonbitlang/core/math",
 }
 
@@ -56,6 +57,14 @@ options(
   // the upstream package's auto-stub, one from ours) and
   // caused the C2589 error from the unmodified upstream copy
   // — see git history for the abandoned approach.
+  //
+  // `moonbitlang/core/async` is still flagged experimental upstream
+  // (its API has not stabilized), so importing it needs an explicit
+  // acknowledgement. `moonbitlang/async` is gone from this module's
+  // moon.mod — the stdlib package replaces it — but MoUI still pulls
+  // `moonbitlang/async` in transitively; the two share one async
+  // runtime, so they coexist in the same program.
+  "allow-experimental-packages": [ "moonbitlang/core/async/fs" ],
 )
 
 pkgtype(kind: "executable")

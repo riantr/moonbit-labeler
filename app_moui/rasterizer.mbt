@@ -57,8 +57,8 @@
 /// `Array[Byte]` (mutable for per-pixel write) and exposed
 /// as `Bytes` via `to_bytes` for the PixelFrame constructor.
 pub(all) struct PixelBuffer {
-  width : Int
-  height : Int
+  width : Int32
+  height : Int32
   pixels : Array[Byte]
 }
 
@@ -66,11 +66,11 @@ pub(all) struct PixelBuffer {
 /// Construct an empty pixel buffer initialized to the given
 /// clear color. Width × height × 4 bytes are allocated.
 pub fn PixelBuffer::new(
-  width : Int,
-  height : Int,
+  width : Int32,
+  height : Int32,
   clear : @core.Color,
 ) -> PixelBuffer {
-  let total : Int = width * height * 4
+  let total : Int32 = width * height * 4
   let pixels : Array[Byte] = Array::make(total, Byte::default())
   let buf : PixelBuffer = { width, height, pixels, }
   clear_color(buf, clear)
@@ -91,10 +91,10 @@ pub fn PixelBuffer::to_bytes(buf : PixelBuffer) -> Bytes {
 /// Fill the entire buffer with a single color (no clipping,
 /// no alpha blending — every pixel becomes exactly `color`).
 pub fn clear_color(buf : PixelBuffer, color : @core.Color) -> Unit {
-  let b : Int = clamp_byte(color.b * 255.0)
-  let g : Int = clamp_byte(color.g * 255.0)
-  let r : Int = clamp_byte(color.r * 255.0)
-  let a : Int = clamp_byte(color.a * 255.0)
+  let b : Int32 = clamp_byte(color.b * 255.0)
+  let g : Int32 = clamp_byte(color.g * 255.0)
+  let r : Int32 = clamp_byte(color.r * 255.0)
+  let a : Int32 = clamp_byte(color.a * 255.0)
   let pixels = buf.pixels
   for i = 0; i < pixels.length(); i = i + 4 {
     pixels[i] = b.to_byte()
@@ -107,7 +107,7 @@ pub fn clear_color(buf : PixelBuffer, color : @core.Color) -> Unit {
 ///|
 /// Clamp a 0..255 float to a byte. Returns 0 for sub-zero,
 /// 255 for over-255, otherwise the truncated integer.
-fn clamp_byte(v : Double) -> Int {
+fn clamp_byte(v : Double) -> Int32 {
   if v <= 0.0 {
     0
   } else if v >= 255.0 {
@@ -123,16 +123,16 @@ fn clamp_byte(v : Double) -> Int {
 /// `opacity` (0..1, multiplies color's alpha).
 fn blend_pixel(
   buf : PixelBuffer,
-  x : Int,
-  y : Int,
+  x : Int32,
+  y : Int32,
   color : @core.Color,
   opacity : Double,
 ) -> Unit {
   if x < 0 || x >= buf.width || y < 0 || y >= buf.height {
     return
   }
-  let stride : Int = buf.width * 4
-  let off : Int = y * stride + x * 4
+  let stride : Int32 = buf.width * 4
+  let off : Int32 = y * stride + x * 4
   let pixels = buf.pixels
   let sa : Double = color.a * opacity
   let inv : Double = 1.0 - sa
@@ -153,12 +153,12 @@ fn blend_pixel(
 ///|
 /// Test helper: get the BGRA byte at (x, y). Returns -1 if
 /// out of range. Used by rasterizer_test.mbt.
-pub fn pixel_at(buf : PixelBuffer, x : Int, y : Int) -> Int {
+pub fn pixel_at(buf : PixelBuffer, x : Int32, y : Int32) -> Int32 {
   if x < 0 || x >= buf.width || y < 0 || y >= buf.height {
     return -1
   }
-  let stride : Int = buf.width * 4
-  let off : Int = y * stride + x * 4
+  let stride : Int32 = buf.width * 4
+  let off : Int32 = y * stride + x * 4
   let pixels = buf.pixels
   // Pack as 0xAARRGGBB (alpha at top) — easier to assert
   // against a known color.
@@ -186,10 +186,10 @@ fn paint_rect_snap(
 ) -> Unit {
   let clipped : @core.Rect? = rect.intersection(clip)
   guard clipped is Some(c) else { return }
-  let x0 : Int = c.origin.x.ceil().to_int()
-  let y0 : Int = c.origin.y.ceil().to_int()
-  let x1 : Int = (c.origin.x + c.size.width).floor().to_int()
-  let y1 : Int = (c.origin.y + c.size.height).floor().to_int()
+  let x0 : Int32 = c.origin.x.ceil().to_int()
+  let y0 : Int32 = c.origin.y.ceil().to_int()
+  let x1 : Int32 = (c.origin.x + c.size.width).floor().to_int()
+  let y1 : Int32 = (c.origin.y + c.size.height).floor().to_int()
   for y = y0; y <= y1; y = y + 1 {
     for x = x0; x <= x1; x = x + 1 {
       blend_pixel(buf, x, y, color, opacity)
@@ -230,10 +230,10 @@ fn paint_rect(
   let y_lo : Double = c.origin.y
   let x_hi : Double = c.origin.x + c.size.width
   let y_hi : Double = c.origin.y + c.size.height
-  let x0 : Int = x_lo.floor().to_int()
-  let y0 : Int = y_lo.floor().to_int()
-  let x1 : Int = x_hi.floor().to_int()
-  let y1 : Int = y_hi.floor().to_int()
+  let x0 : Int32 = x_lo.floor().to_int()
+  let y0 : Int32 = y_lo.floor().to_int()
+  let x1 : Int32 = x_hi.floor().to_int()
+  let y1 : Int32 = y_hi.floor().to_int()
   for y = y0; y <= y1; y = y + 1 {
     let py_lo : Double = y.to_double()
     let py_hi : Double = py_lo + 1.0
@@ -334,14 +334,14 @@ fn paint_text(
   // The font module lives in this same package (app_moui), so its
   // top-level `pub` constants and functions are visible directly
   // here — no `bitmap_font.X` namespace prefix is needed.
-  let cw : Int = glyph_width
-  let ch : Int = glyph_height
+  let cw : Int32 = glyph_width
+  let ch : Int32 = glyph_height
   // Vertical centering: nudge the baseline so the 7px-tall
   // glyph block sits centered inside `run.frame`. For a
   // generic frame height we just floor-to-baseline (frame
   // height is usually >= 7 px in the current layout).
-  let frame_w : Int = run.frame.size.width.to_int()
-  let frame_h : Int = run.frame.size.height.to_int()
+  let frame_w : Int32 = run.frame.size.width.to_int()
+  let frame_h : Int32 = run.frame.size.height.to_int()
   if frame_w < cw || frame_h < ch {
     // Frame too small to fit even one glyph — bail.
     return
@@ -349,24 +349,24 @@ fn paint_text(
   // Number of glyph cells that fit horizontally. We do NOT
   // measure text width yet (no kerning); we just clamp to
   // frame width.
-  let max_cells : Int = frame_w / cw
-  let base_x : Int = run.frame.origin.x.to_int()
-  let base_y : Int = run.frame.origin.y.to_int()
+  let max_cells : Int32 = frame_w / cw
+  let base_x : Int32 = run.frame.origin.x.to_int()
+  let base_y : Int32 = run.frame.origin.y.to_int()
   // Vertical centering: top row of the glyph block.
-  let y_off : Int = base_y + (frame_h - ch) / 2
-  let mut cell_idx : Int = 0
+  let y_off : Int32 = base_y + (frame_h - ch) / 2
+  let mut cell_idx : Int32 = 0
   for c in run.text {
     if cell_idx >= max_cells {
       break
     }
-    let ch_int : Int = c.to_int()
-    let gx0 : Int = base_x + cell_idx * cw
+    let ch_int : Int32 = c.to_int()
+    let gx0 : Int32 = base_x + cell_idx * cw
     // Iterate the 5x7 cell; only blend the pixels that are
     // lit per the glyph bitmap and that fall inside the
     // clipped frame.
-    let mut col : Int = 0
+    let mut col : Int32 = 0
     while col < cw {
-      let mut row : Int = 0
+      let mut row : Int32 = 0
       while row < ch {
         if glyph_at(ch_int, col, row) {
           blend_pixel(buf, gx0 + col, y_off + row, run.color, opacity)
@@ -429,12 +429,12 @@ fn paint_image(
 ) -> Unit {
   let clipped : @core.Rect? = run.frame.intersection(clip)
   guard clipped is Some(c) else { return }
-  let x0 : Int = c.origin.x.ceil().to_int()
-  let y0 : Int = c.origin.y.ceil().to_int()
-  let x1 : Int = (c.origin.x + c.size.width).floor().to_int()
-  let y1 : Int = (c.origin.y + c.size.height).floor().to_int()
-  let dst_w : Int = x1 - x0 + 1
-  let dst_h : Int = y1 - y0 + 1
+  let x0 : Int32 = c.origin.x.ceil().to_int()
+  let y0 : Int32 = c.origin.y.ceil().to_int()
+  let x1 : Int32 = (c.origin.x + c.size.width).floor().to_int()
+  let y1 : Int32 = (c.origin.y + c.size.height).floor().to_int()
+  let dst_w : Int32 = x1 - x0 + 1
+  let dst_h : Int32 = y1 - y0 + 1
   if dst_w <= 0 || dst_h <= 0 {
     return
   }
@@ -455,44 +455,44 @@ fn paint_image(
       // nearest-neighbor, both relative to the RUN FRAME. (The
       // clip still bounds the loop, but it must not change which
       // source texel a destination pixel reads.)
-      let src_w : Int = img.width
-      let src_h : Int = img.height
+      let src_w : Int32 = img.width
+      let src_h : Int32 = img.height
       if src_w <= 0 || src_h <= 0 {
         // Defensive: zero-size image, render the placeholder.
         paint_image_placeholder(buf, run, clip, opacity)
         return
       }
-      let src_stride : Int = src_w * 4
+      let src_stride : Int32 = src_w * 4
       for dy = 0; dy < dst_h; dy = dy + 1 {
-        let dst_y : Int = y0 + dy
+        let dst_y : Int32 = y0 + dy
         let off_y : Double = y0.to_double() + dy.to_double() - frame_y
-        let mut src_y : Int = (off_y * src_h.to_double() / frame_h).to_int()
+        let mut src_y : Int32 = (off_y * src_h.to_double() / frame_h).to_int()
         if src_y < 0 {
           src_y = 0
         }
         if src_y > src_h - 1 {
           src_y = src_h - 1
         }
-        let src_row_off : Int = src_y * src_stride
-        let dst_row_off : Int = dst_y * buf.width * 4
+        let src_row_off : Int32 = src_y * src_stride
+        let dst_row_off : Int32 = dst_y * buf.width * 4
         for dx = 0; dx < dst_w; dx = dx + 1 {
-          let dst_x : Int = x0 + dx
+          let dst_x : Int32 = x0 + dx
           let off_x : Double = x0.to_double() + dx.to_double() - frame_x
-          let mut src_x : Int = (off_x * src_w.to_double() / frame_w).to_int()
+          let mut src_x : Int32 = (off_x * src_w.to_double() / frame_w).to_int()
           if src_x < 0 {
             src_x = 0
           }
           if src_x > src_w - 1 {
             src_x = src_w - 1
           }
-          let s_off : Int = src_row_off + src_x * 4
-          let d_off : Int = dst_row_off + dst_x * 4
+          let s_off : Int32 = src_row_off + src_x * 4
+          let d_off : Int32 = dst_row_off + dst_x * 4
           // Read source RGBA (premultiplied? no — to_rgba8 gives
           // straight alpha).
-          let r : Int = img.data[s_off].to_int()
-          let g : Int = img.data[s_off + 1].to_int()
-          let b : Int = img.data[s_off + 2].to_int()
-          let a : Int = img.data[s_off + 3].to_int()
+          let r : Int32 = img.data[s_off].to_int()
+          let g : Int32 = img.data[s_off + 1].to_int()
+          let b : Int32 = img.data[s_off + 2].to_int()
+          let a : Int32 = img.data[s_off + 3].to_int()
           // Composite: out = src.rgb * src.a + dst.rgb * (1 - src.a),
           // then multiply by the run's opacity. We approximate
           // the blend in-place with `blend_pixel` for
@@ -623,8 +623,8 @@ fn paint_stroke_rect(
 /// radius `r`. If distance² > r², the pixel is in the corner
 /// cut-out — skip it.
 fn inside_corner_circle(
-  px : Int,
-  py : Int,
+  px : Int32,
+  py : Int32,
   cx : Double,
   cy : Double,
   r : Double,
@@ -698,12 +698,12 @@ pub fn bezier_round_rect_pixel_coverage(
   // counts as inside if it lies in the rounded-rect interior
   // (inside bounding box + outside corner-cut). Total / 256
   // gives the cell coverage.
-  let n : Int = 16
-  let mut count : Int = 0
-  let mut j : Int = 0
+  let n : Int32 = 16
+  let mut count : Int32 = 0
+  let mut j : Int32 = 0
   while j < n {
     let sy : Double = py + (j.to_double() + 0.5) / n.to_double()
-    let mut i : Int = 0
+    let mut i : Int32 = 0
     while i < n {
       let sx : Double = px + (i.to_double() + 0.5) / n.to_double()
       // Sub-sample outside the bounding rect → not inside.
@@ -765,7 +765,7 @@ pub fn bezier_round_rect_pixel_coverage(
 /// a stroke ring.
 pub fn rounded_rect_path_spec(
   rr : @core.RoundedRect,
-  inset? : Double = 0.0,
+  inset~ : Double = 0.0,
 ) -> @core.PathSpec {
   let rect : @core.Rect = rr.rect
   let rx : Double = rect.origin.x + inset
@@ -871,10 +871,10 @@ fn paint_rounded_rect(
   }
   let clipped : @core.Rect? = rect.intersection(clip)
   guard clipped is Some(c) else { return }
-  let x0 : Int = c.origin.x.floor().to_int()
-  let y0 : Int = c.origin.y.floor().to_int()
-  let x1 : Int = (c.origin.x + c.size.width).ceil().to_int() - 1
-  let y1 : Int = (c.origin.y + c.size.height).ceil().to_int() - 1
+  let x0 : Int32 = c.origin.x.floor().to_int()
+  let y0 : Int32 = c.origin.y.floor().to_int()
+  let x1 : Int32 = (c.origin.x + c.size.width).ceil().to_int() - 1
+  let y1 : Int32 = (c.origin.y + c.size.height).ceil().to_int() - 1
   for y = y0; y <= y1; y = y + 1 {
     for x = x0; x <= x1; x = x + 1 {
       let px : Double = x.to_double()
@@ -933,10 +933,10 @@ fn paint_stroke_rounded_rect(
   let inner_r : Double = if r - width < 0.0 { 0.0 } else { r - width }
   let clipped : @core.Rect? = rect.intersection(clip)
   guard clipped is Some(c) else { return }
-  let x0 : Int = c.origin.x.floor().to_int()
-  let y0 : Int = c.origin.y.floor().to_int()
-  let x1 : Int = (c.origin.x + c.size.width).ceil().to_int() - 1
-  let y1 : Int = (c.origin.y + c.size.height).ceil().to_int() - 1
+  let x0 : Int32 = c.origin.x.floor().to_int()
+  let y0 : Int32 = c.origin.y.floor().to_int()
+  let x1 : Int32 = (c.origin.x + c.size.width).ceil().to_int() - 1
+  let y1 : Int32 = (c.origin.y + c.size.height).ceil().to_int() - 1
   for y = y0; y <= y1; y = y + 1 {
     for x = x0; x <= x1; x = x + 1 {
       let px : Double = x.to_double()
@@ -983,7 +983,7 @@ fn flatten_quadratic(
   p2 : @core.Point,
   out : Array[@core.Point],
   tol_sq : Double,
-  depth : Int,
+  depth : Int32,
 ) -> Unit {
   if depth > 16 {
     out.push(p2)
@@ -1035,7 +1035,7 @@ fn flatten_cubic(
   p3 : @core.Point,
   out : Array[@core.Point],
   tol_sq : Double,
-  depth : Int,
+  depth : Int32,
 ) -> Unit {
   if depth > 16 {
     out.push(p3)
@@ -1157,7 +1157,7 @@ fn paint_polygon_fill(
   color : @core.Color,
   opacity : Double,
 ) -> Unit {
-  let n : Int = verts.length()
+  let n : Int32 = verts.length()
   if n < 3 {
     return
   }
@@ -1172,17 +1172,17 @@ fn paint_polygon_fill(
       y_max = verts[i].y
     }
   }
-  let y_lo : Int = y_min.ceil().to_int()
-  let y_hi : Int = y_max.floor().to_int()
-  let y_clip_lo : Int = clip.origin.y.ceil().to_int()
-  let y_clip_hi : Int = (clip.origin.y + clip.size.height).floor().to_int()
-  let y_start : Int = if y_lo < y_clip_lo { y_clip_lo } else { y_lo }
-  let y_end : Int = if y_hi > y_clip_hi { y_clip_hi } else { y_hi }
+  let y_lo : Int32 = y_min.ceil().to_int()
+  let y_hi : Int32 = y_max.floor().to_int()
+  let y_clip_lo : Int32 = clip.origin.y.ceil().to_int()
+  let y_clip_hi : Int32 = (clip.origin.y + clip.size.height).floor().to_int()
+  let y_start : Int32 = if y_lo < y_clip_lo { y_clip_lo } else { y_lo }
+  let y_end : Int32 = if y_hi > y_clip_hi { y_clip_hi } else { y_hi }
   for y = y_start; y <= y_end; y = y + 1 {
     let yf : Double = y.to_double() + 0.5
     let crossings : Array[Double] = []
     for i = 0; i < n; i = i + 1 {
-      let j : Int = (i + 1) % n
+      let j : Int32 = (i + 1) % n
       let p1 = verts[i]
       let p2 = verts[j]
       // Skip horizontal edges (no crossing).
@@ -1199,21 +1199,21 @@ fn paint_polygon_fill(
     }
     // Sort crossings ascending.
     crossings.sort()
-    let m : Int = crossings.length()
+    let m : Int32 = crossings.length()
     if m < 2 {
       continue
     }
     // Fill between (crossings[0], crossings[1]), (2,3), ...
-    let mut k : Int = 0
+    let mut k : Int32 = 0
     while k + 1 < m {
       let xa : Double = crossings[k]
       let xb : Double = crossings[k + 1]
-      let x_lo : Int = xa.ceil().to_int()
-      let x_hi : Int = xb.floor().to_int()
-      let x_clip_lo : Int = clip.origin.x.ceil().to_int()
-      let x_clip_hi : Int = (clip.origin.x + clip.size.width).floor().to_int()
-      let xs : Int = if x_lo < x_clip_lo { x_clip_lo } else { x_lo }
-      let xe : Int = if x_hi > x_clip_hi { x_clip_hi } else { x_hi }
+      let x_lo : Int32 = xa.ceil().to_int()
+      let x_hi : Int32 = xb.floor().to_int()
+      let x_clip_lo : Int32 = clip.origin.x.ceil().to_int()
+      let x_clip_hi : Int32 = (clip.origin.x + clip.size.width).floor().to_int()
+      let xs : Int32 = if x_lo < x_clip_lo { x_clip_lo } else { x_lo }
+      let xe : Int32 = if x_hi > x_clip_hi { x_clip_hi } else { x_hi }
       for x = xs; x <= xe; x = x + 1 {
         blend_pixel(buf, x, y, color, opacity)
       }
@@ -1245,7 +1245,7 @@ fn paint_polygon_stroke(
   color : @core.Color,
   opacity : Double,
 ) -> Unit {
-  let n : Int = verts.length()
+  let n : Int32 = verts.length()
   if n < 2 {
     return
   }
@@ -1253,7 +1253,7 @@ fn paint_polygon_stroke(
   // so a hairline stroke is still visible.
   let stroke_w : Double = if width < 1.0 { 1.0 } else { width }
   for i = 0; i < n; i = i + 1 {
-    let j : Int = (i + 1) % n
+    let j : Int32 = (i + 1) % n
     let p1 = verts[i]
     let p2 = verts[j]
     let dx : Double = p2.x - p1.x
@@ -1263,7 +1263,7 @@ fn paint_polygon_stroke(
       continue
     }
     // Two samples per pixel of length, so diagonals get no gaps.
-    let steps : Int = @math.maximum(1.0, (len * 2.0).ceil()).to_int()
+    let steps : Int32 = @math.maximum(1.0, (len * 2.0).ceil()).to_int()
     let step_x : Double = dx / steps.to_double()
     let step_y : Double = dy / steps.to_double()
     for s = 0; s <= steps; s = s + 1 {
@@ -1278,8 +1278,8 @@ fn paint_polygon_stroke(
       // 0xFF). Snapping is also the convention the rest of this
       // file uses for stroke geometry — see `paint_rect_snap`'s
       // own doc comment — so a hairline stays a hairline.
-      let ix : Int = (px + 0.5).floor().to_int()
-      let iy : Int = (py + 0.5).floor().to_int()
+      let ix : Int32 = (px + 0.5).floor().to_int()
+      let iy : Int32 = (py + 0.5).floor().to_int()
       paint_rect_snap(
         buf,
         @core.Rect::new(
@@ -1383,7 +1383,7 @@ let shadow_scratch : Ref[PixelBuffer] = {
 /// Ensure `shadow_scratch` is at least `w` x `h`. Grows in
 /// place if too small. Called at the top of every shadow
 /// paint to keep the scratch reusable across frames.
-fn ensure_shadow_scratch(w : Int, h : Int) -> Unit {
+fn ensure_shadow_scratch(w : Int32, h : Int32) -> Unit {
   if shadow_scratch.val.width >= w && shadow_scratch.val.height >= h {
     return
   }
@@ -1507,8 +1507,8 @@ fn dispatch_command(
       // after the shadow; `paint_shadow_rect` only paints the
       // soft drop behind it.
       let rect : @core.Rect = spec.rect.rect
-      let cw : Int = buf.width
-      let ch : Int = buf.height
+      let cw : Int32 = buf.width
+      let ch : Int32 = buf.height
       ensure_shadow_scratch(cw, ch)
       paint_shadow_rect(
         buf,
@@ -1568,38 +1568,38 @@ fn dispatch_command(
 pub fn blur_h(
   buf : PixelBuffer,
   scratch : PixelBuffer,
-  x0 : Int,
-  y0 : Int,
-  w : Int,
-  h : Int,
+  x0 : Int32,
+  y0 : Int32,
+  w : Int32,
+  h : Int32,
 ) -> Unit {
-  let b_stride : Int = buf.width * 4
-  let s_stride : Int = scratch.width * 4
+  let b_stride : Int32 = buf.width * 4
+  let s_stride : Int32 = scratch.width * 4
   let bp = buf.pixels
   let sp = scratch.pixels
   for y = y0; y < y0 + h; y = y + 1 {
     for x = x0; x < x0 + w; x = x + 1 {
-      let mut sum_b : Int = 0
-      let mut sum_g : Int = 0
-      let mut sum_r : Int = 0
-      let mut sum_a : Int = 0
-      let mut k : Int = -2
+      let mut sum_b : Int32 = 0
+      let mut sum_g : Int32 = 0
+      let mut sum_r : Int32 = 0
+      let mut sum_a : Int32 = 0
+      let mut k : Int32 = -2
       while k <= 2 {
-        let mut sx : Int = x + k
+        let mut sx : Int32 = x + k
         if sx < 0 {
           sx = 0
         }
         if sx >= buf.width {
           sx = buf.width - 1
         }
-        let off : Int = y * b_stride + sx * 4
+        let off : Int32 = y * b_stride + sx * 4
         sum_b = sum_b + bp[off].to_int()
         sum_g = sum_g + bp[off + 1].to_int()
         sum_r = sum_r + bp[off + 2].to_int()
         sum_a = sum_a + bp[off + 3].to_int()
         k = k + 1
       }
-      let soff : Int = y * s_stride + x * 4
+      let soff : Int32 = y * s_stride + x * 4
       sp[soff] = (sum_b / 5).to_byte()
       sp[soff + 1] = (sum_g / 5).to_byte()
       sp[soff + 2] = (sum_r / 5).to_byte()
@@ -1614,38 +1614,38 @@ pub fn blur_h(
 pub fn blur_v(
   scratch : PixelBuffer,
   buf : PixelBuffer,
-  x0 : Int,
-  y0 : Int,
-  w : Int,
-  h : Int,
+  x0 : Int32,
+  y0 : Int32,
+  w : Int32,
+  h : Int32,
 ) -> Unit {
-  let s_stride : Int = scratch.width * 4
-  let b_stride : Int = buf.width * 4
+  let s_stride : Int32 = scratch.width * 4
+  let b_stride : Int32 = buf.width * 4
   let sp = scratch.pixels
   let bp = buf.pixels
   for y = y0; y < y0 + h; y = y + 1 {
     for x = x0; x < x0 + w; x = x + 1 {
-      let mut sum_b : Int = 0
-      let mut sum_g : Int = 0
-      let mut sum_r : Int = 0
-      let mut sum_a : Int = 0
-      let mut k : Int = -2
+      let mut sum_b : Int32 = 0
+      let mut sum_g : Int32 = 0
+      let mut sum_r : Int32 = 0
+      let mut sum_a : Int32 = 0
+      let mut k : Int32 = -2
       while k <= 2 {
-        let mut sy : Int = y + k
+        let mut sy : Int32 = y + k
         if sy < 0 {
           sy = 0
         }
         if sy >= scratch.height {
           sy = scratch.height - 1
         }
-        let off : Int = sy * s_stride + x * 4
+        let off : Int32 = sy * s_stride + x * 4
         sum_b = sum_b + sp[off].to_int()
         sum_g = sum_g + sp[off + 1].to_int()
         sum_r = sum_r + sp[off + 2].to_int()
         sum_a = sum_a + sp[off + 3].to_int()
         k = k + 1
       }
-      let off : Int = y * b_stride + x * 4
+      let off : Int32 = y * b_stride + x * 4
       bp[off] = (sum_b / 5).to_byte()
       bp[off + 1] = (sum_g / 5).to_byte()
       bp[off + 2] = (sum_r / 5).to_byte()
@@ -1702,20 +1702,20 @@ pub fn paint_shadow_rect(
   guard clipped1 is Some(c1) else { return }
   let clipped : @core.Rect? = c1.intersection(buf_bounds)
   guard clipped is Some(c) else { return }
-  let x_lo : Int = c.origin.x.floor().to_int()
-  let y_lo : Int = c.origin.y.floor().to_int()
-  let x_hi : Int = (c.origin.x + c.size.width).ceil().to_int() - 1
-  let y_hi : Int = (c.origin.y + c.size.height).ceil().to_int() - 1
+  let x_lo : Int32 = c.origin.x.floor().to_int()
+  let y_lo : Int32 = c.origin.y.floor().to_int()
+  let x_hi : Int32 = (c.origin.x + c.size.width).ceil().to_int() - 1
+  let y_hi : Int32 = (c.origin.y + c.size.height).ceil().to_int() - 1
   if x_lo > x_hi || y_lo > y_hi {
     return
   }
-  let rw : Int = x_hi - x_lo + 1
-  let rh : Int = y_hi - y_lo + 1
+  let rw : Int32 = x_hi - x_lo + 1
+  let rh : Int32 = y_hi - y_lo + 1
   // 2. Clear scratch region to transparent.
-  let s_stride : Int = scratch.width * 4
+  let s_stride : Int32 = scratch.width * 4
   let sp = scratch.pixels
   for y = y_lo; y <= y_hi; y = y + 1 {
-    let off : Int = y * s_stride + x_lo * 4
+    let off : Int32 = y * s_stride + x_lo * 4
     for x = 0; x < rw * 4; x = x + 1 {
       sp[off + x] = (0).to_byte()
     }
@@ -1738,26 +1738,26 @@ pub fn paint_shadow_rect(
   // 5. Composite blurred shadow onto buf at opacity. We blend
   // using the blurred alpha (per pixel) as the source alpha,
   // scaled by `opacity`. Standard premultiplied alpha over op.
-  let b_stride : Int = buf.width * 4
+  let b_stride : Int32 = buf.width * 4
   let bp = buf.pixels
   for y = y_lo; y <= y_hi; y = y + 1 {
     for x = x_lo; x <= x_hi; x = x + 1 {
-      let soff : Int = y * s_stride + x * 4
-      let sb : Int = sp[soff].to_int()
-      let sg : Int = sp[soff + 1].to_int()
-      let sr : Int = sp[soff + 2].to_int()
-      let sa_premul : Int = sp[soff + 3].to_int()
+      let soff : Int32 = y * s_stride + x * 4
+      let sb : Int32 = sp[soff].to_int()
+      let sg : Int32 = sp[soff + 1].to_int()
+      let sr : Int32 = sp[soff + 2].to_int()
+      let sa_premul : Int32 = sp[soff + 3].to_int()
       // Source alpha scaled by overall opacity.
       let sa : Double = sa_premul.to_double() / 255.0 * opacity
       if sa <= 0.0 {
         continue
       }
       let inv : Double = 1.0 - sa
-      let boff : Int = y * b_stride + x * 4
-      let bb : Int = bp[boff].to_int()
-      let bg_g : Int = bp[boff + 1].to_int()
-      let br : Int = bp[boff + 2].to_int()
-      let ba_premul : Int = bp[boff + 3].to_int()
+      let boff : Int32 = y * b_stride + x * 4
+      let bb : Int32 = bp[boff].to_int()
+      let bg_g : Int32 = bp[boff + 1].to_int()
+      let br : Int32 = bp[boff + 2].to_int()
+      let ba_premul : Int32 = bp[boff + 3].to_int()
       // Source RGB is the shadow color premultiplied by its (already
       // blurred) alpha; we approximate by scaling color.r/g/b by sa.
       let dr : Double = color.r * 255.0 * sa + br.to_double() * inv
@@ -1806,21 +1806,21 @@ pub fn paint_rect_into(
   rect : @core.Rect,
   color : @core.Color,
 ) -> Unit {
-  let x_lo : Int = rect.origin.x.floor().to_int()
-  let y_lo : Int = rect.origin.y.floor().to_int()
-  let x_hi : Int = (rect.origin.x + rect.size.width).ceil().to_int() - 1
-  let y_hi : Int = (rect.origin.y + rect.size.height).ceil().to_int() - 1
-  let stride : Int = buf.width * 4
-  let b : Int = (color.b * 255.0).to_int()
-  let g : Int = (color.g * 255.0).to_int()
-  let r : Int = (color.r * 255.0).to_int()
-  let a : Int = (color.a * 255.0).to_int()
+  let x_lo : Int32 = rect.origin.x.floor().to_int()
+  let y_lo : Int32 = rect.origin.y.floor().to_int()
+  let x_hi : Int32 = (rect.origin.x + rect.size.width).ceil().to_int() - 1
+  let y_hi : Int32 = (rect.origin.y + rect.size.height).ceil().to_int() - 1
+  let stride : Int32 = buf.width * 4
+  let b : Int32 = (color.b * 255.0).to_int()
+  let g : Int32 = (color.g * 255.0).to_int()
+  let r : Int32 = (color.r * 255.0).to_int()
+  let a : Int32 = (color.a * 255.0).to_int()
   let p = buf.pixels
   for y = y_lo; y <= y_hi; y = y + 1 {
     if y < 0 || y >= buf.height {
       continue
     }
-    let off : Int = y * stride + x_lo * 4
+    let off : Int32 = y * stride + x_lo * 4
     for x = x_lo; x <= x_hi; x = x + 1 {
       if x < 0 || x >= buf.width {
         continue

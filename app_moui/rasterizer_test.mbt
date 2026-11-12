@@ -99,9 +99,9 @@ test "fill_rect_fractional_coverage_at_edge" {
   // (2,1) gets half-coverage x full y → coverage = 0.5. The
   // resulting BGRA byte is red component blended with blue at
   // 50% opacity: r ≈ 128 (red half) + 0 (blue r=0) = 128.
-  let p : Int = pixel_at(buf, 2, 1)
+  let p : Int32 = pixel_at(buf, 2, 1)
   // r byte in [128..127] (within +/-1 of 128 due to rounding).
-  let r_byte : Int = (p >> 16) & 0xFF
+  let r_byte : Int32 = (p >> 16) & 0xFF
   assert_eq(r_byte == 128 || r_byte == 127 || r_byte == 129, true)
   // (3,1) is outside the rect → clear color (blue).
   assert_eq(pixel_at(buf, 3, 1), 0xFF0000FF)
@@ -194,8 +194,8 @@ test "fill_rounded_rect_radius_0_eq_fill_rect" {
   // therefore compare *coverage* rather than raw bytes:
   // sample one interior pixel and one exterior pixel.
   // Interior (1, 1): both should be fully opaque red.
-  let rr11_b : Int = buf_rr.pixels[20].to_int()
-  let fr11_b : Int = buf_fr.pixels[20].to_int()
+  let rr11_b : Int32 = buf_rr.pixels[20].to_int()
+  let fr11_b : Int32 = buf_fr.pixels[20].to_int()
   assert_eq(rr11_b, fr11_b)
   // Exterior (0, 0): both should be clear (0).
   assert_eq(buf_rr.pixels[0].to_int(), 0)
@@ -387,8 +387,8 @@ test "draw_path_quad_to_fills_curve" {
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Pixel (5,3) sits inside the curve bulge (curve crosses y=3.5
   // at x≈5.94, fill [1,5] at y=3.5) -> filled yellow.
-  let s5_3_quad_off : Int = 3 * buf.width * 4 + 5 * 4
-  let s5_3_quad : Int = (buf.pixels[s5_3_quad_off + 3].to_int() << 24) |
+  let s5_3_quad_off : Int32 = 3 * buf.width * 4 + 5 * 4
+  let s5_3_quad : Int32 = (buf.pixels[s5_3_quad_off + 3].to_int() << 24) |
     (buf.pixels[s5_3_quad_off + 2].to_int() << 16) |
     (buf.pixels[s5_3_quad_off + 1].to_int() << 8) |
     buf.pixels[s5_3_quad_off].to_int()
@@ -400,8 +400,8 @@ test "draw_path_quad_to_fills_curve" {
   // Pixel (6,3) is OUTSIDE the curve apex (curve apex x=6 at
   // y=3, fill range at y=3.5 is [1, 5.94]) -> transparent.
   // Bypass pixel_at (OOB sentinel bug); use raw bytes.
-  let s6_3_quad_off : Int = 3 * buf.width * 4 + 6 * 4
-  let s6_3_quad : Int = (buf.pixels[s6_3_quad_off + 3].to_int() << 24) |
+  let s6_3_quad_off : Int32 = 3 * buf.width * 4 + 6 * 4
+  let s6_3_quad : Int32 = (buf.pixels[s6_3_quad_off + 3].to_int() << 24) |
     (buf.pixels[s6_3_quad_off + 2].to_int() << 16) |
     (buf.pixels[s6_3_quad_off + 1].to_int() << 8) |
     buf.pixels[s6_3_quad_off].to_int()
@@ -447,23 +447,23 @@ test "draw_path_cubic_to_fills_curve" {
   // Pixel (6,3) sits inside the cubic bulge (cubic crosses y=3.5
   // at x≈6.47, fill [1, 6] at y=3.5) -> filled cyan.
   // Use raw bytes to bypass pixel_at OOB sentinel bug.
-  let s6_3_cubic_off : Int = 3 * buf.width * 4 + 6 * 4
-  let s6_3_cubic : Int = (buf.pixels[s6_3_cubic_off + 3].to_int() << 24) |
+  let s6_3_cubic_off : Int32 = 3 * buf.width * 4 + 6 * 4
+  let s6_3_cubic : Int32 = (buf.pixels[s6_3_cubic_off + 3].to_int() << 24) |
     (buf.pixels[s6_3_cubic_off + 2].to_int() << 16) |
     (buf.pixels[s6_3_cubic_off + 1].to_int() << 8) |
     buf.pixels[s6_3_cubic_off].to_int()
   assert_eq(s6_3_cubic, 0xFF00FFFF)
   // Pixel (7,3) is OUTSIDE the cubic apex (curve apex x=6.5)
   // -> transparent. Use raw bytes.
-  let s7_3_cubic_off : Int = 3 * buf.width * 4 + 7 * 4
-  let s7_3_cubic : Int = (buf.pixels[s7_3_cubic_off + 3].to_int() << 24) |
+  let s7_3_cubic_off : Int32 = 3 * buf.width * 4 + 7 * 4
+  let s7_3_cubic : Int32 = (buf.pixels[s7_3_cubic_off + 3].to_int() << 24) |
     (buf.pixels[s7_3_cubic_off + 2].to_int() << 16) |
     (buf.pixels[s7_3_cubic_off + 1].to_int() << 8) |
     buf.pixels[s7_3_cubic_off].to_int()
   assert_eq(s7_3_cubic, 0x00000000)
   // Pixel (1,3) is inside the U interior -> filled cyan.
-  let s1_3_cubic_off : Int = 3 * buf.width * 4 + 1 * 4
-  let s1_3_cubic : Int = (buf.pixels[s1_3_cubic_off + 3].to_int() << 24) |
+  let s1_3_cubic_off : Int32 = 3 * buf.width * 4 + 1 * 4
+  let s1_3_cubic : Int32 = (buf.pixels[s1_3_cubic_off + 3].to_int() << 24) |
     (buf.pixels[s1_3_cubic_off + 2].to_int() << 16) |
     (buf.pixels[s1_3_cubic_off + 1].to_int() << 8) |
     buf.pixels[s1_3_cubic_off].to_int()
@@ -499,16 +499,16 @@ test "polygon_fill_triangle_no_curve" {
   // Pixel (5,3) is inside the right edge (fill range [1, 5.5]
   // at y=3.5) -> filled yellow. Use raw bytes to avoid pixel_at
   // OOB sentinel bug.
-  let s5_3_tri_off : Int = 3 * buf.width * 4 + 5 * 4
-  let s5_3_tri : Int = (buf.pixels[s5_3_tri_off + 3].to_int() << 24) |
+  let s5_3_tri_off : Int32 = 3 * buf.width * 4 + 5 * 4
+  let s5_3_tri : Int32 = (buf.pixels[s5_3_tri_off + 3].to_int() << 24) |
     (buf.pixels[s5_3_tri_off + 2].to_int() << 16) |
     (buf.pixels[s5_3_tri_off + 1].to_int() << 8) |
     buf.pixels[s5_3_tri_off].to_int()
   assert_eq(s5_3_tri, 0xFFFFFF00)
   // Pixel (6,3) is OUTSIDE the right edge (x=6 > 5.5 apex)
   // -> transparent. Use raw bytes.
-  let s6_3_tri_off : Int = 3 * buf.width * 4 + 6 * 4
-  let s6_3_tri : Int = (buf.pixels[s6_3_tri_off + 3].to_int() << 24) |
+  let s6_3_tri_off : Int32 = 3 * buf.width * 4 + 6 * 4
+  let s6_3_tri : Int32 = (buf.pixels[s6_3_tri_off + 3].to_int() << 24) |
     (buf.pixels[s6_3_tri_off + 2].to_int() << 16) |
     (buf.pixels[s6_3_tri_off + 1].to_int() << 8) |
     buf.pixels[s6_3_tri_off].to_int()
@@ -558,20 +558,20 @@ test "glyph_at_A_middle_bar_is_fully_lit" {
   //
   // Assert by reading `buf.pixels` directly (pixel_at's OOB
   // sentinel has MoonBit 0.1.x aliasing issues that we sidestep).
-  let stride : Int = buf.width * 4
+  let stride : Int32 = buf.width * 4
   // (5, 5) is the rightmost column, mid-row → 255 (lit).
-  let off55 : Int = 5 * stride + 5 * 4
+  let off55 : Int32 = 5 * stride + 5 * 4
   assert_eq(buf.pixels[off55 + 0].to_int(), 255)
   assert_eq(buf.pixels[off55 + 1].to_int(), 255)
   assert_eq(buf.pixels[off55 + 2].to_int(), 255)
   assert_eq(buf.pixels[off55 + 3].to_int(), 255)
   // (5, 2) is the rightmost column, top row → also 255 (lit;
   // bit 0 of 0x01 = 1).
-  let off52 : Int = 2 * stride + 5 * 4
+  let off52 : Int32 = 2 * stride + 5 * 4
   assert_eq(buf.pixels[off52 + 0].to_int(), 255)
   // (1, 2) is the leftmost column, top row → transparent
   // (bit 4 of 0x01 = 0).
-  let off12 : Int = 2 * stride + 1 * 4
+  let off12 : Int32 = 2 * stride + 1 * 4
   assert_eq(buf.pixels[off12 + 0].to_int(), 0)
   assert_eq(buf.pixels[off12 + 1].to_int(), 0)
   assert_eq(buf.pixels[off12 + 2].to_int(), 0)
@@ -645,10 +645,10 @@ test "draw_text_tofu_fallback_renders_filled_box" {
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Tofu cell at cell_idx=0, x=1..5. y_off = 1 + (8-7)/2 = 1.
   // tofu row r, col c → buf(1+c, 1+r) is white (for all c<5, r<7).
-  let stride : Int = buf.width * 4
+  let stride : Int32 = buf.width * 4
   for r = 0; r < 7; r = r + 1 {
     for c = 0; c < 5; c = c + 1 {
-      let off : Int = (1 + r) * stride + (1 + c) * 4
+      let off : Int32 = (1 + r) * stride + (1 + c) * 4
       assert_eq(buf.pixels[off].to_int(), 255)
       assert_eq(buf.pixels[off + 3].to_int(), 255)
     }
@@ -933,6 +933,7 @@ test "draw_image_cache_miss_uses_placeholder" {
     frame: @core.Rect::new(x=2.0, y=2.0, width=4.0, height=4.0),
     opacity: 1.0,
     fit: @core.ImageFit::Contain,
+    src_rect: None,
   }
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawImage(run)],
@@ -942,7 +943,7 @@ test "draw_image_cache_miss_uses_placeholder" {
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // The placeholder stroke is 1px gray (~0.35 * 255 = 89 = 0x59).
   // Frame (2,2)→(6,6). Top-left corner of the frame is at (2,2).
-  let top_left : Int = pixel_at(buf, 2, 2)
+  let top_left : Int32 = pixel_at(buf, 2, 2)
   // Either we hit the outline (top-left of the stroke) or a
   // diagonal hatch (the placeholder paints an X across the
   // frame). Both are gray ~89/255. We just assert that the
@@ -950,7 +951,7 @@ test "draw_image_cache_miss_uses_placeholder" {
   // placeholder actually painted something.
   assert_eq(top_left == 0x00000000, false)
   // Interior (3, 3) is on the diagonal hatch from (2,2)→(6,6).
-  let interior : Int = pixel_at(buf, 3, 3)
+  let interior : Int32 = pixel_at(buf, 3, 3)
   assert_eq(interior == 0x00000000, false)
   // Outside the frame (0, 0) is untouched.
   assert_eq(pixel_at(buf, 0, 0), 0x00000000)
@@ -979,6 +980,7 @@ test "draw_image_cache_hit_blits_rgba" {
     frame: @core.Rect::new(x=0.0, y=0.0, width=4.0, height=2.0),
     opacity: 1.0,
     fit: @core.ImageFit::Stretch,
+    src_rect: None,
   }
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawImage(run)],
@@ -992,14 +994,14 @@ test "draw_image_cache_hit_blits_rgba" {
   // green. Both rows are uniform (src_y = 0 for both).
   // Verify via direct BGRA bytes (pixel_at has MoonBit 0.1.x
   // OOB aliasing quirks).
-  let stride : Int = buf.width * 4
+  let stride : Int32 = buf.width * 4
   // Red pixel: BGRA = (0, 0, 0xFF, 0xFF).
-  let p00 : Int = buf.pixels[0 * stride + 0 * 4 + 0].to_int()
-  let r00 : Int = buf.pixels[0 * stride + 0 * 4 + 2].to_int()
+  let p00 : Int32 = buf.pixels[0 * stride + 0 * 4 + 0].to_int()
+  let r00 : Int32 = buf.pixels[0 * stride + 0 * 4 + 2].to_int()
   assert_eq(p00, 0) // B
   assert_eq(r00, 255) // R
   // Green pixel: BGRA = (0, 0xFF, 0, 0xFF).
-  let g32 : Int = buf.pixels[0 * stride + 3 * 4 + 1].to_int()
+  let g32 : Int32 = buf.pixels[0 * stride + 3 * 4 + 1].to_int()
   assert_eq(g32, 255) // G
   // Outside the image: still transparent.
   assert_eq(buf.pixels[0 * stride + 0 * 4 + 3].to_int(), 0xFF) // A=255 from blend
@@ -1035,13 +1037,13 @@ test "blur_h_averages_5_horizontal_neighbors" {
     10,
     @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
-  let off : Int = 5 * buf.width * 4 + 5 * 4
+  let off : Int32 = 5 * buf.width * 4 + 5 * 4
   buf.pixels[off] = (0).to_byte()
   buf.pixels[off + 1] = (0).to_byte()
   buf.pixels[off + 2] = (255).to_byte()
   buf.pixels[off + 3] = (255).to_byte()
   blur_h(buf, scratch, 0, 0, 10, 10)
-  let soff55 : Int = 5 * scratch.width * 4 + 5 * 4
+  let soff55 : Int32 = 5 * scratch.width * 4 + 5 * 4
   // Only pixel (5, 5) has R=255, A=255; B and G are 0.
   // After blur_h averaging 5 horizontal neighbors, R = 255/5 = 51,
   // A = 255/5 = 51; B and G stay 0 (averaging zero).
@@ -1066,7 +1068,7 @@ test "blur_separable_uniform_color_unchanged" {
   )
   blur_h(buf, scratch, 0, 0, 8, 8)
   blur_v(scratch, buf, 0, 0, 8, 8)
-  let off : Int = 4 * buf.width * 4 + 4 * 4
+  let off : Int32 = 4 * buf.width * 4 + 4 * 4
   assert_eq(buf.pixels[off + 2].to_int(), 255)
   assert_eq(buf.pixels[off + 3].to_int(), 255)
 }
@@ -1093,11 +1095,11 @@ test "paint_shadow_rect_offset_appears_below" {
   // Pixel (8, 8) is inside the shadow rect (offset 2,2) at full
   // coverage; blur softens it to ~163 alpha (16 of 25 neighbors
   // inside shadow rect after 5x5 box blur).
-  let off88 : Int = 8 * buf.width * 4 + 8 * 4
-  let a88 : Int = buf.pixels[off88 + 3].to_int()
+  let off88 : Int32 = 8 * buf.width * 4 + 8 * 4
+  let a88 : Int32 = buf.pixels[off88 + 3].to_int()
   assert_true(a88 > 100)
   // Pixel (0, 0) is far outside any shadow region -> clear.
-  let off00 : Int = 0 * buf.width * 4 + 0 * 4
+  let off00 : Int32 = 0 * buf.width * 4 + 0 * 4
   assert_eq(buf.pixels[off00 + 3].to_int(), 0)
 }
 
@@ -1122,10 +1124,10 @@ test "paint_shadow_rect_zero_offset_glow" {
   paint_shadow_rect(buf, scratch, rect, offset, color, 1.0, clip)
   // Pixel (6, 6) is inside the rect (and inside the shadow region)
   // -> high alpha.
-  let off66 : Int = 6 * buf.width * 4 + 6 * 4
+  let off66 : Int32 = 6 * buf.width * 4 + 6 * 4
   assert_true(buf.pixels[off66 + 3].to_int() > 100)
   // Pixel (1, 1) is far outside any shadow region -> clear.
-  let off11 : Int = 1 * buf.width * 4 + 1 * 4
+  let off11 : Int32 = 1 * buf.width * 4 + 1 * 4
   assert_eq(buf.pixels[off11 + 3].to_int(), 0)
 }
 
@@ -1157,8 +1159,8 @@ test "draw_shadow_command_dispatches_to_paint_shadow" {
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Pixel (8, 8) is inside the shadow region (offset 2,2 x 4x4 = 6..10).
   // Use raw bytes to avoid pixel_at OOB bug.
-  let off : Int = 8 * buf.width * 4 + 8 * 4
-  let a : Int = buf.pixels[off + 3].to_int()
+  let off : Int32 = 8 * buf.width * 4 + 8 * 4
+  let a : Int32 = buf.pixels[off + 3].to_int()
   assert_true(a > 0)
 }
 
@@ -1190,10 +1192,10 @@ test "draw_shadow_command_zero_offset_glow_around_rect" {
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Pixel (4, 8) is on the left edge of the shadow region ->
   // alpha > 0 (blurred shadow visible just outside the rect).
-  let off : Int = 8 * buf.width * 4 + 4 * 4
+  let off : Int32 = 8 * buf.width * 4 + 4 * 4
   assert_true(buf.pixels[off + 3].to_int() > 0)
   // Pixel (0, 0) is far outside the shadow region -> clear.
-  let off00 : Int = 0 * buf.width * 4 + 0 * 4
+  let off00 : Int32 = 0 * buf.width * 4 + 0 * 4
   assert_eq(buf.pixels[off00 + 3].to_int(), 0)
 }
 
@@ -1213,10 +1215,10 @@ test "rounded_rect_path_spec_emits_4_cubics_and_close" {
   let verbs : Array[@core.PathVerb] = spec.verbs
   // Total verb count: 1 MoveTo + 4 LineTo + 4 CubicTo + 1 Close = 10.
   assert_eq(verbs.length(), 10)
-  let mut n_move : Int = 0
-  let mut n_line : Int = 0
-  let mut n_cubic : Int = 0
-  let mut n_close : Int = 0
+  let mut n_move : Int32 = 0
+  let mut n_line : Int32 = 0
+  let mut n_cubic : Int32 = 0
+  let mut n_close : Int32 = 0
   for verb in verbs {
     match verb {
       @core.PathVerb::MoveTo(_) => n_move = n_move + 1
@@ -1514,6 +1516,7 @@ test "draw_image_paints_into_run_frame_not_the_whole_clip" {
     frame: @core.Rect::new(x=5.0, y=5.0, width=10.0, height=10.0),
     opacity: 1.0,
     fit: @core.ImageFit::Contain,
+    src_rect: None,
   }
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawImage(run)],
@@ -1563,6 +1566,7 @@ test "draw_image_with_frame_larger_than_clip_samples_only_the_visible_corner" {
     frame: @core.Rect::new(x=0.0, y=0.0, width=16.0, height=16.0),
     opacity: 1.0,
     fit: @core.ImageFit::Contain,
+    src_rect: None,
   }
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawImage(run)],

@@ -3,11 +3,9 @@ name = "riantr/moonbit_labeler/app_moui"
 version = "0.1.0"
 
 import {
-  "wzzc-dev/moui@0.2.2",
-  "Milky2018/css@0.6.0",
-  "moonbitlang/async@0.22.4",
-  "riantr/moonbit_image@0.3.5",
-  "moonbitlang/x@0.5.1",
+  "wzzc-dev/moui@0.6.1",
+  "riantr/moonbit_image@0.3.9",
+  "moonbitlang/x@0.5.6",
 }
 
 readme = "README.mbt.md"

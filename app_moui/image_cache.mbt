@@ -31,11 +31,12 @@
 /// `width * height * 4` bytes in row-major (top-to-bottom)
 /// order, R G B A per pixel — exactly the layout `Image::to_rgba8`
 /// produces.
+#derive(Eq, Debug, Show)
 pub struct DecodedImage {
-  width : Int
-  height : Int
+  width : Int32
+  height : Int32
   data : Bytes
-} derive(Eq, Debug, Show)
+}
 
 ///|
 /// Process-wide image cache keyed by source path.
@@ -53,7 +54,7 @@ pub fn ImageCache::new() -> ImageCache {
   // use the simple form and accept the warning — the runtime
   // behavior is identical and the warning is already silenced
   // project-wide via the root `warn_list: ""` option.
-  { entries: Map::new() }
+  { entries: Map::new(), }
 }
 
 ///|
@@ -75,7 +76,7 @@ pub fn ImageCache::get(self : ImageCache, source : String) -> DecodedImage? {
 /// renderer can bound growth: every decoded image is a full RGBA8
 /// buffer (767 KB for the shipped 517×371 sample), so an unbounded
 /// cache means walking a 500-image folder costs hundreds of MB.
-pub fn ImageCache::size(self : ImageCache) -> Int {
+pub fn ImageCache::size(self : ImageCache) -> Int32 {
   self.entries.length()
 }
 
@@ -90,18 +91,18 @@ pub fn ImageCache::size(self : ImageCache) -> Int {
 pub fn ImageCache::load_bytes(
   self : ImageCache,
   source : String,
-  width : Int,
-  height : Int,
+  width : Int32,
+  height : Int32,
   data : Bytes,
 ) -> DecodedImage? {
   if width <= 0 || height <= 0 {
     return None
   }
-  let expected : Int = width * height * 4
+  let expected : Int32 = width * height * 4
   if data.length() != expected {
     return None
   }
-  let decoded : DecodedImage = { width, height, data }
+  let decoded : DecodedImage = { width, height, data, }
   self.entries.set(source, decoded)
   Some(decoded)
 }
@@ -113,8 +114,8 @@ pub fn ImageCache::load_bytes(
 pub fn ImageCache::get_or_inject(
   self : ImageCache,
   source : String,
-  width : Int,
-  height : Int,
+  width : Int32,
+  height : Int32,
   data : Bytes,
 ) -> DecodedImage? {
   match self.entries.get(source) {
@@ -133,7 +134,7 @@ pub fn ImageCache::get_or_inject(
 /// fixture builder and the Phase 5.7 regression test, so the
 /// "which colour is which band" mapping can't drift between the
 /// shipped fixture and the test that pins it.
-pub fn band_colour(band : Int) -> (Int, Int, Int) {
+pub fn band_colour(band : Int32) -> (Int32, Int32, Int32) {
   match band {
     0 => (255, 0, 0)
     1 => (0, 255, 0)
@@ -164,15 +165,15 @@ pub fn band_colour(band : Int) -> (Int, Int, Int) {
 /// to ~100". That hypothesis is disproven — see the tests in
 /// `phase5_7_blit_test.mbt`; `src_y = dy * src_h / dst_h` has no
 /// clamp and all four bands land correctly at every tested scale.
-pub fn banded_rgba8_fixture(w : Int, h : Int) -> Bytes {
+pub fn banded_rgba8_fixture(w : Int32, h : Int32) -> Bytes {
   let rgba : Array[Byte] = []
   // 4 bands, so the per-band row count is h / 4 with any remainder
   // folded into the last band. For h = 200 this is exactly 50 rows
   // each.
-  let band_h : Int = h / 4
-  let mut y : Int = 0
+  let band_h : Int32 = h / 4
+  let mut y : Int32 = 0
   while y < h {
-    let band : Int = if band_h <= 0 {
+    let band : Int32 = if band_h <= 0 {
       0
     } else if y < band_h {
       0
@@ -184,7 +185,7 @@ pub fn banded_rgba8_fixture(w : Int, h : Int) -> Bytes {
       3
     }
     let (r, g, b) = band_colour(band)
-    let mut x : Int = 0
+    let mut x : Int32 = 0
     while x < w {
       rgba.push(r.to_byte())
       rgba.push(g.to_byte())

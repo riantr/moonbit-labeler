@@ -96,7 +96,7 @@ pub fn path_basename(path : String) -> String {
   // everything after it. Falls through to the full path when
   // no separator is found (the input is already a basename).
   let chars : Array[Char] = path.to_array()
-  let mut last_sep : Int = -1
+  let mut last_sep : Int32 = -1
   for i = 0; i < chars.length(); i = i + 1 {
     if chars[i] == '/' || chars[i] == '\\' {
       last_sep = i

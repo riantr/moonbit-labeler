@@ -38,9 +38,9 @@
 ///   [2..4, 2..4]   = yellow (R=255, G=255, B=0,   A=255)
 fn make_quadrant_rgba8() -> Bytes {
   let rgba : Array[Byte] = []
-  let mut y : Int = 0
+  let mut y : Int32 = 0
   while y < 4 {
-    let mut x : Int = 0
+    let mut x : Int32 = 0
     while x < 4 {
       let in_top : Bool = y < 2
       let in_left : Bool = x < 2
@@ -49,25 +49,21 @@ fn make_quadrant_rgba8() -> Bytes {
       //   top-right (y<2, x>=2): green  R=0,  G=255
       //   bot-left  (y>=2, x<2): blue   B=255
       //   bot-right (y>=2, x>=2): yellow R=255, G=255
-      let r : Int = if in_top && in_left {
+      let r : Int32 = if in_top && in_left {
         255
       } else if !in_top && !in_left {
         255
       } else {
         0
       }
-      let g : Int = if in_top && !in_left {
+      let g : Int32 = if in_top && !in_left {
         255
       } else if !in_top && !in_left {
         255
       } else {
         0
       }
-      let b : Int = if !in_top && in_left {
-        255
-      } else {
-        0
-      }
+      let b : Int32 = if !in_top && in_left { 255 } else { 0 }
       rgba.push(r.to_byte())
       rgba.push(g.to_byte())
       rgba.push(b.to_byte())
@@ -99,6 +95,7 @@ test "phase14_cache_then_rasterize_draws_quadrants" {
     frame: @core.Rect::new(x=2.0, y=2.0, width=4.0, height=4.0),
     opacity: 1.0,
     fit: @core.ImageFit::Stretch,
+    src_rect: None,
   }
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawImage(run)],
@@ -107,26 +104,26 @@ test "phase14_cache_then_rasterize_draws_quadrants" {
   )
   rasterize_draw_frame(buf, frame, cache)
   // Pixel (2, 2) corresponds to image pixel (0, 0): top-left = red.
-  let off22 : Int = 2 * buf.width * 4 + 2 * 4
-  let r22 : Int = buf.pixels[off22 + 2].to_int()
-  let g22 : Int = buf.pixels[off22 + 1].to_int()
-  let b22 : Int = buf.pixels[off22].to_int()
+  let off22 : Int32 = 2 * buf.width * 4 + 2 * 4
+  let r22 : Int32 = buf.pixels[off22 + 2].to_int()
+  let g22 : Int32 = buf.pixels[off22 + 1].to_int()
+  let b22 : Int32 = buf.pixels[off22].to_int()
   // DEBUG: dump all 4 BGRA bytes at (2,2)
   let _ = assert_eq(r22, 255)
   let _ = assert_eq(g22, 0)
   let _ = assert_eq(b22, 0)
   // Pixel (5, 2) -> image (3, 0): top-right = green.
-  let off52 : Int = 2 * buf.width * 4 + 5 * 4
+  let off52 : Int32 = 2 * buf.width * 4 + 5 * 4
   assert_eq(buf.pixels[off52 + 2].to_int(), 0)
   assert_eq(buf.pixels[off52 + 1].to_int(), 255)
   assert_eq(buf.pixels[off52].to_int(), 0)
   // Pixel (2, 5) -> image (0, 3): bottom-left = blue.
-  let off25 : Int = 5 * buf.width * 4 + 2 * 4
+  let off25 : Int32 = 5 * buf.width * 4 + 2 * 4
   assert_eq(buf.pixels[off25 + 2].to_int(), 0)
   assert_eq(buf.pixels[off25 + 1].to_int(), 0)
   assert_eq(buf.pixels[off25].to_int(), 255)
   // Pixel (5, 5) -> image (3, 3): bottom-right = yellow.
-  let off55 : Int = 5 * buf.width * 4 + 5 * 4
+  let off55 : Int32 = 5 * buf.width * 4 + 5 * 4
   assert_eq(buf.pixels[off55 + 2].to_int(), 255)
   assert_eq(buf.pixels[off55 + 1].to_int(), 255)
   assert_eq(buf.pixels[off55].to_int(), 0)
@@ -146,6 +143,7 @@ test "phase14_cache_hit_on_second_rasterize" {
     frame: @core.Rect::new(x=0.0, y=0.0, width=4.0, height=4.0),
     opacity: 1.0,
     fit: @core.ImageFit::Stretch,
+    src_rect: None,
   }
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawImage(run)],
@@ -165,7 +163,7 @@ test "phase14_cache_hit_on_second_rasterize" {
   rasterize_draw_frame(buf1, frame, cache)
   rasterize_draw_frame(buf2, frame, cache)
   // Spot-check: pixel (1, 1) identical in both buffers.
-  let off : Int = 1 * buf1.width * 4 + 1 * 4
+  let off : Int32 = 1 * buf1.width * 4 + 1 * 4
   assert_eq(buf1.pixels[off + 2].to_int(), buf2.pixels[off + 2].to_int())
   assert_eq(buf1.pixels[off + 1].to_int(), buf2.pixels[off + 1].to_int())
   assert_eq(buf1.pixels[off].to_int(), buf2.pixels[off].to_int())
@@ -188,6 +186,7 @@ test "phase14_cache_miss_paints_placeholder_no_crash" {
     frame: @core.Rect::new(x=4.0, y=4.0, width=8.0, height=8.0),
     opacity: 1.0,
     fit: @core.ImageFit::Stretch,
+    src_rect: None,
   }
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawImage(run)],
@@ -199,7 +198,7 @@ test "phase14_cache_miss_paints_placeholder_no_crash" {
   // drawn the outline + diagonal lines. Just verify the
   // buffer is non-trivial after rasterization (no all-zero
   // panic).
-  let off : Int = 8 * buf.width * 4 + 8 * 4
-  let a : Int = buf.pixels[off + 3].to_int()
+  let off : Int32 = 8 * buf.width * 4 + 8 * 4
+  let a : Int32 = buf.pixels[off + 3].to_int()
   assert_true(a > 0)
 }

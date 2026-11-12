@@ -1,4 +1,4 @@
-﻿// app_moui/labeler_ui_test.mbt 鈥?Phase 16.C verification tests.
+// app_moui/labeler_ui_test.mbt 鈥?Phase 16.C verification tests.
 //
 // Builds the labeler UI demo frame at a known size, rasterizes
 // it, and asserts pixel colors at key positions to verify
@@ -16,11 +16,11 @@ test "labeler_ui_sidebar_background_painted" {
   // Pixel (50, 160) is inside the sidebar (x<200), below the
   // toolbar (y>40), and below all folder rows (which end at
   // y=154). Should be plain sidebar background.
-  let off : Int = 160 * buf.width * 4 + 50 * 4
-  let b : Int = buf.pixels[off].to_int()
-  let g : Int = buf.pixels[off + 1].to_int()
-  let r : Int = buf.pixels[off + 2].to_int()
-  let a : Int = buf.pixels[off + 3].to_int()
+  let off : Int32 = 160 * buf.width * 4 + 50 * 4
+  let b : Int32 = buf.pixels[off].to_int()
+  let g : Int32 = buf.pixels[off + 1].to_int()
+  let r : Int32 = buf.pixels[off + 2].to_int()
+  let a : Int32 = buf.pixels[off + 3].to_int()
   // Sidebar background (16, 16, 19) * 255 = (40, 40, 48).
   // Allow small AA fuzz at the edge: check r is in 38-43.
   assert_true(r >= 38 && r <= 43)
@@ -40,8 +40,8 @@ test "labeler_ui_toolbar_background_painted" {
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Pixel (300, 20) is inside the toolbar (y<40) and in the
   // canvas area (x>200). Toolbar_bg (22, 22, 26) * 255 = (56, 56, 66).
-  let off : Int = 20 * buf.width * 4 + 300 * 4
-  let r : Int = buf.pixels[off + 2].to_int()
+  let off : Int32 = 20 * buf.width * 4 + 300 * 4
+  let r : Int32 = buf.pixels[off + 2].to_int()
   assert_true(r >= 54 && r <= 58)
 }
 
@@ -56,10 +56,10 @@ test "labeler_ui_canvas_background_distinct_from_sidebar" {
   rasterize_draw_frame(buf, frame, ImageCache::new())
   // Pixel (300, 200) is in the canvas area (right of sidebar,
   // below toolbar). Canvas_bg (10, 10, 12) * 255 = (25, 25, 30).
-  let off : Int = 200 * buf.width * 4 + 300 * 4
-  let r : Int = buf.pixels[off + 2].to_int()
-  let g : Int = buf.pixels[off + 1].to_int()
-  let b : Int = buf.pixels[off].to_int()
+  let off : Int32 = 200 * buf.width * 4 + 300 * 4
+  let r : Int32 = buf.pixels[off + 2].to_int()
+  let g : Int32 = buf.pixels[off + 1].to_int()
+  let b : Int32 = buf.pixels[off].to_int()
   // Verify it's the dark canvas color, not the sidebar's
   // lighter color.
   assert_true(r < 28)
@@ -82,8 +82,8 @@ test "labeler_ui_tool_button_is_rounded_rect" {
   // Pixel (16, 20) is INSIDE the rounded rect (corner cut by
   // radius 6 leaves cell at (8..14) cut, but (16, 20) is well
   // inside the interior). Expected: tool_bg (30, 30, 34) * 255.
-  let off : Int = 20 * buf.width * 4 + 16 * 4
-  let r : Int = buf.pixels[off + 2].to_int()
+  let off : Int32 = 20 * buf.width * 4 + 16 * 4
+  let r : Int32 = buf.pixels[off + 2].to_int()
   assert_true(r >= 74 && r <= 78)
 }
 
@@ -99,9 +99,9 @@ test "labeler_ui_class_chip_color_visible" {
   // First class chip is at (8, 170) to (192, 188), radius 4.
   // Pixel (100, 178) is well inside the chip. Expected: chip_bg
   // (40, 40, 85) * 255 = (102, 102, 217).
-  let off : Int = 178 * buf.width * 4 + 100 * 4
-  let b : Int = buf.pixels[off].to_int()
-  let r : Int = buf.pixels[off + 2].to_int()
+  let off : Int32 = 178 * buf.width * 4 + 100 * 4
+  let b : Int32 = buf.pixels[off].to_int()
+  let r : Int32 = buf.pixels[off + 2].to_int()
   assert_true(b >= 215 && b <= 220)
   assert_true(r >= 100 && r <= 105)
 }
@@ -113,12 +113,20 @@ test "labeler_ui_pure_function_returns_identical_frame" {
   let frame1 : @core.DrawFrame = build_labeler_ui_demo_frame(200, 200)
   let frame2 : @core.DrawFrame = build_labeler_ui_demo_frame(200, 200)
   assert_eq(frame1.commands.length(), frame2.commands.length())
-  let buf1 : PixelBuffer = PixelBuffer::new(200, 200, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
-  let buf2 : PixelBuffer = PixelBuffer::new(200, 200, @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0))
+  let buf1 : PixelBuffer = PixelBuffer::new(
+    200,
+    200,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
+  let buf2 : PixelBuffer = PixelBuffer::new(
+    200,
+    200,
+    @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
+  )
   rasterize_draw_frame(buf1, frame1, ImageCache::new())
   rasterize_draw_frame(buf2, frame2, ImageCache::new())
   // Spot-check: pixel (100, 100) identical in both buffers.
-  let off : Int = 100 * 200 * 4 + 100 * 4
+  let off : Int32 = 100 * 200 * 4 + 100 * 4
   assert_eq(buf1.pixels[off + 2].to_int(), buf2.pixels[off + 2].to_int())
   assert_eq(buf1.pixels[off].to_int(), buf2.pixels[off].to_int())
 }
@@ -136,8 +144,8 @@ test "labeler_ui_small_buffer_handles_minimum" {
     @core.Color::rgba(r=0.0, g=0.0, b=0.0, a=0.0),
   )
   rasterize_draw_frame(buf, frame, ImageCache::new())
-  let off : Int = 20 * 100 * 4 + 44 * 4
-  let r : Int = buf.pixels[off + 2].to_int()
+  let off : Int32 = 20 * 100 * 4 + 44 * 4
+  let r : Int32 = buf.pixels[off + 2].to_int()
   // Toolbar bg (0.22, 0.22, 0.26) -> R=56. Pixel (44, 20)
   // is between tool button 1 (8-40) and 2 (48-80).
   assert_eq(r, 56)
@@ -169,10 +177,7 @@ test "mode_button_variant — only the armed tool is Primary (5.9)" {
     Mode::EditBinding,
   ]
   for armed in modes {
-    assert_eq(
-      mode_button_variant(armed, armed),
-      @style.ButtonVariant::Primary,
-    )
+    assert_eq(mode_button_variant(armed, armed), @style.ButtonVariant::Primary)
     for other in modes {
       if other != armed {
         assert_eq(
@@ -201,7 +206,7 @@ test "mode_label — all five tools are captioned and unique (5.9)" {
     Mode::Keypoint,
     Mode::EditBinding,
   ]
-  let n : Int = modes.length()
+  let n : Int32 = modes.length()
   for i = 0; i < n; i = i + 1 {
     let caption : String = mode_label(modes[i])
     assert_true(caption != "")
@@ -274,7 +279,7 @@ test "shortcut specs — wrong case and key release do not match (5.10)" {
 /// would make the second permanently unreachable.
 test "shortcut specs — keys are distinct and labels are non-empty (5.10)" {
   let specs = shortcut_specs()
-  let n : Int = specs.length()
+  let n : Int32 = specs.length()
   for i = 0; i < n; i = i + 1 {
     assert_true(specs[i].label != "")
     assert_true(specs[i].key != "")
@@ -306,10 +311,10 @@ test "shortcut specs — each key drives the action it advertises (5.10)" {
   // Backspace → PopDraft: the last vertex goes, the others stay.
   let (p1, _) = update(
     { ..Model::new(), mode: Polygon, },
-    PushDraft({ x: 10.0, y: 10.0 }),
+    PushDraft({ x: 10.0, y: 10.0, }),
   )
-  let (p2, _) = update(p1, PushDraft({ x: 20.0, y: 20.0 }))
-  let (p3, _) = update(p2, PushDraft({ x: 30.0, y: 30.0 }))
+  let (p2, _) = update(p1, PushDraft({ x: 20.0, y: 20.0, }))
+  let (p3, _) = update(p2, PushDraft({ x: 30.0, y: 30.0, }))
   assert_eq(p3.draftPoints.length(), 3)
   let (after_bs, _) = update(p3, PopDraft)
   assert_eq(after_bs.draftPoints.length(), 2)
@@ -317,7 +322,7 @@ test "shortcut specs — each key drives the action it advertises (5.10)" {
   assert_eq(after_bs.draftPoints[1].x, 20.0)
   // Delete → DeleteSelectedAnnotation: the selected rect goes.
   let selected = { ..Model::new(), selectedId: Some("rect-1"), }
-  let before_del : Int = selected.annotations.length()
+  let before_del : Int32 = selected.annotations.length()
   let (after_del, _) = update(selected, DeleteSelectedAnnotation)
   assert_eq(after_del.annotations.length(), before_del - 1)
   assert_true(after_del.selectedId is None)

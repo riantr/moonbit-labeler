@@ -94,7 +94,7 @@ fn to_lower_ascii(s : String) -> String {
       // `Int::to_char` is total-looking but returns `Char?`; the None
       // case is unreachable for an ASCII code point, so falling back
       // to the original char keeps the mapping total either way.
-      match Int::to_char(ch.to_int() + 32) {
+      match Int32::to_char(ch.to_int() + 32) {
         Some(lower) => out.push(lower)
         None => out.push(ch)
       }
@@ -113,7 +113,7 @@ fn to_lower_ascii(s : String) -> String {
 /// `archive.tar.gz` yields `gz`.
 pub fn extension_of(name : String) -> String {
   let chars : Array[Char] = name.to_array()
-  let mut last_dot : Int = -1
+  let mut last_dot : Int32 = -1
   for i = 0; i < chars.length(); i = i + 1 {
     if chars[i] == '.' {
       last_dot = i
@@ -154,7 +154,7 @@ pub fn join_path(dir : String, name : String) -> String {
 /// A name with no extension is returned unchanged.
 pub fn strip_extension(name : String) -> String {
   let chars : Array[Char] = name.to_array()
-  let mut last_dot : Int = -1
+  let mut last_dot : Int32 = -1
   for i = 0; i < chars.length(); i = i + 1 {
     if chars[i] == '.' {
       last_dot = i
@@ -189,7 +189,7 @@ pub fn label_path_for(image_path : String, label_folder : String) -> String {
   if label_folder.length() == 0 {
     // Sibling of the image: keep the image's own directory.
     let chars : Array[Char] = image_path.to_array()
-    let mut last_sep : Int = -1
+    let mut last_sep : Int32 = -1
     for i = 0; i < chars.length(); i = i + 1 {
       if chars[i] == '/' || chars[i] == '\\' {
         last_sep = i
@@ -239,7 +239,7 @@ pub fn sibling_label_folder(image_folder : String) -> String {
   }
   let rebuilt : String = String::from_array(tail)
   let chars : Array[Char] = image_folder.to_array()
-  let mut last_sep : Int = -1
+  let mut last_sep : Int32 = -1
   for i = 0; i < chars.length(); i = i + 1 {
     if chars[i] == '/' || chars[i] == '\\' {
       last_sep = i
@@ -281,7 +281,7 @@ pub fn sibling_label_folder(image_folder : String) -> String {
 pub fn name_less(a : String, b : String) -> Bool {
   let ac : Array[Char] = a.to_array()
   let bc : Array[Char] = b.to_array()
-  let short : Int = if ac.length() < bc.length() {
+  let short : Int32 = if ac.length() < bc.length() {
     ac.length()
   } else {
     bc.length()
@@ -300,11 +300,12 @@ pub fn name_less(a : String, b : String) -> Bool {
 /// The result of listing a folder: the media split by kind, plus the
 /// label folder that belongs to it. `label_folder` is `""` when there
 /// is none — see `sibling_label_folder`.
+#derive(Debug)
 pub(all) struct FolderScan {
   images : Array[ImageEntry]
   videos : Array[VideoEntry]
   label_folder : String
-} derive(Debug)
+}
 
 ///|
 /// List `folder` and split its entries into images and videos.
@@ -434,7 +435,7 @@ pub fn load_label(
 /// `imageSource` and the rasterizer's cache-miss fallback paints a
 /// grey X, so setting the source first would flash that placeholder
 /// for a frame.
-pub fn load_image_into_cache(path : String) -> (Int, Int)? {
+pub fn load_image_into_cache(path : String) -> (Int32, Int32)? {
   // Fast path: already decoded. Skips the file read *and* the decode.
   if image_in_renderer(path) {
     return image_size_in_renderer(path)

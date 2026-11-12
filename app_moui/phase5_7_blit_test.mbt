@@ -30,10 +30,13 @@
 /// `pixels[off + 2]` == R), so the channel indices are reversed
 /// relative to the RGBA source data. Centralised here so every
 /// assertion in this file agrees on the channel order.
-fn pixel_rgb(buf : PixelBuffer, x : Int, y : Int) -> (Int, Int, Int) {
-  let off : Int = y * buf.width * 4 + x * 4
-  (buf.pixels[off + 2].to_int(), buf.pixels[off + 1].to_int(),
-   buf.pixels[off].to_int())
+fn pixel_rgb(buf : PixelBuffer, x : Int32, y : Int32) -> (Int32, Int32, Int32) {
+  let off : Int32 = y * buf.width * 4 + x * 4
+  (
+    buf.pixels[off + 2].to_int(),
+    buf.pixels[off + 1].to_int(),
+    buf.pixels[off].to_int(),
+  )
 }
 
 ///|
@@ -42,9 +45,9 @@ fn pixel_rgb(buf : PixelBuffer, x : Int, y : Int) -> (Int, Int, Int) {
 /// `band_colour` in image_cache.mbt) rather than a local copy. The
 /// tests below therefore pin the fixture the app actually ships, not
 /// a lookalike that could drift from it.
-fn expected_band_rgb(src_y : Int, src_h : Int) -> (Int, Int, Int) {
-  let band_h : Int = src_h / 4
-  let band : Int = if band_h <= 0 {
+fn expected_band_rgb(src_y : Int32, src_h : Int32) -> (Int32, Int32, Int32) {
+  let band_h : Int32 = src_h / 4
+  let band : Int32 = if band_h <= 0 {
     0
   } else if src_y < band_h {
     0
@@ -73,7 +76,12 @@ fn expected_band_rgb(src_y : Int, src_h : Int) -> (Int, Int, Int) {
 /// never appear.
 test "paint_image — shipped 200x200 4-band fixture at 2x upscale renders all 4 bands (5.7)" {
   let cache : ImageCache = ImageCache::new()
-  let _ = cache.load_bytes("banded.png", 200, 200, banded_rgba8_fixture(200, 200))
+  let _ = cache.load_bytes(
+    "banded.png",
+    200,
+    200,
+    banded_rgba8_fixture(200, 200),
+  )
   let buf : PixelBuffer = PixelBuffer::new(
     400,
     400,
@@ -84,6 +92,7 @@ test "paint_image — shipped 200x200 4-band fixture at 2x upscale renders all 4
     frame: @core.Rect::new(x=0.0, y=0.0, width=400.0, height=400.0),
     opacity: 1.0,
     fit: @core.ImageFit::Stretch,
+    src_rect: None,
   }
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawImage(run)],
@@ -100,7 +109,7 @@ test "paint_image — shipped 200x200 4-band fixture at 2x upscale renders all 4
   // destination space are at dy = 100, 200, 300.
   for dy in [10, 60, 120, 180, 260, 320, 380] {
     let (r, g, b) = pixel_rgb(buf, 200, dy)
-    let src_y : Int = dy * 200 / 400
+    let src_y : Int32 = dy * 200 / 400
     let (er, eg, eb) = expected_band_rgb(src_y, 200)
     assert_eq((r, g, b), (er, eg, eb))
   }
@@ -113,7 +122,12 @@ test "paint_image — shipped 200x200 4-band fixture at 2x upscale renders all 4
 /// to a smaller range) bands 2/3 would be dropped entirely.
 test "paint_image — shipped 4-band fixture at 0.5x downscale renders all 4 bands (5.7)" {
   let cache : ImageCache = ImageCache::new()
-  let _ = cache.load_bytes("banded.png", 200, 200, banded_rgba8_fixture(200, 200))
+  let _ = cache.load_bytes(
+    "banded.png",
+    200,
+    200,
+    banded_rgba8_fixture(200, 200),
+  )
   let buf : PixelBuffer = PixelBuffer::new(
     100,
     100,
@@ -124,6 +138,7 @@ test "paint_image — shipped 4-band fixture at 0.5x downscale renders all 4 ban
     frame: @core.Rect::new(x=0.0, y=0.0, width=100.0, height=100.0),
     opacity: 1.0,
     fit: @core.ImageFit::Stretch,
+    src_rect: None,
   }
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawImage(run)],
@@ -135,7 +150,7 @@ test "paint_image — shipped 4-band fixture at 0.5x downscale renders all 4 ban
   // band boundaries land at dy = 25, 50, 75.
   for dy in [5, 15, 30, 40, 55, 65, 80, 95] {
     let (r, g, b) = pixel_rgb(buf, 50, dy)
-    let src_y : Int = dy * 200 / 100
+    let src_y : Int32 = dy * 200 / 100
     let (er, eg, eb) = expected_band_rgb(src_y, 200)
     assert_eq((r, g, b), (er, eg, eb))
   }
@@ -161,9 +176,9 @@ test "banded_rgba8_fixture — byte length is exactly w*h*4 (5.7)" {
 /// vertical-stripe fixture shape that was also reported broken.
 test "paint_image — vertical bands render across the full width (5.7)" {
   let rgba : Array[Byte] = []
-  let mut y : Int = 0
+  let mut y : Int32 = 0
   while y < 8 {
-    let mut x : Int = 0
+    let mut x : Int32 = 0
     while x < 8 {
       // Left half red, right half green, mirrored top/bottom so a
       // row-axis bug can't masquerade as an x-axis success.
@@ -188,6 +203,7 @@ test "paint_image — vertical bands render across the full width (5.7)" {
     frame: @core.Rect::new(x=0.0, y=0.0, width=32.0, height=32.0),
     opacity: 1.0,
     fit: @core.ImageFit::Stretch,
+    src_rect: None,
   }
   let frame : @core.DrawFrame = @core.DrawFrame::new(
     commands=[@core.DrawCommand::DrawImage(run)],
@@ -198,11 +214,7 @@ test "paint_image — vertical bands render across the full width (5.7)" {
   // Sample the full width at mid-height.
   for dx in [1, 6, 12, 20, 26, 30] {
     let (r, g, b) = pixel_rgb(buf, dx, 16)
-    let (er, eg, eb) = if dx * 8 / 32 < 4 {
-      (255, 0, 0)
-    } else {
-      (0, 255, 0)
-    }
+    let (er, eg, eb) = if dx * 8 / 32 < 4 { (255, 0, 0) } else { (0, 255, 0) }
     assert_eq((r, g, b), (er, eg, eb))
   }
 }
