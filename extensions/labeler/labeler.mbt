@@ -495,13 +495,24 @@ async fn ensure_dir(path : String) -> Unit {
 /// Returns `None` for input that is not valid UTF-8, which the bridge
 /// treats as an unusable line.
 ///
+/// A leading UTF-8 BOM is stripped — and so is a *stack* of them.
+/// Windows PowerShell 5.1 encodes strings piped into a native executable
+/// with `$OutputEncoding`, which is a `System.Text.UTF8Encoding` that
+/// emits the `EF BB BF` preamble; on top of that, `Get-Content
+/// -Encoding UTF8` can hand back a string that already starts with
+/// U+FEFF. The first request line therefore arrives with two BOMs in
+/// front and would otherwise be rejected with "Invalid character
+/// '﻿' at line 1, column 0". Every other line is unaffected,
+/// which makes the failure look like a dropped request rather than an
+/// encoding problem.
+///
 /// This lives in the backend rather than in `app/` because the `app`
 /// package is an executable: it links the Proton/CEF runtime, so it is
 /// excluded from the CI test scope (the ubuntu job has no CEF SDK).
 /// A helper here is covered by the `extensions/labeler` suite instead.
 pub fn decode_stdio_line(bytes : Bytes) -> String? {
   let text = @utf8.decode(bytes) catch { _ => return None }
-  Some(text)
+  Some(strip_bom(text))
 }
 
 ///| --- string helpers ---
@@ -2437,12 +2448,23 @@ fn gen_label_id(prefix : String) -> String {
 }
 
 ///|
-/// Strip a leading UTF-8 BOM (`U+FEFF`) if present.
+/// Strip every leading UTF-8 BOM (`U+FEFF`).
+///
+/// One BOM is the common case, but Windows pipelines can stack two:
+/// PowerShell 5.1's `Get-Content -Encoding UTF8` can return a string
+/// that already starts with U+FEFF, and the native-command pipe then
+/// prepends the `EF BB BF` preamble of `$OutputEncoding` on top of it.
+/// A JSON parser rejects the second one, so stripping only the first
+/// would still lose the request.
 fn strip_bom(s : String) -> String {
-  if s.length() > 0 && s[0] == '\u{feff}' {
-    String::unsafe_substring(s, start=1, end=s.length())
-  } else {
+  let mut i = 0
+  while i < s.length() && s[i] == '\u{feff}' {
+    i = i + 1
+  }
+  if i == 0 {
     s
+  } else {
+    String::unsafe_substring(s, start=i, end=s.length())
   }
 }
 

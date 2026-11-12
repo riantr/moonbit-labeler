@@ -212,3 +212,25 @@ test "decode_stdio_line rejects invalid UTF-8" {
   let bad : Bytes = b"\xff\xfe"
   assert_eq(decode_stdio_line(bad), None)
 }
+
+///|
+test "decode_stdio_line strips a leading UTF-8 BOM" {
+  // Windows PowerShell 5.1 encodes a string piped into a native
+  // executable with `$OutputEncoding`, which is a
+  // `System.Text.UTF8Encoding` that emits the `EF BB BF` preamble. The
+  // BOM therefore lands on the *first* request line, which then fails to
+  // parse — and because every later line is clean, the symptom looks
+  // like one silently dropped request.
+  let with_bom : Bytes = b"\xef\xbb\xbf{\"id\":1}"
+  assert_eq(decode_stdio_line(with_bom), Some("{\"id\":1}"))
+}
+
+///|
+test "decode_stdio_line strips stacked UTF-8 BOMs" {
+  // `Get-Content -Encoding UTF8` can itself return a string that starts
+  // with U+FEFF, and the native-command pipe then prepends another
+  // `EF BB BF` on top of it — so the stream carries two BOMs. Stripping
+  // only the first still leaves the line unparseable.
+  let with_two_boms : Bytes = b"\xef\xbb\xbf\xef\xbb\xbf{\"id\":1}"
+  assert_eq(decode_stdio_line(with_two_boms), Some("{\"id\":1}"))
+}
