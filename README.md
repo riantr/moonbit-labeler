@@ -111,7 +111,7 @@ directory is produced either way, so zip it yourself afterwards — see
 |---|---|---|
 | Backend | MoonBit 0.1.20261104 + `moonbitlang/core/async` runtime | Native AOT compile, no GC pauses in the hot path |
 | UI shell | Proton 0.9.0 + CEF 150.0.19 | Self-contained portable exe, no Electron |
-| Image codec | shared [`riantr/moonbit_image@0.3.9`](https://mooncakes.io/riantr/moonbit_image) (MIT) | Faster than `mizchi/image` for our workload; includes JPEG IDCT fix |
+| Image codec | shared [`riantr/moonbit_image@0.3.9`](https://mooncakes.io/riantr/moonbit_image) (MIT) | Moved out of the vendored tree into a shared mooncake; includes the JPEG IDCT fix |
 | Frontend | Vanilla JS + Vite | No framework lock-in, fast cold reload |
 | IPC | MoonBit `@proton_contract.Command` + `@proton_extension.typed` | Type-safe Request/Reply structs, bound via `CommandRegistrar` |
 

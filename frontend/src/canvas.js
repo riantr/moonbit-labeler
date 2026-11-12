@@ -530,7 +530,7 @@ export function createCanvas(container) {
     // Rasterize the source bitmap into the static layer if one is
     // attached. Two paths feed this:
     //   - native: an <img> element from the previous "setImage" API;
-    //   - mizchi: an ImageBitmap decoded from the backend's PNG reply.
+    //   - moonbit: an ImageBitmap decoded from the backend's PNG reply.
     // We don't draw the source image when the host hasn't given us one
     // — that's the "canvas overlay only" mode where the <img> element
     // renders the bitmap directly (see main.js showImage).
@@ -773,7 +773,7 @@ export function createCanvas(container) {
     get natural() { return natural; },
     get view() { return view; },
     setImageBitmap(bitmap) {
-      // Used by the mizchi/image bypass path: the frontend asks the
+      // Used by the backend-decode bypass path: the frontend asks the
       // backend to decode + (optionally) resize the source image,
       // parses the PNG reply into an ImageBitmap, and hands it here.
       // paintStatic rasterizes it into the static layer; composite()

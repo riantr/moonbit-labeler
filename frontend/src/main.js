@@ -48,28 +48,40 @@ const settings = {
   // "native"  : browser <img> element renders the bitmap; the canvas
   //             overlay is transparent except for annotations. This is
   //             the default path and what we ship.
-  // "mizchi"  : the canvas overlay rasterizes the bitmap (decoded by
-  //             the mizchi/image op in the backend). Slower than
-  //             native because every image change is a full IPC round
-  //             trip + a PNG round-trip, but it bypasses the
-  //             proton://app file:// cascade and doesn't depend on
-  //             the CEF image decoders. Toggle it by adding
-  //             `?mode=mizchi` to the URL or by calling
-  //             `settings.imageRenderMode = 'mizchi'` from the
+  // "moonbit" : the canvas overlay rasterizes the bitmap (decoded by
+  //             the decode_image op in the backend, which uses the
+  //             `riantr/moonbit_image` codec). Slower than native
+  //             because every image change is a full IPC round trip + a
+  //             PNG round-trip, but it bypasses the proton://app
+  //             file:// cascade and doesn't depend on the CEF image
+  //             decoders. Toggle it by adding `?mode=moonbit` to the
+  //             URL or by calling
+  //             `settings.imageRenderMode = 'moonbit'` from the
   //             dev console. localStorage is unavailable in the
   //             proton://app origin so we don't read it from there.
   imageRenderMode: "native",
 };
+// The render mode's internal name used to be "mizchi" — the name of an
+// image library this project no longer uses; the backend decodes with
+// `riantr/moonbit_image` now. A setting persisted before the rename
+// still carries the old name, so it is accepted and normalized here.
+function normalizeRenderMode(v) {
+  if (v === "moonbit" || v === "mizchi") return "moonbit";
+  if (v === "native") return "native";
+  return "";
+}
 try {
   const raw = localStorage.getItem(SETTINGS_KEY);
   if (raw) Object.assign(settings, JSON.parse(raw));
 } catch {}
+settings.imageRenderMode =
+  normalizeRenderMode(settings.imageRenderMode) || "native";
 // URL query string takes precedence over localStorage. Useful for
 // quickly switching the render path during dev without the devtools.
 try {
   const url = new URL(window.location.href);
-  const mode = url.searchParams.get("mode");
-  if (mode === "mizchi" || mode === "native") {
+  const mode = normalizeRenderMode(url.searchParams.get("mode"));
+  if (mode) {
     settings.imageRenderMode = mode;
   }
 } catch {}
@@ -495,8 +507,9 @@ function showImage(item, opts = {}) {
   // Two render modes:
   //   - "native" (default): the <img> element renders the bitmap and
   //     the canvas overlay is transparent except for annotations.
-  //   - "mizchi": the backend (mizchi/image) decodes + encodes the
-  //     image and we hand the resulting PNG to the canvas overlay.
+  //   - "moonbit": the backend (decode_image, via the
+  //     `riantr/moonbit_image` codec) decodes + encodes the image and
+  //     we hand the resulting PNG to the canvas overlay.
   //     The <img> element is hidden because the canvas now owns the
   //     bitmap.
   const mode = settings.imageRenderMode || "native";
@@ -504,10 +517,10 @@ function showImage(item, opts = {}) {
   // label-loader callbacks check the token to bail out when the user
   // has already moved on to the next image.
   const token = ++state.selectToken;
-  if (mode === "mizchi") {
+  if (mode === "moonbit") {
     els.image.hidden = true;
     els.image.style.transform = "";
-    return showImageMizchi(item, opts);
+    return showImageMoonbit(item, opts);
   }
   els.image.hidden = false;
   // A previous image may have been panned/zoomed. Clear its DOM transform
@@ -552,22 +565,22 @@ function showImage(item, opts = {}) {
 }
 
 ///| Bypass path: ask the backend to decode the source image with
-/// mizchi/image, then hand the resulting PNG to the canvas overlay.
+/// the resulting PNG to the canvas overlay.
 /// The view transform (zoom/pan) moves the image and annotations
 /// together because both are painted into the same static layer.
-async function showImageMizchi(item, opts = {}) {
+async function showImageMoonbit(item, opts = {}) {
   const selectStop = Log.start(Log.Event.IMAGE_SELECT, {
     index: state.currentIndex,
     path: item.path,
     w: item.w,
     h: item.h,
     bytes: item.size,
-    mode: "mizchi",
+    mode: "moonbit",
   });
   try {
     const reply = await invokeLabeler("decode_image", { path: item.path });
     if (!reply?.base64) {
-      showEmptyHint("mizchi decode failed: empty reply");
+      showEmptyHint("moonbit decode failed: empty reply");
       return;
     }
     const blob = await fetch(`data:${reply.mime};base64,${reply.base64}`).then(
@@ -580,9 +593,9 @@ async function showImageMizchi(item, opts = {}) {
     }
     requestAnimationFrame(layoutCanvas);
     if (opts.onLoaded) opts.onLoaded();
-    Log.emit("image.mizchi", { path: item.path, w: bitmap.width, h: bitmap.height });
+    Log.emit("image.moonbit", { path: item.path, w: bitmap.width, h: bitmap.height });
   } catch (err) {
-    showEmptyHint(`mizchi decode failed: ${err}`);
+    showEmptyHint(`moonbit decode failed: ${err}`);
   } finally {
     selectStop.stop();
   }
@@ -638,14 +651,14 @@ function loadLabelFor(item, opts = {}) {
 
 function layoutCanvas() {
   const stage = document.getElementById("stage");
-  // In mizchi mode the <img> element is hidden, so we can't read its
+  // In moonbit mode the <img> element is hidden, so we can't read its
   // getBoundingClientRect. Compute the fitted frame size from the
   // stage's content box and imgNatural instead, and pass it through
   // displayOverride so image-loader.js uses that instead of the <img>.
   let displayOverride = null;
-  if ((settings.imageRenderMode || "native") === "mizchi" && state.imgNatural.w > 0) {
+  if ((settings.imageRenderMode || "native") === "moonbit" && state.imgNatural.w > 0) {
     // Top-left alignment: anchor the frame at (0, 0) inside the stage so the
-    // mizchi canvas overlay renders the bitmap at the same coordinate as the
+    // moonbit canvas overlay renders the bitmap at the same coordinate as the
     // <img>-driven native path.
     displayOverride = {
       w: state.imgNatural.w,
@@ -2029,22 +2042,22 @@ function setupMenubar() {
   initSlider(els.autosaveSlider, els.autosaveLabel, "autosaveMs");
 
   // Render-mode select. Switches the image load path between the
-  // native <img> renderer and the mizchi backend round-trip. Triggers
+  // native <img> renderer and the backend round-trip. Triggers
   // a re-load of the current image so the change is visible
   // immediately. localStorage is unavailable on proton://app so
   // settings don't persist across runs in production — but the URL
-  // query `?mode=mizchi` still works in dev mode.
+  // query `?mode=moonbit` still works in dev mode.
   if (els.renderModeSelect) {
     els.renderModeSelect.value = settings.imageRenderMode || "native";
     els.renderModeSelect.addEventListener("change", () => {
-      const v = els.renderModeSelect.value;
-      if (v !== "native" && v !== "mizchi") return;
+      const v = normalizeRenderMode(els.renderModeSelect.value);
+      if (!v) return;
       settings.imageRenderMode = v;
       persistSettings();
       if (state.images && state.images.length > 0 && state.currentIndex >= 0) {
         flashHint(
-          v === "mizchi"
-            ? "已切换到 mizchi 后端解码,正在重新加载..."
+          v === "moonbit"
+            ? "已切换到 moonbit 后端解码,正在重新加载..."
             : "已切换到原生 img 渲染,正在重新加载...",
           "info",
         );
@@ -2476,7 +2489,7 @@ function syncNativeImageView(detail) {
   // math lands the annotation in the wrong place.
   //
   // This is true in BOTH native mode (<img> visible, canvas overlays
-  // labels) and mizchi mode (canvas renders the bitmap, <img> hidden) —
+  // labels) and moonbit mode (canvas renders the bitmap, <img> hidden) —
   // the difference is which element is the renderer, not how the rect
   // is computed. So we always update both.
   const r = detail.imageRect;
@@ -2516,7 +2529,7 @@ function setupViewSync() {
     const v = ev.detail;
     if (els.zoomReadout && v) els.zoomReadout.textContent = fmtZoom(v.zoom);
     // Native mode renders the bitmap in <img>, so mirror the canvas view
-    // transform there. Mizchi mode owns both bitmap and annotations in the
+    // transform there. Moonbit mode owns both bitmap and annotations in the
     // canvas and must not receive a second DOM transform.
     syncNativeImageView(v);
     // Track whether the user has manually adjusted the view. A freshly-fit
