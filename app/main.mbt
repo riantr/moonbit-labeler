@@ -54,7 +54,18 @@ async fn main {
     // setter returns `Unit` and mutates the app in place). Chaining
     // `.identifier(..).capability(..)` no longer type-checks, so the
     // builder is held in a local and configured step by step.
-    let app = @proton.file(
+    //
+    // `asset`, not `file`: an `AppEntry::File` is resolved against the
+    // *current working directory* (Proton's `resolve_entry_path` calls
+    // `@mbpath.Path(path).resolve()`), so the packaged app only found its
+    // entry HTML when it was started from its own directory. The zip we
+    // ship did not even carry that copy, so the app came up with no
+    // window at all. An `AppEntry::Asset` is resolved against the
+    // resource directory instead (`<exe dir>/Resources`, derived from
+    // `proton-package.json`), which is exactly where `proton_cli
+    // package` stages `frontend/dist` — so the entry is found whatever
+    // the working directory is, and no mirror copy is needed.
+    let app = @proton.asset(
       "MoonBit Labeler",
       "frontend/dist/index.html",
       width=1280,

@@ -138,19 +138,15 @@ exit /b 1
 :after_no_zip
 
 echo.
-echo === Copy Resources/frontend -> frontend (workaround for Proton 0.2.5) ===
-rem Proton 0.2.5's resolve_entry_path() uses cwd-relative .resolve(),
-rem so @proton.file("frontend/dist/index.html") looks at moonbit-labeler/frontend/
-rem not moonbit-labeler/Resources/frontend/. We mirror the dist there so
-rem the runtime can find the entry html regardless of cwd.
-if exist "%APP%\frontend\dist\index.html" rmdir /s /q "%APP%\frontend\dist"
-if not exist "%APP%\frontend" mkdir "%APP%\frontend"
-if exist "%APP%\Resources\frontend\dist" xcopy /E /I /Q /Y "%APP%\Resources\frontend\dist" "%APP%\frontend\dist" >nul
-if not exist "%APP%\frontend\dist\index.html" (
-  echo [error] entry html mirror failed: %APP%\frontend\dist\index.html
-  popd
-  exit /b 1
-)
+echo === No entry-html mirror needed anymore ===
+rem The mirror (Resources/frontend/dist -> frontend/dist) used to be
+rem required because Proton's resolve_entry_path() resolves an
+rem AppEntry::File against the CURRENT WORKING DIRECTORY. app/main.mbt
+rem now uses @proton.asset, which resolves against the resource
+rem directory (<exe dir>/Resources) instead — so the entry is found
+rem whatever the cwd is, and the mirror is dead weight in the zip.
+rem (The mirror used to be created AFTER the zip step, so the zip we
+rem shipped did not even carry it and the app came up with no window.)
 
 echo.
 echo === Done ===
