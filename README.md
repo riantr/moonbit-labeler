@@ -368,17 +368,23 @@ LunaPack info target/proton-dist/moonbit-labeler-0.2.18-bundle.exe
 
 ### What is inside the bundle
 
-244 entries, 438,888,641 bytes uncompressed; lz4 stores them in 247 MiB.
+244 entries, 438,884,020 bytes uncompressed; lz4 stores them in 247 MiB.
 Our own code is 0.8% of that.
 
-**Root (19 entries, 358,960,964 B)** — the application and the CEF runtime:
+The sizes below are measured from the published 0.2.18 asset. Its three
+Windows binaries (`moonbit-labeler.exe`, `cef_process.exe` and
+`proton-package.json`) are rebuilt on the release runner, so they differ
+from a local build by a few kilobytes; every other file is byte-identical
+across machines.
+
+**Root (19 entries, 358,956,343 B)** — the application and the CEF runtime:
 
 | File | Size | What it is |
 |---|---:|---|
-| `moonbit-labeler.exe` | 3,510,272 | the application itself |
-| `proton-package.json` | 564 | Proton's package manifest (the app reads its resource dir from it) |
+| `moonbit-labeler.exe` | 3,508,224 | the application itself |
+| `proton-package.json` | 551 | Proton's package manifest (the app reads its resource dir from it) |
 | `proton-update-version` | 7 | Proton's update-check stamp |
-| `cef_process.exe` | 637,440 | CEF's renderer subprocess |
+| `cef_process.exe` | 634,880 | CEF's renderer subprocess |
 | `libcef.dll` | 275,751,424 | the CEF/Chromium runtime — 62.8% of the whole payload |
 | `chrome_elf.dll` | 2,785,280 | Chromium's own ELF shim |
 | `d3dcompiler_47.dll` | 4,741,488 | DirectX shader compiler |
@@ -415,7 +421,7 @@ makes the app fail to start, with a control run (both sets present)
 passing in between, so Proton needs the exe directory and the resource
 directory populated separately. The locale packs, on the other hand, are
 trimmable: keeping only `en-US`, `zh-CN` and `zh-TW` — 12 of the 220
-files — drops 46.8 MiB from the payload (389,782,885 B for 36 files) and
+files — drops 46.8 MiB from the payload (389,778,264 B for 36 files) and
 the app still renders pixel-identically, because CEF falls back to
 `en-US.pak` for any locale that is not shipped. That trim is not applied
 yet; it would take the release zip from 187 MiB to about 176 MiB, since

@@ -96,7 +96,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > `scripts/make_zip.py` (Python stdlib, tracked) writes a spec-compliant
 > archive instead: forward-slash entry names, the `PK` signature,
 > deflated. Measured on the same staged tree: 196,222,238 B (187.1 MiB)
-> against 438,888,641 B uncompressed — 2.24x smaller than the tar — and
+> against 438,884,020 B uncompressed — 2.24x smaller than the tar — and
 > `zipfile.testzip()` reports no CRC errors.
 > `_build/package-app.bat` (gitignored) does the same two steps.
 
