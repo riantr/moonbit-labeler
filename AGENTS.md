@@ -5,12 +5,9 @@ image/video, 4 annotation primitives (rect / polygon / keypoint / binding), Pasc
 COCO export, CEF shell via Proton 0.4.0, plus an optional headless `--stdio` JSON-RPC bridge for
 non-CEF GUIs.
 
-**Domain-independent, and independent in origin.** The primitives, class system, on-disk format,
-and exporters assume nothing about the imagery; security X-ray inspection scanning is one
-application and only explains the bundled `data/` sample. And this is **not** a port of the C#
-tool `MOlabeler_V2.6` — no inheritance, no shared code, no design lineage. Do not reintroduce
-either framing in docs or commit messages; they have been corrected in README.md and
-README.mbt.md.
+**Domain-independent.** The primitives, class system, on-disk format, and exporters assume nothing
+about the imagery; security X-ray inspection scanning is one application and only explains the
+bundled `data/` sample.
 
 Full project description, IPC surface, and data layout: see [README.md](README.md).
 Video-mode details: see [doc/VIDEO_LABELING.md](doc/VIDEO_LABELING.md).

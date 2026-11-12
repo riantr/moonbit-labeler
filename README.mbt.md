@@ -14,11 +14,6 @@ dataset contains — but another dataset only requires a different image
 folder and class list. Likewise the CARS legacy schema is one supported
 schema variant, not a domain requirement.
 
-This is an independent implementation, not a port. It has no inheritance,
-no shared code, and no design lineage relationship to the C# tool
-`MOlabeler_V2.6`; the only connection is that both solve the same general
-image-annotation problem.
-
 For the full design doc see the project repo's
 [README.md](https://github.com/riantr/moonbit-labeler#readme). For
 data format and project layout see that repo's README and

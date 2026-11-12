@@ -15,12 +15,6 @@ and the class list, nothing more. The CARS legacy-schema round-trip
 described under [Data layout](#data-layout) is likewise one supported
 schema variant rather than a domain requirement.
 
-**This is an independent implementation, not a port.** It has no
-inheritance, no shared code, and no design lineage relationship to the
-C# tool `MOlabeler_V2.6`. The only connection is that both solve the
-same general image-annotation problem; any overlap in feature set
-follows from that problem rather than from derivation.
-
 ```
 ┌─ menubar (File / Annotate / View / Settings / Tools) ───────────────┐
 │ ┌─ sidebar ───────────┐ ┌─ canvas stage (image or video frame) ──┐ │
