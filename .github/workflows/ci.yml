@@ -249,8 +249,25 @@ jobs:
       # paths above -- otherwise every run re-downloads it. Only
       # `moon build` and `proton_cli package` need it; `moon check` and
       # `moon test` were measured not to (see the test-linux job).
+      #
+      # The download is retried. It is ~850 MB on Windows and a single
+      # flaky connection kills the whole job before any of our code runs
+      # -- which is exactly how the run at sha e88992b failed: step 7
+      # ("Fetch the Proton CEF SDK") died and steps 8-13 (moon check /
+      # moon test / moon build) were skipped, so the red told us nothing
+      # about the tree. A cold cache is the worst case; a warm one makes
+      # the first attempt succeed.
       - name: Fetch the Proton CEF SDK
-        run: proton_cli cef setup
+        run: |
+          $ok = $false
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "proton_cli cef setup: attempt $i of 3"
+            proton_cli cef setup
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            Write-Host "attempt $i failed with exit code $LASTEXITCODE"
+            if ($i -lt 3) { Start-Sleep -Seconds (30 * $i) }
+          }
+          if (-not $ok) { throw "proton_cli cef setup failed after 3 attempts" }
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
@@ -291,6 +308,33 @@ jobs:
       # This is coverage that the Windows exe actually builds.
       - name: proton_cli package
         run: proton_cli package --format app
+
+      # The stdio-bridge black-box tests drive the *packaged* app over the
+      # real --stdio JSON-RPC bridge -- the same wire format the CEF
+      # frontend uses. They cover the async half of the ops that a MoonBit
+      # `test` block cannot call (the compiler rejects it: "cannot call
+      # async function in non-async function").
+      #
+      # The packaged app dir is what they need: the exe links against
+      # libcef even in --stdio mode, so a bare `moon build` output exits
+      # with STATUS_DLL_NOT_FOUND (0xC0000135).
+      #
+      # ffmpeg is installed so the video test can assert the *success*
+      # path (--expect-ffmpeg) instead of only the "tool missing" path.
+      - name: Install ffmpeg
+        run: |
+          choco install ffmpeg -y --no-progress
+          # choco writes the machine PATH; this step's shell was started
+          # before that, so re-read it.
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+          ffmpeg -version
+
+      - name: Stdio bridge black-box tests
+        run: |
+          $exe = "target/proton-dist/moonbit-labeler/moonbit-labeler.exe"
+          if (-not (Test-Path $exe)) { throw "packaged exe not found: $exe" }
+          node tests/stdio/class_revision_stdio_blackbox.test.mjs $exe
+          node tests/stdio/video_stdio_blackbox.test.mjs $exe --expect-ffmpeg
 
   # app_moui/ is a SECOND MoonBit module -- its own moon.mod, its own
   # .mooncakes/ -- and it is not a workspace member: moon.work lists only
