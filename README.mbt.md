@@ -1,3 +1,5 @@
+![MoonBit Labeler](https://raw.githubusercontent.com/riantr/moonbit-labeler/main/docs/logo.png)
+
 # MoonBit Labeler
 
 A native desktop annotation tool for images and video frames, built on
@@ -30,7 +32,7 @@ data format and project layout see that repo's README and
   mooncakes binary package and is installed with:
 
   ```sh
-  moon install moonbit-community/proton_cli@0.4.0
+  moon install moonbit-community/proton_cli@0.9.0
   ```
 
   which drops it in `~/.moon/bin`. **Pin the version to the one in
@@ -45,7 +47,7 @@ data format and project layout see that repo's README and
 
 ```sh
 # From the project root:
-moon install moonbit-community/proton_cli@0.4.0  # the CLI itself
+moon install moonbit-community/proton_cli@0.9.0  # the CLI itself
 moon update                                     # sync moon.mod deps
 proton_cli setup                                 # download the CEF runtime
 cd frontend && npm install && cd ..             # Vite + frontend deps
@@ -84,13 +86,29 @@ zip step, which is upstream-broken on Windows: `create_windows_zip` in
 `proton_package/lib/windows.mbt` passes a `.staging` suffix to
 `Compress-Archive -DestinationPath`, and `Compress-Archive` only accepts
 `.zip`. The staged `app/` directory is produced either way, so zip it
-yourself afterwards.
+yourself with the built-in `tar`:
+
+```sh
+cd target/proton-dist
+tar -a -cf moonbit-labeler-0.2.15.zip moonbit-labeler
+```
+
+The app finds its frontend through the resource directory
+(`<exe dir>/Resources`), so it starts from any working directory.
 
 ### Verify a build
 
 ```sh
-moon test --target native           # 55 tests (blackbox + unit)
+moon test --target native           # 85 tests (blackbox + unit)
 node frontend/qa/webkit_picker_blackbox.test.mjs   # frontend blackbox
+
+# The async half of the IPC (the class rename and the video path) is
+# covered by Node scripts that drive the real --stdio bridge. They need an
+# executable with the CEF runtime beside it, i.e. the packaged app:
+node tests/stdio/class_revision_stdio_blackbox.test.mjs \
+     target/proton-dist/moonbit-labeler/moonbit-labeler.exe
+node tests/stdio/video_stdio_blackbox.test.mjs \
+     target/proton-dist/moonbit-labeler/moonbit-labeler.exe --expect-ffmpeg
 ```
 
 ### Run
@@ -118,7 +136,7 @@ in the system directory.
 ├── app/                            # runnable entry (CEF + stdio)
 ├── extensions/labeler/             # 27 IPC ops + label/VOC/YOLO/COCO pipeline
 ├── frontend/                       # Vite + vanilla-JS UI (built into the exe at pack time)
-├── moon.mod                        # deps: proton@0.4.0, proton_contract@0.4.0, moonbit_image@0.3.7, async@0.22.5
+├── moon.mod                        # deps: proton@0.9.0, proton_contract@0.9.0, moonbit_image@0.3.9 (async comes from the builtin moonbitlang/core)
 ├── proton.project.json             # identifier, frontend, package (output dir, formats, version)
 └── AGENTS.md                       # setup + commands + smoke-test recipe (read first)
 ```
@@ -143,5 +161,5 @@ your own host (Python Qt shell, Go service, embedded WASM, etc.). The
 Apache License 2.0 — see [LICENSE](https://github.com/riantr/moonbit-labeler/blob/main/LICENSE).
 
 The image codec comes from
-[`riantr/moonbit_image@0.3.7`](https://mooncakes.io/riantr/moonbit_image)
+[`riantr/moonbit_image@0.3.9`](https://mooncakes.io/riantr/moonbit_image)
 (MIT / Apache-2.0, original copyright 2025 lws).

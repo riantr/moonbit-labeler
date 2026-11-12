@@ -82,25 +82,25 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > `let staging = destination + ".staging.zip"` in `proton_package/lib/windows.mbt`.
 
 > **Upstream bug in `proton_app` entry path resolution (Windows).** Reported on 0.2.5
-> and **confirmed still present on 0.3.4** (re-verified 2026-10-07 after the
-> 0.3.3 → 0.3.4 bump by inspecting
-> `.mooncakes/moonbit-community/proton/facade_entry.mbt`; `resolve_entry_path`
-> is still at lines 55-62 and still calls `@mbpath.Path(native_path).resolve()`.
-> First reported against 0.3.3 on 2026-09-24).
-> The helper `resolve_entry_path()` in `proton/facade_entry.mbt` does
-> `@mbpath.Path(path).resolve()` — that's cwd-relative, not resource-relative.
-> So `@proton.file("frontend/dist/index.html")` looks at
-> `<launch-cwd>/frontend/dist/index.html`, NOT `<dist>/Resources/frontend/dist/index.html`
-> where the package step actually staged the file. Symptoms: exe starts then
-> aborts with
-> `failed to read HTML entry <launch-cwd>/frontend/dist/index.html: @os_error.OSError: @fs.realpath(): ...: The system cannot find the path specified.`
-> followed by a null-pointer cascade in the async runtime.
-> `resolve_asset_path()` (used by `AppEntry::Asset`) does the right thing:
-> it joins `runtime_resource_dir()` for relative paths. **Workaround:** the
-> wrapper script mirrors `Resources/frontend/dist/` → `frontend/dist/`
-> inside the staged app dir, so the cwd-relative lookup succeeds. This
-> works for any launch cwd that lives under (or below) the staged app dir.
-> Track upstream fix: copy the `runtime_resource_dir()` branch from
+> and **confirmed still present on 0.9.0** (re-verified 2026-11-12 in
+> `.mooncakes/moonbit-community/proton/facade_entry.mbt`: `resolve_entry_path`
+> still calls `@mbpath.Path(native_path).resolve()` — cwd-relative).
+> **We no longer depend on it.** `app/main.mbt` uses `@proton.asset(...)`
+> instead of `@proton.file(...)`, which routes through `resolve_asset_path()` —
+> the one that joins `runtime_resource_dir()` for relative paths. For a packaged
+> app that is `<exe dir>/Resources` (derived from `proton-package.json`), which
+> is exactly where `proton_cli package` stages `frontend/dist`. The entry is
+> therefore found whatever the working directory is, and **no mirror copy of
+> `frontend/dist` is needed any more**.
+>
+> Why this mattered: the old workaround mirrored `Resources/frontend/dist/` →
+> `frontend/dist/` in the staged app dir, and the packaging script did that
+> **after** the zip step — so the zip we shipped did not carry the mirror, and
+> the app in it started with **no window at all** (CEF came up, but there was
+> no page target: the entry HTML was never read). Measured 2026-11-12 on the
+> 0.2.14 zip: `cdp-screenshot.mjs` reports "no page target found".
+> Do not go back to `@proton.file`, and do not re-add the mirror.
+> Track upstream fix anyway: copy the `runtime_resource_dir()` branch from
 > `resolve_asset_path` into `resolve_entry_path` in
 > `moonbit-community/proton/proton_app/facade_entry.mbt`.
 - Frontend only:                 `cd frontend && npm run dev` / `npm run build`
@@ -113,8 +113,11 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 ## Project layout
 
 - `app/`                   — runnable entry. `main.mbt` routes to one of two modes:
-  - CEF/Proton (default): `@proton.file(...).identifier(...).capability(...).run_or_abort()` —
-    the 0.4.0 `App` builder API that loads `frontend/dist/index.html` into a CEF webview.
+  - CEF/Proton (default): `@proton.asset(...).identifier(...).capability(...).run_or_abort()` —
+    the 0.9.0 `App` builder API that loads `frontend/dist/index.html` into a CEF webview.
+    **`asset`, not `file`**: an asset entry resolves against the resource dir
+    (`<exe dir>/Resources`), a file entry against the cwd — see the upstream-bug
+    note above.
   - `--stdio` (headless): dispatches the same 27 ops as JSON-RPC over stdin/stdout (see
     "Stdio JSON-RPC bridge" below). Selected by passing `--stdio` as the first arg.
   `stdio_main.mbt` holds the stdio loop. Both modes share the `@labeler.dispatch_op`
@@ -152,7 +155,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   frontend dev/build commands, product name + version + output dir + formats.
   (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration; the 0.2.5 → 0.3.3
   migration kept the same `proton.project.json` schema, as did 0.4.0 and 0.9.0.)
-- `moon.mod`               — `riantr/moonbit_labeler` v0.2.14, depends on `moonbit-community/proton@0.9.0`,
+- `moon.mod`               — `riantr/moonbit_labeler` v0.2.15, depends on `moonbit-community/proton@0.9.0`,
   `proton_contract@0.9.0`, and `riantr/moonbit_image@0.3.9`.
   The async runtime is **not** a declared dependency any more: it comes from the
   toolchain's builtin `moonbitlang/core` module, so `moonbitlang/core/async` is

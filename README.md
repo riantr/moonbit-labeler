@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="docs/logo.png" alt="MoonBit Labeler" width="260" />
+</div>
+
 # MoonBit Labeler
 
 A desktop annotation tool for images and video frames, built natively
@@ -53,24 +57,29 @@ moon check --target native --diagnostic-limit 40
 moon test --target native
 proton_cli package --format app
 # Output: target\proton-dist\moonbit-labeler\moonbit-labeler.exe
+
+# Ship it: zip the staged directory with the built-in tar
+cd target\proton-dist
+tar -a -cf moonbit-labeler-0.2.15.zip moonbit-labeler
 ```
 
 Use `--format app` rather than the bare `proton_cli package`: the default
-also runs a zip step that is upstream-broken on Windows. The staged `app/`
-directory is produced either way, so zip it yourself afterwards — see
-[AGENTS.md](AGENTS.md) for the workaround.
+also runs a zip step that is upstream-broken on Windows. The staged
+`app/` directory is produced either way, so zip it yourself afterwards —
+the `tar` line above does it, and [Build & run](#build--run) explains why.
 
 ## Features
 
 - **Image annotation** — 4 primitives (rectangle, polygon, keypoint,
   binding), 1-9 hotkeys for class switching, undo/redo, autosave,
   prefix/suffix batch ops.
-- **Video annotation** — frames are flat annotations with a `frames: []`
-  field that lists which frames the annotation applies to. Frame timeline
-  + copy-to-next + coverage badge. See [doc/VIDEO_LABELING.md](doc/VIDEO_LABELING.md).
+- **Video annotation** — one JSON per video, holding one annotation set
+  per frame in a `frame_labels` array (the top-level `infos` / `bindings`
+  stay the "default set" so older files read unchanged). Frame timeline +
+  copy-to-next + coverage badge. See [doc/VIDEO_LABELING.md](doc/VIDEO_LABELING.md).
 - **Two render modes** — native browser `<img>` (default) and backend
-  decode + BMP (`image/bmp` data URL), selectable at runtime via the
-  Settings menu.
+  decode (`moonbit`, re-encoded to BMP and handed over as a data URL),
+  selectable at runtime via the Settings menu.
 - **Export** — Pascal VOC XML and YOLO TXT format with classes.txt,
   per-image batch export to a chosen folder.
 - **Import** — bring external annotations into the on-disk JSON
@@ -98,6 +107,11 @@ directory is produced either way, so zip it yourself afterwards — see
   every label document of the dataset. The rename is previewed first
   (how many annotations and files it touches) and confirmed before
   anything is written; for a video it reaches every frame's set.
+- **Class context menu** — right-clicking a class in the sidebar opens a
+  menu with 替换至当前目标, which re-classifies the annotation that is
+  selected on the canvas to that class (the geometry is untouched). The
+  item is greyed out and unselectable while no annotation is selected, so
+  it never fails silently.
 
 ## Stack
 
@@ -143,8 +157,10 @@ don't match the documented target.
 │       ├── webkit-pickers.js          # <input type="file"> folder/file pickers
 │       ├── lazy-images.js             # IntersectionObserver sidebar thumbs
 │       ├── log.js                     # per-stage timing instrumentation
+│       ├── logo.png                   # app logo (small enough that the build inlines it)
 │       └── style.css                  # all CSS in one place
-├── data/                              # local sample dataset (Image@CARS.Part.01)
+├── data/                              # local sample dataset (Image@skin / Label@skin)
+├── docs/logo.png                      # the logo, at README size
 ├── doc/VIDEO_LABELING.md
 ├── proton.project.json                # 0.9.0 canonical app config (identifier, backend, frontend, package)
 ├── moon.mod                           # deps: proton@0.9.0 + proton_contract@0.9.0 + moonbit_image@0.3.9 (async comes from the builtin moonbitlang/core)
@@ -185,6 +201,26 @@ The backend normalizes both the legacy `points: "x,y;x,y;..."` shape
 (CARS) and the modern `points: [[x, y], ...]` shape on read. Saves always
 use the modern shape.
 
+A **video** uses the same one-JSON-per-file convention, with the
+per-frame sets in a `frame_labels` array:
+
+```json
+{
+  "img_name": "clip_001.mp4",
+  "infos": [],
+  "bindings": [],
+  "frame_labels": [
+    { "frames": [12], "infos": [ /* ... */ ], "bindings": [ /* ... */ ] },
+    { "frames": [24, 25], "infos": [ /* ... */ ], "bindings": [ /* ... */ ] }
+  ]
+}
+```
+
+The top-level `infos` / `bindings` / `frames` stay the **default set**
+(empty `frames` = "applies to every frame"), so a file written by the
+older flat schema reads back unchanged. The full rules are in
+[doc/VIDEO_LABELING.md](doc/VIDEO_LABELING.md).
+
 ## Build & run
 
 This is a MoonBit Proton native desktop app. See [AGENTS.md](AGENTS.md)
@@ -207,13 +243,27 @@ moonbit-community/proton_cli@<version>` — pinned to the version in
 version.
 
 The packaged binary is at
-`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`. (The `zip` format
-in `proton.project.json` would produce a sibling `moonbit-labeler-0.2.14.zip` —
-self-contained, drop on any Windows machine, unzip, double-click the exe.
-Note: Proton's built-in zip step is upstream-broken on Windows (reported on
-0.2.5, still unverified as fixed on 0.3.4); ship
-the `app/` dir with `proton_cli package --format app` and zip manually via
-`_build/package-app.bat`. See [AGENTS.md](AGENTS.md) for the workaround.)
+`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`. To ship it, zip
+the staged directory yourself — Proton's built-in zip step is
+upstream-broken on Windows (`create_windows_zip` in
+`proton_package/lib/windows.mbt` hands `Compress-Archive` a `.staging`
+suffix, and `Compress-Archive` only accepts `.zip`, so the step exits 1
+and nothing is zipped). Use the built-in `tar`, which needs no extra
+tool:
+
+```powershell
+proton_cli package --format app          # stage the app; skip the broken zip step
+cd target\proton-dist
+tar -a -cf moonbit-labeler-0.2.15.zip moonbit-labeler
+```
+
+The result is self-contained: drop it on any Windows 10+ machine, unzip,
+and double-click `moonbit-labeler.exe`. The app finds its frontend
+through the resource directory (`<exe dir>/Resources`), so it starts
+from **any** working directory — no "run it from this folder" caveat.
+
+See [AGENTS.md](AGENTS.md) for the upstream bug report and the
+`package-app.bat` wrapper that automates the same two steps.
 
 ## Keyboard shortcuts
 
