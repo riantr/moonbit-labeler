@@ -1,31 +1,39 @@
-// examples/read_label — minimal demo of the @labeler.dispatch_op
-// embedding API. Reads a single label JSON file from disk via the
-// `read_label` IPC op, parses the normalized schema, and prints the
-// result. Useful as a quick smoke test outside the CEF shell.
-//
-// Usage:
-//   moon run examples/read_label --target native -- <label_path.json>
-//
-// The JSON must already be on disk in the modern normalized schema
-// (see extensions/labeler/labeler.mbt for the `read_label` contract).
-
+///|
+/// A minimal demo of the `@labeler.dispatch_op` embedding API.
+///
+/// It reads the label JSON that belongs to one image through the
+/// `read_label` op -- the same code path the frontend uses when it
+/// issues `ext:labeler/read_label`, with the JSON-RPC frame replaced by
+/// a direct call -- and prints the normalized result.
+///
+/// Usage:
+///   moon run examples/read_label --target native -- <image_path>
+///
+/// The argument is an IMAGE path, not a label path: the op derives the
+/// label path from the `Image@<name>` / `Label@<name>` folder layout
+/// (see `extensions/labeler/labeler.mbt` for the `read_label` contract).
 async fn main {
   let args = @env.args()
   if args.length() < 2 {
-    println("usage: read_label <label_path.json>")
+    println("usage: read_label <image_path>")
     return
   }
-  let label_path = args[1]
+  let image_path = args[1]
 
-  // Build the request payload (the same JSON shape the frontend
-  // would POST via `ext:labeler/read_label`).
-  let payload : Json = { "path": Json::string(label_path) }
+  // The same JSON shape the frontend would POST via
+  // `ext:labeler/read_label`.
+  let payload = ToJson::to_json(ReadLabelPayload::{ image_path, })
 
-  // Dispatch via the public embedding entry point. We import the
-  // labeler module via its full module path; the `@labeler` shortcut
-  // only works inside the riantr/moonbit_labeler main package.
-  let reply = @riantr.moonbit_labeler.labeler.dispatch_op("read_label", payload)
+  // Dispatch through the public embedding entry point. The package path
+  // lives in `moon.pkg`; the code refers to the package as `@labeler`.
+  let reply = @labeler.dispatch_op("read_label", payload)
 
-  // Pretty-print the parsed label.
-  println(reply.stringify(indent=2))
+  println(reply.stringify())
+}
+
+///|
+/// The `read_label` request payload.
+#derive(ToJson)
+struct ReadLabelPayload {
+  image_path : String
 }
