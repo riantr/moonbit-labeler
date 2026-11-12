@@ -16,11 +16,6 @@ dataset contains — but another dataset only requires a different image
 folder and class list. Likewise the CARS legacy schema is one supported
 schema variant, not a domain requirement.
 
-For the full design doc see the project repo's
-[README.md](https://github.com/riantr/moonbit-labeler#readme). For
-data format and project layout see that repo's README and
-[doc/VIDEO_LABELING.md](https://github.com/riantr/moonbit-labeler/blob/main/doc/VIDEO_LABELING.md).
-
 ## Build from source
 
 ### Prerequisites
