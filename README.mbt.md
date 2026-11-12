@@ -147,13 +147,87 @@ any IPC layer. `extensions/labeler/dispatch.mbt` exposes a single entry
 point:
 
 ```mbt nocheck
-pub fn dispatch_op(op : String, payload : Json) -> Json raise
+pub async fn dispatch_op(op : String, payload : Json) -> Json
 ```
 
 This is what `app/stdio_main.mbt` calls, and what you can call from
 your own host (Python Qt shell, Go service, embedded WASM, etc.). The
 27 op names and their request/response JSON shapes are listed in
 `extensions/labeler/extension.mbt` and the project README.
+
+### Consuming it from another MoonBit project
+
+The backend is published to mooncakes.io, so another MoonBit project can
+depend on it without the CEF runtime and without the source tree:
+
+```sh
+moon add riantr/moonbit_labeler@0.2.15
+```
+
+which pins the dependency in `moon.mod`:
+
+```
+import {
+  "riantr/moonbit_labeler@0.2.15",
+}
+```
+
+Three details decide whether that actually builds, and all three follow
+from how the package is built rather than from any rule of their own:
+
+- **The published module is native-only.** It declares
+  `supported_targets = "+native"`, so the consuming package has to
+  declare `supported_targets = "native"` as well.
+- **The async runtime must be declared.** `dispatch_op` is an async
+  function, so an `async fn main` needs `moonbitlang/core/async` in the
+  package's `moon.pkg`, together with
+  `options("allow-experimental-packages": ["moonbitlang/core/async"])` —
+  that package is still flagged experimental upstream.
+- **The package goes in `moon.pkg`, and nowhere else.** The `moon.pkg`
+  import block is what makes `@labeler` resolvable. There is no file-level
+  `import` line, and adding one is a parse error in this toolchain
+  (`import <bare path>` is not valid syntax — the path form belongs in
+  `moon.pkg`, and the file refers to the package as `@labeler`).
+
+A minimal consumer:
+
+```mbt nocheck
+// cmd/main/moon.pkg
+import {
+  "riantr/moonbit_labeler/extensions/labeler",
+  "moonbitlang/core/async",
+  "moonbitlang/core/json",
+}
+
+supported_targets = "native"
+
+pkgtype(kind: "executable")
+
+options(
+  "allow-experimental-packages": [
+    "moonbitlang/core/async",
+  ],
+)
+```
+
+```mbt nocheck
+// cmd/main/main.mbt
+async fn main raise {
+  let ops = @labeler.dispatch_op_list()
+  println("op count = " + ops.length().to_string())
+
+  let reply = @labeler.dispatch_op(
+    "list_images",
+    @json.parse("{\"path\":\"C:/some/images\"}"),
+  )
+  println(reply.stringify())
+}
+```
+
+`dispatch_op_list()` returns the 27 op names, and
+`parse_label_text(text, fallback_img_name) -> (String, String) raise`
+round-trips one label document through the shared normalizer without
+touching the filesystem.
 
 ## License
 
