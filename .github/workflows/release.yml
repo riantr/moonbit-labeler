@@ -1,0 +1,268 @@
+name: release
+
+# Builds the Windows artifacts and attaches them to a GitHub Release.
+#
+# This is a SEPARATE workflow from publish.yml on purpose:
+#
+#   - publish.yml ships the pure-MoonBit package to mooncakes.io. It runs
+#     with `permissions: contents: read` and deliberately never creates a
+#     release (see its own header comment).
+#   - this one needs `contents: write` to upload assets, and it needs the
+#     Proton CEF SDK, so it only runs on Windows.
+#
+# Both are triggered by a `v*` tag push, and they are independent: a green
+# mooncakes publish is not a precondition for a GitHub Release, and vice
+# versa. Each is the authority for its own artefact.
+
+on:
+  push:
+    tags:
+      - "v*"
+  # A tag pushed before this workflow existed will never re-fire the
+  # push trigger, so a release can be (re)built by hand for an existing
+  # tag. The tag has to exist already — this workflow never creates one.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing tag to publish, e.g. v0.2.15"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+# One release at a time. A half-finished upload that gets cancelled leaves
+# the release page with some assets missing, which is worse than a slow
+# queue.
+concurrency:
+  group: github-release
+  cancel-in-progress: false
+
+env:
+  # The packer that turns the staged Proton application into a single-file,
+  # self-extracting executable.
+  #
+  # Pinned rather than @latest, for the same reason proton_cli is pinned in
+  # ci.yml: a release pipeline that floats is one you cannot reproduce, and
+  # a packer change would silently alter the bytes we publish. This is the
+  # one line to bump when upstream ships a new version.
+  LUNAPACK_VERSION: "0.1.20"
+
+jobs:
+  bundle:
+    name: bundle + release (windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install moon
+        # Same URL as ci.yml: `install/windows.ps1` does not exist, which is
+        # what made every historical run in this repo fail before moon was
+        # even installed.
+        run: |
+          Invoke-WebRequest -UseBasicParsing -Uri https://cli.moonbitlang.com/install/powershell.ps1 -OutFile install.ps1
+          powershell -ExecutionPolicy Bypass -File install.ps1
+          "$env:USERPROFILE\.moon\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Cache moon deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            .mooncakes
+            .moon-agent-cache
+            .proton
+            # The CEF runtime store: ~850 MB per platform. Proton 0.3.3 moved
+            # it out of the repo to ~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk.
+            ~/.proton/store
+          key: moon-cache-${{ runner.os }}-${{ hashFiles('moon.mod', 'app_moui/moon.mod', 'proton.project.json') }}
+          restore-keys: moon-cache-${{ runner.os }}-
+
+      # A cold runner has an empty registry index, and `.mooncakes/` is
+      # gitignored, so every mooncakes dependency fails to resolve until
+      # this runs. Same cold-runner problem as every job in ci.yml.
+      - name: Fetch registry index
+        run: moon update
+
+      # proton_cli is an ordinary mooncakes binary package. The version is
+      # pinned to the one in moon.mod: all published Proton modules share one
+      # lockstep version, so an unpinned install would drift out of
+      # lockstep with the framework the app is built against.
+      - name: Install proton_cli
+        run: moon install moonbit-community/proton_cli@0.9.0
+
+      # Populates the CEF runtime store that proton/build.mjs points the
+      # linker at, and installs the `cef_process.exe` subprocess binary.
+      # ~850 MB on Windows, so it is retried rather than lost to one flaky
+      # connection.
+      - name: Fetch the Proton CEF SDK
+        run: |
+          $ok = $false
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "proton_cli setup: attempt $i of 3"
+            proton_cli setup
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            Write-Host "attempt $i failed with exit code $LASTEXITCODE"
+            if ($i -lt 3) { Start-Sleep -Seconds (30 * $i) }
+          }
+          if (-not $ok) { throw "proton_cli setup failed after 3 attempts" }
+
+      # LunaPack is a mooncakes binary package too, so `moon install` builds
+      # it and drops the executable in ~/.moon/bin (already on GITHUB_PATH).
+      #
+      # It MUST be the native build, and it must be invoked as
+      # `LunaPack bundle ...` rather than through `moonx`: the moonx path
+      # runs the wasm target, and a wasm build has no launcher to embed, so
+      # the "bundle" it produces carries the payload but does not start on
+      # its own. The native CLI embeds itself as the launcher, which is what
+      # makes the result a self-extracting executable.
+      #
+      # STUDIO MODE IS NEVER USED HERE. LunaPack's GUI front end is entered
+      # only by the `--GUI` / `--gui` / `--studio` flags, and this workflow
+      # uses the `bundle` and `verify` subcommands, which are plain
+      # command-line paths. That matters on a CI runner: Studio opens a
+      # window and blocks forever on a headless machine (and the wasm build
+      # refuses it outright with "--GUI needs the native LunaPack
+      # executable"). The assertion below fails the job if the flag ever
+      # creeps in.
+      - name: Install LunaPack
+        run: |
+          moon install riantr/LunaPack@$env:LUNAPACK_VERSION
+          # Headless sanity check: the CLI must answer on the command line
+          # and must not try to open a window.
+          $usage = LunaPack --help 2>&1 | Out-String
+          if ($usage -notmatch 'lunapack bundle') {
+            throw "the LunaPack CLI did not answer with its usage text (got: $($usage.Trim()))"
+          }
+          if ($usage -match '--GUI\s+open LunaPack Studio') {
+            throw "unexpected: the LunaPack CLI is offering to open Studio"
+          }
+          Write-Host "LunaPack CLI is headless and ready (no Studio mode)"
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # proton_cli package runs `npm run build` itself (the `before_build`
+      # hook in proton.project.json), but it needs the dependencies present.
+      - name: Frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      # --format app skips the upstream zip-step bug in proton_cli
+      # (create_windows_zip hands Compress-Archive a ".staging" suffix,
+      # which it rejects because the extension picks the archive format).
+      # The portable zip is assembled below instead.
+      #
+      # --release matters: without it proton_cli packages the DEBUG build
+      # of the app, which is a different (and slower, and larger) binary
+      # than the one that was tested locally. ci.yml's packaging step is
+      # a build smoke test and can stay on the default profile; this one
+      # produces the artefact that gets published, so it uses the same
+      # invocation as _build/package-app.bat.
+      #
+      # This stages `target/proton-dist/moonbit-labeler/` with the CEF
+      # runtime and `Resources/frontend/dist/` — the app entry resolves
+      # against the resource directory, so the staged tree is complete on
+      # its own and needs no cwd-relative mirror.
+      - name: proton_cli package
+        run: |
+          proton_cli package --release --output "$((Get-Location).Path)\target\proton-dist" --format app
+          $exe = "target/proton-dist/moonbit-labeler/moonbit-labeler.exe"
+          if (-not (Test-Path $exe)) { throw "packaged app missing: $exe" }
+          Get-Item $exe | ForEach-Object { "app exe: $($_.Length) bytes" }
+
+      # The built-in `tar` with -a produces a zip, and it needs no extra
+      # tool. The write goes to a `.new` file that is copied over the
+      # final name, because Defender/Search Indexer can hold a just-written
+      # archive open for a moment and the direct write then fails with a
+      # sharing violation.
+      - name: Assemble the portable zip
+        run: |
+          $version = (Select-String -Path moon.mod -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $out = "target/proton-dist"
+          $zip = "$out/moonbit-labeler-$version.zip"
+          tar -a -cf "$zip.new" -C $out "moonbit-labeler"
+          if ($LASTEXITCODE -ne 0) { throw "tar failed with exit code $LASTEXITCODE" }
+          $ok = $false
+          for ($i = 1; $i -le 10; $i++) {
+            try {
+              Copy-Item -LiteralPath "$zip.new" -Destination $zip -Force
+              $ok = $true
+              break
+            } catch {
+              Write-Host "copy attempt $i failed: $($_.Exception.Message)"
+              Start-Sleep -Seconds 1
+            }
+          }
+          if (-not $ok) { throw "could not write $zip" }
+          Remove-Item -LiteralPath "$zip.new" -Force
+          Get-Item $zip | ForEach-Object { "zip: $($_.Length) bytes" }
+
+      # The single-file bundle: one download for the user, no unzip step.
+      # lz4 beats gzip here because the payload is mostly already-compressed
+      # CEF binaries, and it is roughly 40% smaller than the zip.
+      - name: Build the single-file bundle
+        run: |
+          $version = (Select-String -Path moon.mod -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          LunaPack bundle `
+            -i target/proton-dist/moonbit-labeler/moonbit-labeler.exe `
+            -o "target/proton-dist/moonbit-labeler-$version-bundle.exe" `
+            --Files target/proton-dist/moonbit-labeler `
+            --compression-method lz4 `
+            --name moonbit-labeler `
+            --version $version
+          Get-Item "target/proton-dist/moonbit-labeler-$version-bundle.exe" | ForEach-Object { "bundle: $($_.Length) bytes" }
+
+      # Re-extracts the bundle and checksums every entry. This is the gate
+      # that a truncated or mis-packed asset never reaches the release page.
+      - name: Verify the bundle
+        run: |
+          $version = (Select-String -Path moon.mod -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          LunaPack verify "target/proton-dist/moonbit-labeler-$version-bundle.exe"
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Select-String -Path moon.mod -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "${{ inputs.tag }}"
+          } else {
+            "${{ github.ref_name }}"
+          }
+
+          # The guard publish.yml has, for the same reason: the registry and
+          # the release page publish moon.mod's version, so a tag that
+          # disagrees with it ships the wrong thing silently.
+          if ($tag -ne "v$version") {
+            throw "tag '$tag' does not match moon.mod version '$version'. Fix moon.mod before tagging."
+          }
+
+          $assets = @(
+            "target/proton-dist/moonbit-labeler-$version.zip",
+            "target/proton-dist/moonbit-labeler-$version-bundle.exe"
+          )
+          foreach ($a in $assets) {
+            if (-not (Test-Path $a)) { throw "release asset missing: $a" }
+          }
+
+          # An existing release (a hand-dispatched re-run for a tag that was
+          # already released) gets its assets replaced rather than failing.
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "release $tag already exists; replacing its assets"
+            gh release upload $tag --repo $env:GITHUB_REPOSITORY --clobber @assets
+          } else {
+            $notes = ".github/release-notes.md"
+            if (Test-Path $notes) {
+              gh release create $tag --repo $env:GITHUB_REPOSITORY --title "MoonBit Labeler $tag" --notes-file $notes @assets
+            } else {
+              gh release create $tag --repo $env:GITHUB_REPOSITORY --title "MoonBit Labeler $tag" --generate-notes @assets
+            }
+          }
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
