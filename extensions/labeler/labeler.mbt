@@ -383,6 +383,11 @@ pub struct ReadVideoInfoReply {
   codec : String
   /// True when ffprobe finished cleanly and a video stream was found.
   ok : Bool
+  /// Machine-readable failure reason, empty on success. One of
+  /// `tool_not_found`, `tool_failed`, `bad_request`.
+  error : String
+  /// Human-readable detail about the failure. Empty on success.
+  message : String
 }
 
 ///|
@@ -407,7 +412,16 @@ pub struct ReadVideoFrameReply {
   mime : String
   width : Int32
   height : Int32
+  /// True when the frame was extracted. The op does **not** raise on a
+  /// missing or broken ffmpeg: it reports the failure here so the
+  /// frontend can show an actionable message instead of a generic
+  /// "something went wrong".
   ok : Bool
+  /// Machine-readable failure reason, empty on success. One of
+  /// `tool_not_found`, `tool_failed`, `bad_request`.
+  error : String
+  /// Human-readable detail about the failure. Empty on success.
+  message : String
 }
 
 ///|
@@ -1114,12 +1128,20 @@ pub fn video_path_to_label_path(video_path : String) -> String {
 }
 
 ///|
-#warnings("-unused_value")
-async fn op_read_label(req : ReadLabelRequest) -> ReadLabelReply {
-  // Detect whether the request refers to a video or an image. We use the
-  // directory-leaf prefix as a strong signal but fall back to extension
-  // sniffing so that ad-hoc paths still work.
-  let (dir, basename) = split_dir_name(req.image_path)
+/// Resolve the on-disk label document path of an image *or* a video.
+///
+/// The two conventions are identical apart from the folder prefix:
+/// `Image@X/<name>.ext` and `Video@X/<name>.ext` both map to
+/// `Label@X/<name>.json`, and anything else keeps its label next to the
+/// file.
+///
+/// The video-vs-image decision looks at the directory leaf first
+/// (`Video@…`) and falls back to the file extension, so an ad-hoc path
+/// still resolves. Promoted to `pub fn` because several ops need the
+/// same answer and the class-revision op needs it for the *folder* it
+/// sweeps as well.
+pub fn label_path_for(path : String) -> String {
+  let (dir, basename) = split_dir_name(path)
   let (_, dir_leaf) = split_dir_name(dir)
   let is_video = dir_leaf.has_prefix("Video@") ||
     lower(basename).has_suffix(".mp4") ||
@@ -1128,11 +1150,17 @@ async fn op_read_label(req : ReadLabelRequest) -> ReadLabelReply {
     lower(basename).has_suffix(".avi") ||
     lower(basename).has_suffix(".webm") ||
     lower(basename).has_suffix(".m4v")
-  let label_path = if is_video {
-    video_path_to_label_path(req.image_path)
+  if is_video {
+    video_path_to_label_path(path)
   } else {
-    image_path_to_label_path(req.image_path)
+    image_path_to_label_path(path)
   }
+}
+
+///|
+#warnings("-unused_value")
+async fn op_read_label(req : ReadLabelRequest) -> ReadLabelReply {
+  let label_path = label_path_for(req.image_path)
   if !@fs.exists(label_path) {
     return {
       image_path: req.image_path,
@@ -1165,20 +1193,7 @@ async fn op_read_label(req : ReadLabelRequest) -> ReadLabelReply {
 ///|
 #warnings("-unused_value")
 async fn op_write_label(req : WriteLabelRequest) -> WriteLabelReply {
-  let (dir, basename) = split_dir_name(req.image_path)
-  let (_, dir_leaf) = split_dir_name(dir)
-  let is_video = dir_leaf.has_prefix("Video@") ||
-    lower(basename).has_suffix(".mp4") ||
-    lower(basename).has_suffix(".mov") ||
-    lower(basename).has_suffix(".mkv") ||
-    lower(basename).has_suffix(".avi") ||
-    lower(basename).has_suffix(".webm") ||
-    lower(basename).has_suffix(".m4v")
-  let label_path = if is_video {
-    video_path_to_label_path(req.image_path)
-  } else {
-    image_path_to_label_path(req.image_path)
-  }
+  let label_path = label_path_for(req.image_path)
   let (label_dir, _) = split_dir_name(label_path)
   if label_dir != "" {
     ensure_dir(label_dir) catch {
@@ -1319,10 +1334,32 @@ async fn op_save_classes(req : SaveClassesRequest) -> SaveClassesReply {
   }
   // Build JSON. We escape a few characters minimally: class names are
   // alphanumeric + underscore, but be safe in case users type " or \.
+  let dest = join_path(image_dir, "classes.json")
+  // Direct MoonBit @fs.write_file, UTF-8 encoded. The previous
+  // PowerShell + base64 path was a workaround for a long-fixed
+  // async-fs path bug (paths containing `@`) and a PS 5.1 quoting
+  // bug. The current async fs handles both correctly.
+  @fs.write_text(
+    dest,
+    render_curated_classes(req.classes),
+    create_mode=@fs.CreateOrTruncate,
+  ) catch {
+    err => fail("save_classes write failed: " + err.to_string())
+  }
+  { path: dest, written: req.classes.length(), }
+}
+
+///|
+/// Render a class list in the curated-file format: a JSON object with
+/// a single `classes` array, one name per line.
+///
+/// Shared by `op_save_classes` and the class-revision op, so a curated
+/// file the rename touches keeps the exact shape `save_classes` writes.
+fn render_curated_classes(names : Array[String]) -> String {
   let buf = StringBuilder()
   buf.write_string("{\n  \"classes\": [\n")
   let mut first = true
-  for c in req.classes {
+  for c in names {
     if !first {
       buf.write_string(",\n")
     }
@@ -1337,15 +1374,7 @@ async fn op_save_classes(req : SaveClassesRequest) -> SaveClassesReply {
     buf.write_string("\"")
   }
   buf.write_string("\n  ]\n}\n")
-  let dest = join_path(image_dir, "classes.json")
-  // Direct MoonBit @fs.write_file, UTF-8 encoded. The previous
-  // PowerShell + base64 path was a workaround for a long-fixed
-  // async-fs path bug (paths containing `@`) and a PS 5.1 quoting
-  // bug. The current async fs handles both correctly.
-  @fs.write_text(dest, buf.to_string(), create_mode=@fs.CreateOrTruncate) catch {
-    err => fail("save_classes write failed: " + err.to_string())
-  }
-  { path: dest, written: req.classes.length(), }
+  buf.to_string()
 }
 
 ///|
@@ -1688,22 +1717,6 @@ fn collect_classes_from_text(text : String) -> Map[String, Int32] {
 ///| --- video ops (ffmpeg / ffprobe) ---
 
 ///|
-/// Resolve a unique temp JPEG path under `%TEMP%/moonbit-labeler-frames/`.
-async fn video_frame_tmp_path() -> String {
-  let dir = "C:\\Windows\\Temp\\moonbit-labeler-frames"
-  // Best-effort: create the directory if it doesn't exist. Errors are
-  // ignored — `ffmpeg -y` will fail loudly if the path is unusable, and
-  // we surface that in `ok: false`.
-  if !(@fs.exists(dir) catch { _ => false }) {
-    @fs.mkdir(dir, recursive=true) catch {
-      _ => ()
-    }
-  }
-  let stamp = next_tmp_stamp().to_string()
-  dir + "\\frame-" + stamp + ".jpg"
-}
-
-///|
 #warnings("-unused_value")
 async fn op_list_videos(req : ListVideosRequest) -> ListVideosReply {
   let exts = match req.extensions {
@@ -1733,23 +1746,34 @@ async fn op_list_videos(req : ListVideosRequest) -> ListVideosReply {
 ///|
 /// Run ffprobe on a single video and parse a subset of the JSON output.
 /// We only need: container duration, first video stream width/height/codec,
-/// and a sensible fps. Any parsing error is reported as `ok: false` with
-/// empty/zero fields, which the UI can detect and fall back to defaults.
+/// and a sensible fps.
+///
+/// The op never raises for a missing or broken ffprobe: it reports
+/// `ok: false` plus a machine-readable `error` code, so the frontend can
+/// tell "ffmpeg is not installed" apart from "this file is not a video".
 #warnings("-unused_value")
 async fn op_read_video_info(req : ReadVideoInfoRequest) -> ReadVideoInfoReply {
-  let dbg = "C:\\Windows\\Temp\\moonbit-labeler-video-info.log"
-  @fs.write_text(dbg, "", create_mode=@fs.CreateOrTruncate) catch {
-    _ => ()
-  }
-  async fn log(s : String) {
-    @fs.write_text(dbg, s + "\n", append=true, create_mode=@fs.OpenOrCreate) catch {
-      _ => ()
+  let fail_with = fn(error : String, message : String) -> ReadVideoInfoReply {
+    {
+      path: req.path,
+      duration_ms: 0,
+      fps: 0.0,
+      frame_count: 0,
+      width: 0,
+      height: 0,
+      codec: "",
+      ok: false,
+      error,
+      message,
     }
   }
-  log("=== read_video_info start ===")
-  log("path=" + req.path)
+  let ffprobe_path = match find_media_tool("ffprobe") {
+    Some(p) => p
+    None =>
+      return fail_with("tool_not_found", media_tool_missing_message("ffprobe"))
+  }
   let ffprobe = @process.run(
-    "ffprobe.exe",
+    ffprobe_path,
     [
       "-v",
       "error",
@@ -1761,54 +1785,26 @@ async fn op_read_video_info(req : ReadVideoInfoRequest) -> ReadVideoInfoReply {
     ],
     stdout=@process.Collect,
   ) catch {
-    err => {
-      log("ffprobe spawn failed: " + err.to_string())
-      return {
-        path: req.path,
-        duration_ms: 0,
-        fps: 0.0,
-        frame_count: 0,
-        width: 0,
-        height: 0,
-        codec: "",
-        ok: false,
-      }
-    }
+    err =>
+      return fail_with(
+        "tool_failed",
+        "could not run " + ffprobe_path + ": " + err.to_string(),
+      )
   }
   let exit_code = ffprobe.exit_code
   let stdout_data = ffprobe.stdout_binary()
   let stdout = @utf8.decode(stdout_data) catch {
-    err => {
-      log("ffprobe stdout decode failed: " + @debug.to_string(err))
-      return {
-        path: req.path,
-        duration_ms: 0,
-        fps: 0.0,
-        frame_count: 0,
-        width: 0,
-        height: 0,
-        codec: "",
-        ok: false,
-      }
-    }
+    err =>
+      return fail_with(
+        "tool_failed",
+        "ffprobe output could not be decoded: " + @debug.to_string(err),
+      )
   }
-  log(
-    "ffprobe exit_code=" +
-    exit_code.to_string() +
-    " stdout_len=" +
-    stdout.length().to_string(),
-  )
   if exit_code != 0 {
-    return {
-      path: req.path,
-      duration_ms: 0,
-      fps: 0.0,
-      frame_count: 0,
-      width: 0,
-      height: 0,
-      codec: "",
-      ok: false,
-    }
+    return fail_with(
+      "tool_failed",
+      "ffprobe exited with code " + exit_code.to_string() + " for " + req.path,
+    )
   }
   // Parse width / height / fps from the first video stream.
   let (vw, vh, vfps, vcodec) = parse_first_video_stream(stdout)
@@ -1829,20 +1825,6 @@ async fn op_read_video_info(req : ReadVideoInfoRequest) -> ReadVideoInfoReply {
   } else {
     0
   }
-  log(
-    "parsed: w=" +
-    vw.to_string() +
-    " h=" +
-    vh.to_string() +
-    " fps=" +
-    vfps.to_string() +
-    " codec=" +
-    vcodec +
-    " duration_ms=" +
-    duration_ms.to_string() +
-    " frame_count=" +
-    frame_count.to_string(),
-  )
   {
     path: req.path,
     duration_ms,
@@ -1852,6 +1834,8 @@ async fn op_read_video_info(req : ReadVideoInfoRequest) -> ReadVideoInfoReply {
     height: vh,
     codec: vcodec,
     ok: true,
+    error: "",
+    message: "",
   }
 }
 
@@ -2182,12 +2166,16 @@ fn next_tmp_stamp() -> Int32 {
 
 ///|
 /// Extract a single frame as a base64-encoded JPEG via ffmpeg.
+///
+/// Like `op_read_video_info`, this op never raises for a missing or
+/// broken ffmpeg: it reports `ok: false` with a machine-readable `error`
+/// code so the frontend can show something actionable.
 #warnings("-unused_value")
 async fn op_read_video_frame(
   req : ReadVideoFrameRequest,
 ) -> ReadVideoFrameReply {
-  if req.frame < 0 {
-    return {
+  let fail_with = fn(error : String, message : String) -> ReadVideoFrameReply {
+    {
       path: req.path,
       frame: req.frame,
       base64: "",
@@ -2195,7 +2183,17 @@ async fn op_read_video_frame(
       width: 0,
       height: 0,
       ok: false,
+      error,
+      message,
     }
+  }
+  if req.frame < 0 {
+    return fail_with("bad_request", "frame number must not be negative")
+  }
+  let ffmpeg_path = match find_media_tool("ffmpeg") {
+    Some(p) => p
+    None =>
+      return fail_with("tool_not_found", media_tool_missing_message("ffmpeg"))
   }
   // Probe fps / duration so we can convert frame -> seconds without
   // assuming a constant rate. For MVP we approximate fps=25 when probe
@@ -2204,13 +2202,13 @@ async fn op_read_video_frame(
   let info = op_read_video_info({ path: req.path, })
   let fps = if info.fps > 0.0 { info.fps } else { 25.0 }
   let sec = req.frame.to_double() / fps
-  let tmp = video_frame_tmp_path()
+  let tmp = video_frame_dir() + @path.sep.to_string() + next_video_frame_name()
   let q = match req.quality {
     Some(v) if v >= 1 && v <= 31 => v
     _ => 3
   }
   let ffmpeg = @process.run(
-    "ffmpeg.exe",
+    ffmpeg_path,
     [
       "-loglevel",
       "error",
@@ -2227,7 +2225,11 @@ async fn op_read_video_frame(
     ],
     stdout=@process.Collect,
   ) catch {
-    err => fail("ffmpeg spawn failed: " + err.to_string())
+    err =>
+      return fail_with(
+        "tool_failed",
+        "could not run " + ffmpeg_path + ": " + err.to_string(),
+      )
   }
   let code = ffmpeg.exit_code
   if code != 0 {
@@ -2235,22 +2237,20 @@ async fn op_read_video_frame(
     @fs.remove(tmp) catch {
       _ => ()
     }
-    return {
-      path: req.path,
-      frame: req.frame,
-      base64: "",
-      mime: "image/jpeg",
-      width: 0,
-      height: 0,
-      ok: false,
-    }
+    return fail_with(
+      "tool_failed",
+      "ffmpeg exited with code " + code.to_string() + " for " + req.path,
+    )
   }
   let data = @fs.read_binary(tmp) catch {
     err => {
       @fs.remove(tmp) catch {
         _ => ()
       }
-      fail("read_video_frame read failed: " + err.to_string())
+      return fail_with(
+        "tool_failed",
+        "could not read the extracted frame: " + err.to_string(),
+      )
     }
   }
   let bytes = data
@@ -2266,6 +2266,8 @@ async fn op_read_video_frame(
     width: info.width,
     height: info.height,
     ok: true,
+    error: "",
+    message: "",
   }
 }
 
@@ -2533,31 +2535,14 @@ fn infer_shape_from_points(pts : Array[Array[Double]]) -> String {
 }
 
 ///|
-/// Build a normalized label JSON object from a raw parsed `Json` value.
-/// `fallback_img_name` is used when the raw object has no `img_name`.
-fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
-  let members : Map[String, Json] = match raw {
-    Object(m) => m
-    _ => Map([])
-  }
-  let img_name = match members.get("img_name") {
-    Some(String(s)) => s
-    _ => fallback_img_name
-  }
-  let raw_infos : Array[Json] = match members.get("infos") {
-    Some(Array(a)) => a
-    _ => []
-  }
-  let raw_bindings : Array[Json] = match members.get("bindings") {
-    Some(Array(a)) => a
-    _ => []
-  }
-  let raw_frames : Array[Json] = match members.get("frames") {
-    Some(Array(a)) => a
-    _ => []
-  }
-  // First pass: normalize infos and collect their ids for binding
-  // validation in the second pass below.
+/// Normalize a list of annotation entries. Mints missing ids, infers a
+/// missing `shape` from the point count, defaults a missing `type`, and
+/// drops entries that carry no usable points. Returns the normalized
+/// entries plus the set of ids they define — the id set is what the
+/// binding pass validates against.
+fn normalize_info_entries(
+  raw_infos : Array[Json],
+) -> (Array[Json], Map[String, Bool]) {
   let info_ids : Map[String, Bool] = Map([])
   let infos_out : Array[Json] = []
   for entry in raw_infos {
@@ -2587,7 +2572,18 @@ fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
       ),
     )
   }
-  // Second pass: bindings must reference real infos on both sides.
+  (infos_out, info_ids)
+}
+
+///|
+/// Normalize a list of binding entries. A binding is kept only when it
+/// names two distinct objects that both exist in `info_ids` — a binding
+/// whose endpoints live in a *different* annotation set is dangling and
+/// is dropped, which is what keeps per-frame sets self-consistent.
+fn normalize_binding_entries(
+  raw_bindings : Array[Json],
+  info_ids : Map[String, Bool],
+) -> Array[Json] {
   let bindings_out : Array[Json] = []
   for entry in raw_bindings {
     let obj : Map[String, Json] = match entry {
@@ -2617,8 +2613,13 @@ fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
       ),
     )
   }
-  // Frames: accept numbers (modern) or comma-separated strings
-  // (legacy "1,2,3"). De-dup and sort ascending.
+  bindings_out
+}
+
+///|
+/// Normalize a list of frame numbers. Accepts numbers (modern) or
+/// comma-separated strings (legacy "1,2,3"). De-dups and sorts ascending.
+fn normalize_frame_list(raw_frames : Array[Json]) -> Array[Int32] {
   let frames_set : Map[String, Bool] = Map([])
   let frames_acc : Array[Int32] = []
   for entry in raw_frames {
@@ -2635,9 +2636,87 @@ fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
     }
   }
   frames_acc.sort()
-  let frames_out : Array[Json] = []
-  for n in frames_acc {
-    frames_out.push(Json::number(n.to_double()))
+  frames_acc
+}
+
+///|
+/// Render a normalized frame-number list as a JSON array.
+fn frames_to_json(frames : Array[Int32]) -> Array[Json] {
+  let out : Array[Json] = []
+  for n in frames {
+    out.push(Json::number(n.to_double()))
+  }
+  out
+}
+
+///|
+/// Build a normalized label JSON object from a raw parsed `Json` value.
+/// `fallback_img_name` is used when the raw object has no `img_name`.
+fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
+  let members : Map[String, Json] = match raw {
+    Object(m) => m
+    _ => Map([])
+  }
+  let img_name = match members.get("img_name") {
+    Some(String(s)) => s
+    _ => fallback_img_name
+  }
+  let raw_infos : Array[Json] = match members.get("infos") {
+    Some(Array(a)) => a
+    _ => []
+  }
+  let raw_bindings : Array[Json] = match members.get("bindings") {
+    Some(Array(a)) => a
+    _ => []
+  }
+  let raw_frames : Array[Json] = match members.get("frames") {
+    Some(Array(a)) => a
+    _ => []
+  }
+  // First pass: normalize infos and collect their ids for binding
+  // validation in the second pass below.
+  let (infos_out, info_ids) = normalize_info_entries(raw_infos)
+  // Second pass: bindings must reference real infos on both sides.
+  let bindings_out = normalize_binding_entries(raw_bindings, info_ids)
+  let frames_out = frames_to_json(normalize_frame_list(raw_frames))
+  // Per-frame annotation sets. Each entry carries its own `infos` /
+  // `bindings`, so a frame's objects never leak into another frame's.
+  // The entries are normalized independently — a binding inside one set
+  // is validated against that set's infos only.
+  let raw_frame_labels : Array[Json] = match members.get("frame_labels") {
+    Some(Array(a)) => a
+    _ => []
+  }
+  let frame_labels_out : Array[Json] = []
+  for entry in raw_frame_labels {
+    let obj : Map[String, Json] = match entry {
+      Object(o) => o
+      _ => continue
+    }
+    let set_infos_raw : Array[Json] = match obj.get("infos") {
+      Some(Array(a)) => a
+      _ => []
+    }
+    let set_bindings_raw : Array[Json] = match obj.get("bindings") {
+      Some(Array(a)) => a
+      _ => []
+    }
+    let set_frames_raw : Array[Json] = match obj.get("frames") {
+      Some(Array(a)) => a
+      _ => []
+    }
+    let (set_infos, set_ids) = normalize_info_entries(set_infos_raw)
+    let set_bindings = normalize_binding_entries(set_bindings_raw, set_ids)
+    let set_frames = frames_to_json(normalize_frame_list(set_frames_raw))
+    frame_labels_out.push(
+      Json::object(
+        Map::from_array([
+          ("frames", Json::array(set_frames)),
+          ("infos", Json::array(set_infos)),
+          ("bindings", Json::array(set_bindings)),
+        ]),
+      ),
+    )
   }
   // Assemble the final object. `frames` is omitted entirely when empty
   // so image-mode label files stay byte-identical to pre-video saves.
@@ -2648,6 +2727,9 @@ fn normalize_label_json(raw : Json, fallback_img_name : String) -> Json {
   ])
   if frames_out.length() > 0 {
     out_members.set("frames", Json::array(frames_out))
+  }
+  if frame_labels_out.length() > 0 {
+    out_members.set("frame_labels", Json::array(frame_labels_out))
   }
   Json::object(out_members)
 }

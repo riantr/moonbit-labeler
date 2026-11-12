@@ -82,6 +82,10 @@ pub async fn dispatch_op(op : String, payload : Json) -> Json {
       let req : LoadClassesFromFileRequest = @json.from_json(payload)
       ToJson::to_json(op_load_classes_from_file(req))
     }
+    "rename_class" => {
+      let req : RenameClassRequest = @json.from_json(payload)
+      ToJson::to_json(op_rename_class(req))
+    }
     "list_videos" => {
       let req : ListVideosRequest = @json.from_json(payload)
       ToJson::to_json(op_list_videos(req))
@@ -93,6 +97,14 @@ pub async fn dispatch_op(op : String, payload : Json) -> Json {
     "read_video_frame" => {
       let req : ReadVideoFrameRequest = @json.from_json(payload)
       ToJson::to_json(op_read_video_frame(req))
+    }
+    "read_video_label" => {
+      let req : ReadVideoLabelRequest = @json.from_json(payload)
+      ToJson::to_json(op_read_video_label(req))
+    }
+    "write_video_label" => {
+      let req : WriteVideoLabelRequest = @json.from_json(payload)
+      ToJson::to_json(op_write_video_label(req))
     }
     "export_voc_folder" => {
       let req : ExportVocRequest = @json.from_json(payload)
@@ -139,8 +151,9 @@ pub fn dispatch_op_list() -> Array[String] {
   [
     "list_images", "read_image", "read_thumb", "decode_image", "resize_image", "read_text",
     "write_text", "read_label", "write_label", "parse_label", "serialize_label",
-    "scan_classes", "save_classes", "load_classes", "load_classes_from_file", "list_videos",
-    "read_video_info", "read_video_frame", "export_voc_folder", "export_yolo_folder",
-    "import_voc_folder", "import_yolo_folder", "import_coco_file", "pick_folder",
+    "scan_classes", "save_classes", "load_classes", "load_classes_from_file", "rename_class",
+    "list_videos", "read_video_info", "read_video_frame", "read_video_label", "write_video_label",
+    "export_voc_folder", "export_yolo_folder", "import_voc_folder", "import_yolo_folder",
+    "import_coco_file", "pick_folder",
   ]
 }

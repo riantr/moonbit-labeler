@@ -1,7 +1,7 @@
 ///| ---------------------------------------------------------------
 /// 0.2.5 Proton extension registration for the labeler backend.
 ///
-/// Defines the 24 IPC ops as `ext:labeler/<op>` and binds them to the
+/// Defines the 27 IPC ops as `ext:labeler/<op>` and binds them to the
 /// existing `op_*` handlers in `labeler.mbt`. The frontend invokes
 /// these via `window.__MoonBit__.core.invokeOp("ext:labeler/<op>", payload)`.
 ///
@@ -24,9 +24,13 @@
 /// | save_classes                | SaveClassesRequest       | SaveClassesReply      |
 /// | load_classes                | LoadClassesRequest       | LoadClassesReply      |
 /// | load_classes_from_file      | LoadClassesFromFileRequest| LoadClassesReply     |
+/// | rename_class                | RenameClassRequest       | RenameClassReply     |
 /// | list_videos                 | ListVideosRequest        | ListVideosReply       |
 /// | read_video_info             | ReadVideoInfoRequest     | ReadVideoInfoReply    |
-/// | read_video_frame            | ReadVideoFrameRequest    | ReadVideoFrameReply   |
+
+///| read_video_frame            | ReadVideoFrameRequest    | ReadVideoFrameReply   |
+/// | read_video_label            | ReadVideoLabelRequest    | ReadVideoLabelReply   |
+/// | write_video_label           | WriteVideoLabelRequest   | WriteVideoLabelReply  |
 /// | export_voc_folder           | ExportVocRequest         | ExportReply           |
 /// | export_yolo_folder          | ExportYoloRequest        | ExportReply           |
 /// | import_voc_folder           | ImportVocRequest         | ImportReply           |
@@ -120,6 +124,10 @@ pub fn extension() -> @proton_extension.Extension {
     LoadClassesFromFileRequest,
     LoadClassesReply,
   ] = contract.command("load_classes_from_file")
+  let rename_class : @proton_contract.Command[
+    RenameClassRequest,
+    RenameClassReply,
+  ] = contract.command("rename_class")
   let list_videos : @proton_contract.Command[ListVideosRequest, ListVideosReply] = contract.command(
     "list_videos",
   )
@@ -131,6 +139,14 @@ pub fn extension() -> @proton_extension.Extension {
     ReadVideoFrameRequest,
     ReadVideoFrameReply,
   ] = contract.command("read_video_frame")
+  let read_video_label : @proton_contract.Command[
+    ReadVideoLabelRequest,
+    ReadVideoLabelReply,
+  ] = contract.command("read_video_label")
+  let write_video_label : @proton_contract.Command[
+    WriteVideoLabelRequest,
+    WriteVideoLabelReply,
+  ] = contract.command("write_video_label")
   let export_voc_folder : @proton_contract.Command[
     ExportVocRequest,
     ExportReply,
@@ -171,10 +187,10 @@ pub fn extension() -> @proton_extension.Extension {
   // would not -- an asymmetry that made the two lists drift-prone and
   // left their agreement to visual review. That asymmetry is gone by
   // design: a command exists in the framework's eyes if and only if it
-  // is bound, so the 24 binds below are now the single source of
+  // is bound, so the 27 binds below are now the single source of
   // truth and the separate list has no meaning.
   @proton_extension.typed(contract, registrar => {
-    // 23 of the 24 handlers are stateless and just discard the
+    // 26 of the 27 handlers are stateless and just discard the
     // AppCommandRequestContext. Only `pick_folder` keeps the
     // context because it needs the CEF `CommandWindow` to drive
     // the native folder dialog. The wrap-in-closure is a
@@ -197,15 +213,18 @@ pub fn extension() -> @proton_extension.Extension {
     registrar.bind(load_classes_from_file, (_ctx, req) => {
       op_load_classes_from_file(req)
     })
+    registrar.bind(rename_class, (_ctx, req) => op_rename_class(req))
     registrar.bind(list_videos, (_ctx, req) => op_list_videos(req))
     registrar.bind(read_video_info, (_ctx, req) => op_read_video_info(req))
     registrar.bind(read_video_frame, (_ctx, req) => op_read_video_frame(req))
+    registrar.bind(read_video_label, (_ctx, req) => op_read_video_label(req))
+    registrar.bind(write_video_label, (_ctx, req) => op_write_video_label(req))
     registrar.bind(export_voc_folder, (_ctx, req) => op_export_voc_folder(req))
     registrar.bind(export_yolo_folder, (_ctx, req) => op_export_yolo_folder(req))
     registrar.bind(import_voc_folder, (_ctx, req) => op_import_voc_folder(req))
     registrar.bind(import_yolo_folder, (_ctx, req) => op_import_yolo_folder(req))
     registrar.bind(import_coco_file, (_ctx, req) => op_import_coco_file(req))
-    // pick_folder keeps the context (the only one of the 24 that does).
+    // pick_folder keeps the context (the only one of the 27 that does).
     registrar.bind(pick_folder, (ctx, req) => op_pick_folder(ctx, req))
   })
 }
