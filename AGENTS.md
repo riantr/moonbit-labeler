@@ -284,6 +284,29 @@ learn.
   it is required for `moon fmt --check` to pass, so it is committed. Expect
   it again after any future moon upgrade and do not "fix" it back: reverting
   puts CI red.
+- **The formatter also edits `*.mbt.md` — the ```mbt blocks inside them —
+  and it can silently break code.** Three measured facts on moon
+  0.1.20261104:
+  - `async fn main raise { ... }` is rewritten to `async fn main { ... }`,
+    and `async fn main() -> Unit raise { ... }` to `fn main { ... }` — the
+    `raise` is **dropped**, so the file it writes no longer compiles, and
+    `moon fmt` still exits 0. Never write a raising `main`; handle the error
+    inside it.
+  - `try expr catch { ... }` is rewritten to `expr catch { ... }`. The `try`
+    is redundant; the canonical form is the `catch` suffix.
+  - `README.mbt.md` is a `*.mbt.md` file, so its ```mbt code blocks are
+    formatted like source. A snippet that is not in canonical form makes
+    `moon fmt --check` red, and with it the `lint (ubuntu)` job — this is
+    what turned the `lint` job red on `b8ba1c4` while every other job was
+    green. The canonical form also wants a blank line before a `///|`
+    marker, and a one-element `moon.pkg` list written on one line
+    (`[ "x" ]`). A **plain** fence (``` rather than ```mbt) is not parsed,
+    so use one for anything that is not MoonBit source.
+
+  `moon fmt --check` prints exactly what it wants to change: the formatted
+  copy is staged under `_build/wasm-gc/release/format/` (that path is
+  moon's global default, not a leftover in this repo) and diffed against
+  the original.
 - The "Verification" notes in the phase history below that say *"`moon fmt
   --check` flags none of the N touched files (the repo-wide fmt drift is
   pre-existing in `component_blackbox_test.mbt` and unrelated files, so `moon
