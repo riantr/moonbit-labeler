@@ -42,6 +42,18 @@ schema variant, not a domain requirement.
   spawns `powershell.exe -NoProfile -NonInteractive -EncodedCommand`)
 - ~850 MB of disk for the first CEF download (`proton_cli setup`)
 
+### Platforms
+
+| Target | Support |
+|---|---|
+| Desktop app (Proton + CEF) | **Windows x86-64** — the exe, the zip and the LunaPack bundle are built and smoke-tested on `windows-latest` |
+| `--stdio` JSON-RPC bridge | Windows x86-64 — the same executable with no CEF window |
+| Backend library (`extensions/labeler`) | **Native, any OS** — the published module declares `supported_targets = "+native"`, so it is not published for the `wasm` target at all. CI proves the Linux native case by resolving the package from mooncakes.io and building a consumer against it; macOS is not exercised in CI |
+
+The backend library is the part that is platform-independent: everything
+above the `dispatch_op` entry point — the 27 ops, the label schema, the
+VOC/YOLO/COCO exporters — is plain MoonBit over `@fs` and `@json`.
+
 ### One-time setup
 
 ```sh
@@ -189,14 +201,15 @@ from how the package is built rather than from any rule of their own:
   (`import <bare path>` is not valid syntax — the path form belongs in
   `moon.pkg`, and the file refers to the package as `@labeler`).
 
-A minimal consumer:
+A minimal consumer — the two files are checked in under
+`examples/consumer/` in the repository, so this snippet and the CI job
+cannot drift apart:
 
 ```
-# cmd/main/moon.pkg
+# examples/consumer/moon.pkg
 import {
   "riantr/moonbit_labeler/extensions/labeler",
   "moonbitlang/core/async",
-  "moonbitlang/core/json",
 }
 
 supported_targets = "native"
@@ -209,24 +222,55 @@ options(
 ```
 
 ```mbt nocheck
-// cmd/main/main.mbt
+// examples/consumer/main.mbt
 
 ///|
 async fn main {
   let ops = @labeler.dispatch_op_list()
   println("op count = " + ops.length().to_string())
 
-  // `dispatch_op` is async and raises, so the error is handled here rather
-  // than letting `main` raise.
-  let text = @labeler.dispatch_op(
-    "list_images",
-    @json.parse("{\"path\":\"C:/some/images\"}"),
-  ).stringify() catch {
+  // Round-trip a label through the shared normalizer. `parse_label`
+  // touches no filesystem, so the result is deterministic.
+  //
+  // `dispatch_op` is async and raises, so `main` is async and the error
+  // is handled at the call site rather than by letting `main` raise.
+  let payload = ToJson::to_json(ParsePayload::{
+    text: ToJson::to_json(ProbeLabel::{ img_name: "probe.png", }).stringify(),
+    fallback_img_name: "probe.png",
+  })
+  let text = @labeler.dispatch_op("parse_label", payload).stringify() catch {
     _ => "dispatch failed"
   }
   println(text)
 }
+
+///|
+/// The label the probe round-trips.
+#derive(ToJson)
+struct ProbeLabel {
+  img_name : String
+}
+
+///|
+/// The `parse_label` request payload.
+#derive(ToJson)
+struct ParsePayload {
+  text : String
+  fallback_img_name : String
+}
 ```
+
+Running it prints:
+
+```console
+op count = 27
+{"label_text":"{\"img_name\":\"probe.png\",\"infos\":[],\"bindings\":[]}","err":""}
+```
+
+`moonbitlang/core/json` is only needed if you build payloads out of raw
+JSON yourself; the example derives its request structs with
+`#derive(ToJson)` instead, which keeps the sample free of nested-JSON
+string escaping.
 
 The `catch` suffix — rather than `try expr catch { ... }` — is the
 canonical form: `moon fmt` drops a redundant `try` keyword. It also drops

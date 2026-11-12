@@ -123,7 +123,20 @@ the `tar` line above does it, and [Build & run](#build--run) explains why.
 | Frontend | Vanilla JS + Vite | No framework lock-in, fast cold reload |
 | IPC | MoonBit `@proton_contract.Command` + `@proton_extension.typed` | Type-safe Request/Reply structs, bound via `CommandRegistrar` |
 
-### Runtime versions
+### Platforms and versions
+
+| Target | Support | Notes |
+|---|---|---|
+| Desktop app (Proton + CEF) | **Windows x86-64** | The exe, the zip and the LunaPack bundle are built and smoke-tested on `windows-latest`. The native folder picker shells out to PowerShell, and Proton's packaging step is only exercised on Windows. |
+| `--stdio` JSON-RPC bridge | Windows x86-64 | The same executable with no CEF window — see [Headless stdio bridge](#headless-stdio-bridge). |
+| Backend library (`extensions/labeler`) | **Native, any OS** | The published module declares `supported_targets = "+native"`, so it is not published for the `wasm` target at all. CI proves the Linux native case by resolving the package from mooncakes.io and building a consumer against it; macOS is not exercised in CI. |
+
+The minimum toolchain is **MoonBit `moon 0.1.20261104`**, and that floor is
+forced by the dependencies rather than chosen: `try?` was removed from the
+language in that release, so the pinned `riantr/moonbit_image@0.3.9` (the
+release that replaced `try?` with an explicit `match`) does not compile on
+anything older. Newer toolchains are expected to work but are not what CI
+runs.
 
 The Stack table is the target configuration. To install the matching runtime locally, run
 `proton_cli setup` and verify against `.proton/runtime.json` (`proton_version` /
@@ -135,16 +148,21 @@ don't match the documented target.
 ```
 .
 ├── app/
-│   └── main.mbt                       # 0.9.0 entry: @proton.file(...) then app.identifier(...) / app.capability(...) / app.run_or_abort()
+│   └── main.mbt                       # 0.9.0 entry: @proton.asset(...) then app.identifier(...) / app.capability(...) / app.run_or_abort()
 ├── extensions/
 │   ├── labeler/                       # 27 IPC ops + the image/label/VOC/YOLO/COCO pipeline
 │   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
 │   │   ├── extension.mbt               # 0.9.0 extension registration (returns @proton_contract.Extension; 27 commands registered via @proton_extension.typed)
-│   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
+│   │   ├── dispatch.mbt                # pure-MoonBit entry point: pub async fn dispatch_op(op : String, payload : Json) -> Json (used by the stdio bridge)
 │   │   └── moon.pkg
 │   # Image codec lives in the shared riantr/moonbit_image@0.3.9 mooncake
 │   # (see moon.mod), not in this tree. Prior `extensions/image/` vendored
 │   # copy was removed in 20fbdf2.
+├── examples/
+│   └── consumer/                      # a consumer of the PUBLIC API only; the CI job copies
+│       ├── moon.pkg                   # these two files into a scratch module and resolves
+│       ├── main.mbt                   # the package from mooncakes.io (see run.sh)
+│       └── run.sh
 ├── frontend/
 │   ├── dist/                          # Vite build output (inlined into the exe)
 │   ├── index.html
@@ -395,6 +413,53 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 All 27 ops above correspond 1:1 to the `contract.command(...)`
 declarations in `extensions/labeler/extension.mbt`.
 
+## Headless stdio bridge
+
+The same 27 ops are reachable without the CEF window. Pass `--stdio` as
+the first argument and the executable turns into a line-oriented JSON-RPC
+bridge over stdin/stdout:
+
+```sh
+target/proton-dist/moonbit-labeler/moonbit-labeler.exe --stdio
+```
+
+One JSON object per line in, one per line out:
+
+```
+req  = {"id": <int|null>, "op": "<name>", "payload": <op-specific-json>}
+resp = {"id": <int|null>, "ok": true,  "result": <op-specific-json>}
+     | {"id": <int|null>, "ok": false, "error": "<message>"}
+```
+
+The op names are the ones in the table above with `ext:labeler/` stripped.
+A startup banner listing them comes first, and a `{"type":"bye"}` marker
+comes last:
+
+```console
+$ printf '%s\n' '{"id":1,"op":"parse_label","payload":{"text":"{\"img_name\":\"probe.png\"}","fallback_img_name":"probe.png"}}' \
+    | moonbit-labeler.exe --stdio
+{"type":"ready","ops":["list_images","read_image", ... ]}
+{"id":1,"ok":true,"result":{"label_text":"{\"img_name\":\"probe.png\",\"infos\":[],\"bindings\":[]}","err":""}}
+{"type":"bye"}
+```
+
+Two details worth knowing if you script against it:
+
+- **A UTF-8 BOM is tolerated**, including a stack of two. Windows
+  PowerShell 5.1 hands a native executable a string that already starts
+  with U+FEFF and then prepends the `EF BB BF` preamble of
+  `$OutputEncoding` on top of it, so the first request line arrives with
+  two BOMs in front. Without the tolerance the *first* request is
+  silently dropped while every later one succeeds, which reads like a
+  bug in the caller.
+- **Errors are answers, not crashes.** A malformed payload comes back as
+  `ok: true` with an `err` field (that is the op's own contract), while
+  an unknown op or an internal failure comes back as `ok: false` with an
+  `error` string. The process exits 0 on EOF.
+
+The bridge is what the black-box tests under `tests/stdio/` drive, and
+`app/stdio_main.mbt` is where the protocol is implemented.
+
 ## Use the backend as a library
 
 The backend is published to mooncakes.io, so another MoonBit project can
@@ -429,14 +494,15 @@ from how the package is built rather than from any rule of their own:
   (`import <bare path>` is not valid syntax — the path form belongs in
   `moon.pkg`, and the file refers to the package as `@labeler`).
 
-A minimal consumer:
+The two files are checked in under
+[`examples/consumer/`](examples/consumer/), so this snippet and the CI job
+cannot drift apart:
 
 ```
-# cmd/main/moon.pkg
+# examples/consumer/moon.pkg
 import {
   "riantr/moonbit_labeler/extensions/labeler",
   "moonbitlang/core/async",
-  "moonbitlang/core/json",
 }
 
 supported_targets = "native"
@@ -449,24 +515,73 @@ options(
 ```
 
 ```mbt nocheck
-// cmd/main/main.mbt
+// examples/consumer/main.mbt
 
 ///|
 async fn main {
   let ops = @labeler.dispatch_op_list()
   println("op count = " + ops.length().to_string())
 
-  // `dispatch_op` is async and raises, so the error is handled here rather
-  // than letting `main` raise.
-  let text = @labeler.dispatch_op(
-    "list_images",
-    @json.parse("{\"path\":\"C:/some/images\"}"),
-  ).stringify() catch {
+  // Round-trip a label through the shared normalizer. `parse_label`
+  // touches no filesystem, so the result is deterministic.
+  //
+  // `dispatch_op` is async and raises, so `main` is async and the error
+  // is handled at the call site rather than by letting `main` raise.
+  let payload = ToJson::to_json(ParsePayload::{
+    text: ToJson::to_json(ProbeLabel::{ img_name: "probe.png", }).stringify(),
+    fallback_img_name: "probe.png",
+  })
+  let text = @labeler.dispatch_op("parse_label", payload).stringify() catch {
     _ => "dispatch failed"
   }
   println(text)
 }
+
+///|
+/// The label the probe round-trips.
+#derive(ToJson)
+struct ProbeLabel {
+  img_name : String
+}
+
+///|
+/// The `parse_label` request payload.
+#derive(ToJson)
+struct ParsePayload {
+  text : String
+  fallback_img_name : String
+}
 ```
+
+Running it prints:
+
+```console
+op count = 27
+{"label_text":"{\"img_name\":\"probe.png\",\"infos\":[],\"bindings\":[]}","err":""}
+```
+
+`moonbitlang/core/json` is only needed if you build payloads out of raw
+JSON yourself; the example derives its request structs with
+`#derive(ToJson)` instead, which keeps the sample free of nested-JSON
+string escaping.
+
+### Checking the published package
+
+`examples/consumer/run.sh` does the whole round trip: it scaffolds a
+throwaway module, resolves `riantr/moonbit_labeler` **from mooncakes.io**
+(not from this source tree), copies the two files above in, and then
+checks, builds and runs them:
+
+```sh
+examples/consumer/run.sh          # the version in moon.mod, or the latest published one
+examples/consumer/run.sh 0.2.16   # a specific version
+```
+
+The `consumer (published package, ubuntu, native)` CI job runs exactly
+that script on every push, so a change that breaks the *published*
+package — the package path, the `supported_targets` constraint, the
+dependency pins, the public signatures — turns the build red even though
+every in-tree test still passes.
 
 The `catch` suffix — rather than `try expr catch { ... }` — is the
 canonical form: `moon fmt` drops a redundant `try` keyword. It also drops

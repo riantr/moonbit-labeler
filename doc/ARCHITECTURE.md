@@ -43,7 +43,7 @@ app/                       ─ entry point
 extensions/labeler/        ─ public API (27 ops)
   ├── extension.mbt         ─ @proton_contract.Command[Request, Reply]
   ├── labeler.mbt           ─ Request/Reply structs + helpers
-  ├── dispatch.mbt          ─ @labeler.dispatch_op(op, payload) -> Json raise
+  ├── dispatch.mbt          ─ @labeler.dispatch_op(op, payload) -> Json (async)
   └── labeler_test.mbt      ─ 39 unit tests
 
 frontend/                  ─ Vite SPA

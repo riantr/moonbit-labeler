@@ -123,7 +123,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   `stdio_main.mbt` holds the stdio loop. Both modes share the `@labeler.dispatch_op`
   entry point in `extensions/labeler/dispatch.mbt`.
 - `extensions/labeler/`    — 27 IPC ops (`ext:labeler/<op>`), on-disk label format, VOC/YOLO export,
-  and the pure-MoonBit `dispatch_op(op, payload) -> Json raise` entry point. In
+  and the pure-MoonBit `pub async fn dispatch_op(op : String, payload : Json) -> Json` entry point. In
   `extension.mbt`, each op is declared as a `@proton_contract.Command[Request, Reply]`
   and bound to the existing `op_*` handler via a `CommandRegistrar`.
   Three sub-modules carry the newer features:
@@ -136,6 +136,20 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
     on-disk schema is the backend's business.
 - `frontend/`              — Vite + vanilla-JS UI. `src/main.js` orchestrates IPC + canvas + state;
   `dist/` is inlined into the exe at `proton_cli package` time.
+- `examples/`              — two consumer packages of THIS module (not separate modules, so
+  `moon check --target native` covers them and they always test the current source):
+  - `consumer/` — a self-contained public-API consumer (`dispatch_op_list()` + one
+    `dispatch_op` round-trip, no filesystem). Its `run.sh` is the **published-package**
+    check: it scaffolds a throwaway module, resolves `riantr/moonbit_labeler` from
+    mooncakes.io, copies `moon.pkg` + `main.mbt` in, then checks, builds and runs it.
+    The `consumer (published package, ubuntu, native)` CI job runs exactly that script.
+  - `read_label/` — reads the label JSON belonging to one image through the
+    `read_label` op. The argument is an IMAGE path, not a label path.
+  **Do not give either one its own `moon.mod`.** `examples/read_label` used to be a
+  separate module pinned to `riantr/moonbit_labeler@0.2.14`; that pin pulled
+  `moonbit_image@0.3.7`, whose `try?` no longer parses, so the example did not build
+  at all and `examples/README.md` rationalized it as "cannot be built standalone".
+  It was a stale dependency, not a toolchain limitation.
 - `data/`                  — local sample dataset (`Image@CARS.Part.01`, sibling `Label@<name>`).
   `data/Image*/` and `data/Label*/` are gitignored (per-deployment user data); only `data/.gitkeep`
   is tracked.
@@ -328,6 +342,17 @@ learn.
   `target/proton-dist/moonbit-labeler/` (a bare `moon build` output exits with
   STATUS_DLL_NOT_FOUND — the app links against libcef even in `--stdio` mode).
 - Frontend black-box: `node frontend/qa/webkit_picker_blackbox.test.mjs`.
+- **Published-package consumer check:** `examples/consumer/run.sh` (or
+  `bash examples/consumer/run.sh`) scaffolds a throwaway module, resolves
+  `riantr/moonbit_labeler` from mooncakes.io, copies `examples/consumer/`
+  in, and checks, builds and runs it. This is the only check that exercises
+  the *registry* copy rather than this source tree, so it is the one that
+  catches a broken module manifest, a wrong package path or a changed
+  public signature. The `consumer (published package, ubuntu, native)` CI
+  job runs it on every push. `moon add <pkg>` with no version resolves to
+  the latest published release, and a **failed** `moon add` leaves
+  `moon.mod` untouched — which is what makes the script's fallback to the
+  unversioned add safe.
 - **CEF smoke test (post-build, pre-PR):** the CEF runtime exposes a Chromium
   DevTools Protocol endpoint. `_build/launch-detached.ps1` starts the
   packaged exe with `PROTON_REMOTE_DEBUGGING_PORT=59944`; then
@@ -340,7 +365,7 @@ learn.
   canvas chain (see commit log) would silently regress. Use this
   before opening a PR that touches `app/main.mbt`, the
   `frontend/dist` asset pipeline, the canvas controller, or the
-  `@proton.file(...)` entry.
+  `@proton.asset(...)` entry.
 - Manual smoke: `proton_cli dev`, then exercise the canvas + sidebar end-to-end. Do this before
   opening a PR that touches IPC ops, canvas rendering, or the on-disk label format.
 - All tests must pass before opening a PR.
@@ -3059,6 +3084,20 @@ either an object literal `{ "k": v, ... }` or a `derive(ToJson)` struct. Both ke
 The CLI arg detection lives in `app/main.mbt::is_stdio_mode(args)`:
 `@env.args().contains("--stdio")` selects the stdio path; otherwise the CEF builder runs.
 
+**A UTF-8 BOM on the first request line is tolerated — and so is a stack of
+two.** Measured 2026-11-13: PowerShell 5.1 hands a native executable a
+string that already starts with U+FEFF (`Get-Content -Encoding UTF8` adds
+it), and the native-command pipe then prepends the `EF BB BF` preamble of
+`$OutputEncoding` on top of that — so the stream carries **two** BOMs. A
+JSON parser rejects the second one, so without the tolerance the *first*
+request is silently dropped while every later one succeeds, which reads
+like a bug in the caller rather than an encoding problem. The fix lives in
+`@labeler.decode_stdio_line`, which strips every leading BOM via the shared
+`strip_bom` helper; `strip_bom` itself loops, so it also covers a file
+that happens to carry two BOMs. Keep it that way: the regression test is
+`decode_stdio_line strips stacked UTF-8 BOMs` in
+`extensions/labeler/labeler_test.mbt`.
+
 ## Launch wrapper
 
 `_build/run.bat` is the front door for the packaged exe. It picks between the
@@ -3080,7 +3119,7 @@ picks the right mode without requiring a rebuild.
 **The "partial-fallback" caveat.** `moonbit-labeler.exe` is statically
 linked against `libcef.dll` (it appears in the import table regardless
 of which entry branch we take — the CEF symbols are pulled in by the
-`@proton.file(...)` call site in `app/main.mbt`). So when the CEF
+`@proton.asset(...)` call site in `app/main.mbt`). So when the CEF
 runtime is missing, BOTH the CEF path AND the `--stdio` path fail with
 `STATUS_DLL_NOT_FOUND` (exit -1073741515 / 0xC0000135). The launcher
 detects this and surfaces a clear actionable error instead of letting
