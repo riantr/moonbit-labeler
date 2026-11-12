@@ -1972,6 +1972,13 @@ function bindEvents() {
       }
     }
     if (state.images.length === 0 && state.videos.length === 0) return;
+    // Navigation keys: ArrowDown / j = next, ArrowUp = previous.
+    //
+    // `k` is deliberately NOT a navigation alias. It used to be bound to
+    // "previous image" here AND to the keypoint tool in the mode map below,
+    // and the navigation branch did not return, so pressing `k` both
+    // switched the tool and jumped to the previous image. `k` now means
+    // keypoint mode only; ArrowUp is the way to the previous image.
     if (ev.key === "ArrowDown" || ev.key === "j") {
       ev.preventDefault();
       if (state.mediaKind === "video" && videoController) {
@@ -1980,7 +1987,7 @@ function bindEvents() {
         const next = Math.min(state.currentIndex + 1, state.images.length - 1);
         if (next !== state.currentIndex) selectImage(next);
       }
-    } else if (ev.key === "ArrowUp" || ev.key === "k") {
+    } else if (ev.key === "ArrowUp") {
       ev.preventDefault();
       if (state.mediaKind === "video" && videoController) {
         videoController.stepFrame(-1);
