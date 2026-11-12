@@ -265,6 +265,89 @@ from **any** working directory — no "run it from this folder" caveat.
 See [AGENTS.md](AGENTS.md) for the upstream bug report and the
 `package-app.bat` wrapper that automates the same two steps.
 
+## The single-file bundle (riantr/LunaPack)
+
+The staged application is ~419 MB, almost all of it the CEF runtime. To
+offer it as one download, [riantr/LunaPack](https://github.com/riantr/LunaPack)
+packs the staged directory into a self-extracting executable that embeds
+itself as the launcher: the user downloads one file, runs it, and it
+unpacks itself into a `.lunapack/` cache directory next to the executable
+on first start.
+
+```powershell
+moon install riantr/LunaPack@0.1.20     # native build -> ~/.moon/bin/LunaPack.exe
+proton_cli package --format app         # stage the app first
+LunaPack bundle `
+  -i target/proton-dist/moonbit-labeler/moonbit-labeler.exe `
+  -o target/proton-dist/moonbit-labeler-0.2.15-bundle.exe `
+  --Files target/proton-dist/moonbit-labeler `
+  --compression-method lz4 `
+  --name moonbit-labeler --version 0.2.15
+LunaPack verify target/proton-dist/moonbit-labeler-0.2.15-bundle.exe
+```
+
+Two things matter here. The `bundle` **subcommand** is used, never the
+Studio front end (`--GUI` / `--studio`): Studio opens a window, which
+blocks forever on a headless CI runner, and the wasm build refuses it
+outright. And the CLI must be the **native** build — the `moonx` path
+runs the wasm target, which has no launcher to embed, so the "bundle" it
+produces carries the payload but does not start on its own.
+
+Any bundle can be inspected without unpacking it:
+
+```powershell
+LunaPack info target/proton-dist/moonbit-labeler-0.2.15-bundle.exe
+```
+
+### What is inside the bundle
+
+244 entries, 438,888,654 bytes uncompressed; lz4 stores them in 257 MB.
+Our own code is 0.8% of that.
+
+**Root (19 entries, 358,960,964 B)** — the application and the CEF runtime:
+
+| File | Size | What it is |
+|---|---:|---|
+| `moonbit-labeler.exe` | 3,510,272 | the application itself |
+| `proton-package.json` | 564 | Proton's package manifest (the app reads its resource dir from it) |
+| `proton-update-version` | 7 | Proton's update-check stamp |
+| `cef_process.exe` | 637,440 | CEF's renderer subprocess |
+| `libcef.dll` | 275,751,424 | the CEF/Chromium runtime — 62.8% of the whole payload |
+| `chrome_elf.dll` | 2,785,280 | Chromium's own ELF shim |
+| `d3dcompiler_47.dll` | 4,741,488 | DirectX shader compiler |
+| `dxcompiler.dll` | 25,636,352 | DirectX shader compiler (HLSL) |
+| `dxil.dll` | 1,502,784 | DXIL bytecode library |
+| `libEGL.dll` | 496,640 | ANGLE EGL |
+| `libGLESv2.dll` | 7,882,240 | ANGLE GLESv2 |
+| `vulkan-1.dll` | 951,808 | Vulkan loader |
+| `vk_swiftshader.dll` | 5,425,152 | software Vulkan rasterizer (fallback) |
+| `vk_swiftshader_icd.json` | 106 | the ICD descriptor for the above |
+| `icudtl.dat` | 10,876,560 | ICU character data |
+| `resources.pak` | 16,130,228 | Chromium's resource bundle (UI strings) |
+| `chrome_100_percent.pak` | 695,496 | Chromium resources at 100% scaling |
+| `chrome_200_percent.pak` | 1,197,075 | Chromium resources at 200% scaling |
+| `v8_context_snapshot.bin` | 740,048 | V8 startup snapshot |
+
+**`Resources/` (225 files, 79,927,690 B)** — the resource directory the
+app entry resolves against, plus the CEF locale packs:
+
+| File | Size | What it is |
+|---|---:|---|
+| `Resources/frontend/dist/index.html` | 146,456 | the whole frontend — Vite inlines the JS and CSS into one file |
+| `Resources/locales/*.pak` | 50,881,875 | 220 files: 55 locales × {plain, feminine, masculine, neuter} |
+| `Resources/resources.pak` | 16,130,228 | the CEF resource bundle again |
+| `Resources/icudtl.dat` | 10,876,560 | the ICU data again |
+| `Resources/chrome_100_percent.pak` | 695,496 | the 100% resources again |
+| `Resources/chrome_200_percent.pak` | 1,197,075 | the 200% resources again |
+
+Two things are worth knowing about that list. The four `.pak`/`.dat`
+files are staged **twice** — once at the root and once under `Resources/`
+— so 27.6 MB of the payload is a duplicate copy. And the locale packs
+carry 55 languages while the UI ships Chinese and English, so ~47 MB of
+them is dead weight for almost every user. Both are trimmable; neither
+is trimmed yet, because which copy CEF actually reads at runtime has not
+been established by measurement.
+
 ## Keyboard shortcuts
 
 | Key | Action |
