@@ -44,7 +44,7 @@ data format and project layout see that repo's README and
   out of lockstep. See <https://github.com/moonbit-community/proton>.
 - **PowerShell 5.1** on PATH (Windows-only; the native folder picker
   spawns `powershell.exe -NoProfile -NonInteractive -EncodedCommand`)
-- ~850 MB of disk for the first CEF download (`proton_cli cef setup`)
+- ~850 MB of disk for the first CEF download (`proton_cli setup`)
 
 ### One-time setup
 
@@ -52,11 +52,11 @@ data format and project layout see that repo's README and
 # From the project root:
 moon install moonbit-community/proton_cli@0.4.0  # the CLI itself
 moon update                                     # sync moon.mod deps
-proton_cli cef setup                            # download the CEF runtime
+proton_cli setup                                 # download the CEF runtime
 cd frontend && npm install && cd ..             # Vite + frontend deps
 ```
 
-`cef setup` populates `~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk`,
+`setup` populates `~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk`,
 which is shared by every project on the machine. Set `PROTON_RUNTIME_STORE`
 to an absolute path to relocate it. (Proton 0.3.3 moved this out of the
 repo — the older `.proton/runtimes/` layout no longer applies.)

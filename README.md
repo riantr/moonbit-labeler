@@ -45,7 +45,7 @@ follows from that problem rather than from derivation.
 moon install moonbit-community/proton_cli@0.9.0
 
 # One-time CEF runtime download (~850 MB) into ~/.proton/store/
-proton_cli cef setup
+proton_cli setup
 
 # Sync MoonBit deps + frontend deps
 moon update
@@ -118,7 +118,7 @@ directory is produced either way, so zip it yourself afterwards — see
 ### Runtime versions
 
 The Stack table is the target configuration. To install the matching runtime locally, run
-`proton_cli cef setup` and verify against `.proton/runtime.json` (`proton_version` /
+`proton_cli setup` and verify against `.proton/runtime.json` (`proton_version` /
 `cef_version`). Older local installs (e.g. Proton 0.1.12) keep the project working but
 don't match the documented target.
 
@@ -204,7 +204,7 @@ proton_cli dev                # hot-reload dev mode (reads proton.project.json)
 ```
 
 The first build downloads ~850 MB of CEF binaries; subsequent builds are
-incremental. If the Proton runtime is missing, run `proton_cli cef setup`.
+incremental. If the Proton runtime is missing, run `proton_cli setup`.
 
 `proton_cli` is a mooncakes binary package rather than part of the moon
 installer, so install it once with `moon install
@@ -274,7 +274,7 @@ declarations in `extensions/labeler/extension.mbt`.
   IDCT fix that the upstream 0.3.5 release ships).
 - **CEF / Proton runtime** — assembled into `target/proton-dist/...` at
   build time by `proton_cli package`. The runtime itself is downloaded
-  by `proton_cli cef setup` into `~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk`
+  by `proton_cli setup` into `~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk`
   (~850 MB on Windows), which is shared by every project on the machine
   and can be relocated with `PROTON_RUNTIME_STORE`. Proton 0.3.3 moved
   this out of the repo, so the older `.proton/runtimes/` path no longer

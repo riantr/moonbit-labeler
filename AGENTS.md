@@ -18,9 +18,16 @@ Video-mode details: see [doc/VIDEO_LABELING.md](doc/VIDEO_LABELING.md).
 ## Setup
 
 - One-time CEF download into `~/.proton/store/` (measured ~850 MB per platform on Windows
-  0.3.4): `proton_cli cef setup`. The CLI itself is a mooncakes binary package —
+  0.3.4): `proton_cli setup`. The CLI itself is a mooncakes binary package —
   `moon install moonbit-community/proton_cli@0.9.0`, pinned to the proton version in
   `moon.mod` (Proton modules are lockstep-versioned).
+  **The command is `proton_cli setup`, not `proton_cli cef setup`.** The `cef`
+  subcommand used to carry a `setup` action (0.3.4 had `cef setup` /
+  `cef requirements`); from 0.5.x onwards `cef` only answers `requirements`, and the
+  download moved to the top-level `setup` command ("Prepare the shared Proton runtime and
+  subprocess executable"). Calling the old name is an argparse usage error — which is what
+  killed the Windows CI job at the "Fetch the Proton CEF SDK" step (runs at sha e88992b and
+  6e1f47e), before any of our code ran.
 - Update MoonBit deps: `moon update`
 - Frontend deps: `cd frontend && npm install`
 
@@ -337,7 +344,7 @@ learn.
   via `-I<sdk>`, and the native stubs `#include "include/capi/cef_*_capi.h"`
   relative to that. Each platform entry measures **~850 MB** on Windows 0.3.4, so budget
   roughly 1 GB per platform rather than the ~150 MB the pre-0.3.3 `.proton/runtimes/`
-  layout needed. Populate it with `proton_cli cef setup`. A stale `.proton/runtime.json`
+  layout needed. Populate it with `proton_cli setup`. A stale `.proton/runtime.json`
   still reading `proton_version: 0.2.5` means the repo-local 0.2.5-era layout is what is
   on disk and the 0.3.3+ store may be missing entirely — check `~/.proton/store`, not
   `.proton/runtimes`.
@@ -3072,6 +3079,6 @@ enough for the current single-host dev workflow.
 - The `--stdio` bridge is a privileged local IPC surface: it accepts JSON-RPC from whoever
   owns the parent process. Only invoke it from a trusted local driver; do not expose it
   on a network socket without an explicit auth layer.
-- CEF download (`proton_cli cef setup`) is a large tarball — measured ~850 MB unpacked per
+- CEF download (`proton_cli setup`) is a large tarball — measured ~850 MB unpacked per
   platform on Windows 0.3.4, against ~150 MB in the pre-0.3.3 `.proton/runtimes/` layout.
   Verify the SHA256 from upstream if operating in a high-trust environment.

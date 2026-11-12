@@ -12,7 +12,7 @@ target/
 # Proton native prebuilts extracted for `proton_cli build` on Windows.
 # The actual artifact lives in target/proton-dist/ after `proton_cli package`.
 proton/
-# CEF download log from `proton_cli cef setup` (151 MB tarball trace).
+# CEF download log from `proton_cli setup` (151 MB tarball trace).
 cef_setup.log
 # Local build-driver script + scratch log; not part of the project.
 build_with_msvc.bat

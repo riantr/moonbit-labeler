@@ -205,7 +205,7 @@ jobs:
             .moon-agent-cache
             .proton
             # The CEF runtime store: ~445 MB per platform, and
-            # `proton_cli cef setup` below repopulates it every run
+            # `proton_cli setup` below repopulates it every run
             # unless it is cached. Proton 0.3.3 moved this out of the
             # repo (.proton/runtimes/) to
             # ~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk, so
@@ -239,9 +239,10 @@ jobs:
         run: moon install moonbit-community/proton_cli@0.9.0
 
       # Populates the CEF runtime store that proton/build.mjs points the
-      # linker at: ~/.proton/store/win32-x64/cef-<sha>-layout-<n>/sdk.
-      # The native stubs under proton/internal/native/ffi #include
-      # "include/capi/cef_*_capi.h" relative to it, so without this the
+      # linker at: ~/.proton/store/win32-x64/cef-<sha>-layout-<n>/sdk,
+      # and installs the `cef_process.exe` subprocess binary. The native
+      # stubs under proton/internal/native/ffi #include
+      # "include/capi/cef_*_capi.h" relative to the SDK, so without this the
       # `moon build` below dies with
       #   C1083: Cannot open include file: 'include/capi/cef_browser_capi.h'
       #
@@ -250,24 +251,31 @@ jobs:
       # `moon build` and `proton_cli package` need it; `moon check` and
       # `moon test` were measured not to (see the test-linux job).
       #
-      # The download is retried. It is ~850 MB on Windows and a single
-      # flaky connection kills the whole job before any of our code runs
-      # -- which is exactly how the run at sha e88992b failed: step 7
-      # ("Fetch the Proton CEF SDK") died and steps 8-13 (moon check /
-      # moon test / moon build) were skipped, so the red told us nothing
-      # about the tree. A cold cache is the worst case; a warm one makes
-      # the first attempt succeed.
+      # **The command is `proton_cli setup`, not `proton_cli cef setup`.**
+      # The `cef` subcommand used to carry a `setup` action (0.3.4 had
+      # `cef setup` / `cef requirements`); from 0.5.x onwards `cef` only
+      # answers `requirements`, and the download moved to the top-level
+      # `setup` command ("Prepare the shared Proton runtime and
+      # subprocess executable"). Calling the old name is an argparse usage
+      # error, so the job died at this step with nothing of ours running:
+      # the run at sha e88992b and the run at sha 6e1f47e both failed
+      # here, and the second one failed with the retry loop too -- which is
+      # what showed the failure was deterministic and not a flaky
+      # download.
+      #
+      # The download is still retried: it is ~850 MB on Windows and a
+      # single flaky connection should not cost the whole job.
       - name: Fetch the Proton CEF SDK
         run: |
           $ok = $false
           for ($i = 1; $i -le 3; $i++) {
-            Write-Host "proton_cli cef setup: attempt $i of 3"
-            proton_cli cef setup
+            Write-Host "proton_cli setup: attempt $i of 3"
+            proton_cli setup
             if ($LASTEXITCODE -eq 0) { $ok = $true; break }
             Write-Host "attempt $i failed with exit code $LASTEXITCODE"
             if ($i -lt 3) { Start-Sleep -Seconds (30 * $i) }
           }
-          if (-not $ok) { throw "proton_cli cef setup failed after 3 attempts" }
+          if (-not $ok) { throw "proton_cli setup failed after 3 attempts" }
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
@@ -292,7 +300,7 @@ jobs:
       # Restored. These compile app/ -- the only package in the module
       # that reaches proton/internal/native/ffi -- so unlike check and
       # test above they genuinely require the CEF SDK, which is why this
-      # is the only job that installs proton_cli and runs `cef setup`.
+      # is the only job that installs proton_cli and runs `setup`.
       # Verified locally against Proton 0.9.0: `moon build --target
       # native` exits 0.
       - name: moon build
