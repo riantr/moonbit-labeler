@@ -1,6 +1,8 @@
 import {
-  "moonbitlang/async/fs",
-  "moonbitlang/async/process",
+  "moonbitlang/core/async/fs",
+  "moonbitlang/core/async/process",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
   "moonbitlang/core/ref",
   "moonbitlang/core/string",
@@ -11,3 +13,10 @@ import {
 }
 
 supported_targets = "native"
+
+options(
+  "allow-experimental-packages": [
+    "moonbitlang/core/async/fs",
+    "moonbitlang/core/async/process",
+  ],
+)

@@ -15,39 +15,44 @@
 
 ///|
 /// Request to list images in a directory. Empty `extensions` = default set.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ListImagesRequest {
   path : String
   extensions : Array[String]?
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// One image entry returned by `list_images`.
+#derive(ToJson, Eq, Debug)
 pub struct ImageEntry {
   name : String
   path : String
   ext : String
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
+#derive(ToJson, Eq, Debug)
 pub struct ListImagesReply {
   folder : String
   images : Array[ImageEntry]
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to read an image as base64 (used as a `data:` URL fallback
 /// when the webview cannot load `file://` URLs).
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ReadImageRequest {
   path : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
+#derive(ToJson, Eq, Debug)
 pub struct ReadImageReply {
   path : String
   /// base64-encoded file bytes (no `data:` prefix)
   base64 : String
   mime : String
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request a low-resolution thumbnail for sidebar / list previews.
@@ -57,6 +62,7 @@ pub struct ReadImageReply {
 /// This is the workhorse behind `image.thumb` — the small output
 /// keeps the bytecode cost down (the old path shipped full-res JPGs
 /// at ~250KB each, which 2580 thumbs = ~6.5MB of data to deserialize).
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ReadThumbRequest {
   path : String
   /// Longest-side pixel cap. 64-256 is the sensible range. Default 128.
@@ -64,33 +70,37 @@ pub struct ReadThumbRequest {
   /// JPEG quality 1-31 (lower is better). Default 5 (slightly worse
   /// than the main image path). Ignored for PNG source.
   quality : Int32?
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to read a text file (JSON label files).
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ReadTextRequest {
   path : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
+#derive(ToJson, Eq, Debug)
 pub struct ReadTextReply {
   path : String
   content : String
   found : Bool
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to write a text file (JSON label files).
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct WriteTextRequest {
   path : String
   content : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
+#derive(ToJson, Eq, Debug)
 pub struct WriteTextReply {
   path : String
   bytes : Int32
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to read the label JSON for an image. The label path is
@@ -98,32 +108,36 @@ pub struct WriteTextReply {
 ///   `Image@X/<basename>.jpg` -> `Label@X/<basename>.json`
 /// If the folder layout does not match the `Image@<name>` / `Label@<name>`
 /// convention, the sibling-label fallback is used.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ReadLabelRequest {
   image_path : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
+#derive(ToJson, Eq, Debug)
 pub struct ReadLabelReply {
   image_path : String
   label_path : String
   content : String
   found : Bool
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to write the label JSON for an image. The label path is
 /// resolved the same way as in `read_label`.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct WriteLabelRequest {
   image_path : String
   content : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
+#derive(ToJson, Eq, Debug)
 pub struct WriteLabelReply {
   image_path : String
   label_path : String
   bytes : Int32
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Parse a label JSON text and return a normalized, modern-schema JSON
@@ -137,10 +151,11 @@ pub struct WriteLabelReply {
 /// Request shape for `ext:labeler/parse_label`. Mirrors the JS call
 /// in `label.js::parseLabel` — `fallback_img_name` is used when the
 /// incoming JSON omits `img_name` (e.g. a brand-new empty label).
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ParseLabelRequest {
   text : String
   fallback_img_name : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// Reply shape for `parse_label`. The bridge wraps this in
@@ -159,19 +174,21 @@ pub struct ParseLabelRequest {
 /// diagnostic. Routing the error through a reply field instead
 /// works around that bridge limitation without forking the IPC
 /// library.
+#derive(ToJson, Eq, Debug)
 pub struct ParseLabelReply {
   label_text : String
   err : String
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request shape for `ext:labeler/serialize_label`. The frontend
 /// `JSON.stringify`s the in-memory label, hands the text here, and
 /// gets the round-tripped, modern-schema text back so the on-disk
 /// JSON always has `id` / `shape` / integer pixel coords.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct SerializeLabelRequest {
   label_text : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// Reply shape for `serialize_label`.
@@ -180,10 +197,11 @@ pub struct SerializeLabelRequest {
 /// the error inside the reply (rather than `raise`ing) so the CEF
 /// bridge can surface the detail in `reply.err` to the frontend.
 /// See the matching note on `ParseLabelReply` for why this matters.
+#derive(ToJson, Eq, Debug)
 pub struct SerializeLabelReply {
   text : String
   err : String
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// IPC handler for `ext:labeler/parse_label`. Returns the
@@ -239,50 +257,56 @@ let fallback_classes : Array[String] = [
 ///|
 /// Request to enumerate all distinct class names used in the label files
 /// under the sibling `Label@<name>` directory.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ScanClassesRequest {
   image_path : String?
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// One class with its frequency. `color` is an optional `#RRGGBB`
 /// string; empty when the source has no color (e.g. JSON files or a
 /// label-folder scan that can't recover one).
+#derive(ToJson, Eq, Debug)
 pub struct ClassInfo {
   name : String
   count : Int32
   color : String
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Reply containing the label directory that was scanned and the
 /// distinct classes (sorted by count desc).
+#derive(ToJson, Eq, Debug)
 pub struct ScanClassesReply {
   label_dir : String
   classes : Array[ClassInfo]
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to write the user's curated class list to `<image_folder>/classes.json`.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct SaveClassesRequest {
   image_path : String
   classes : Array[String]
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// Result of `save_classes`. `path` is the absolute path of the written
 /// file (may be empty if the destination couldn't be determined).
+#derive(ToJson, Eq, Debug)
 pub struct SaveClassesReply {
   path : String
   written : Int32
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to read the user-curated class list. If no `classes.json` is
 /// present, the backend falls back to scanning the sibling `Label@<rest>`
 /// folder (the same path as `scan_classes`).
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct LoadClassesRequest {
   image_path : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// Result of `load_classes`. `path` is the file that was read (or "" if
@@ -290,53 +314,60 @@ pub struct LoadClassesRequest {
 /// carries the merged class list; `from_curated` is `true` when the
 /// curated file was the source, `false` when the result came from a
 /// label-folder scan.
+#derive(ToJson, Eq, Debug)
 pub struct LoadClassesReply {
   path : String
   classes : Array[ClassInfo]
   from_curated : Bool
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to read a class list from an arbitrary file path (typically
 /// picked via the frontend's `<input type="file">` element).
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct LoadClassesFromFileRequest {
   path : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to enumerate video files. `Video@<name>/*.mp4` is the
 /// conventional folder layout. Sibling-folder fallback applies.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ListVideosRequest {
   path : String
   extensions : Array[String]?
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// One video entry returned by `list_videos`. The frontend decides
 /// when (and whether) to call `read_video_info` to populate metadata.
+#derive(ToJson, Eq, Debug)
 pub struct VideoEntry {
   name : String
   path : String
   ext : String
   size_bytes : Int32
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
+#derive(ToJson, Eq, Debug)
 pub struct ListVideosReply {
   folder : String
   videos : Array[VideoEntry]
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request metadata for a single video. Implemented via `ffprobe -v error
 /// -print_format json -show_streams -show_format <path>` and a small
 /// string parser. The reply fields are best-effort: missing / unparseable
 /// values surface as `0` / `""`.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ReadVideoInfoRequest {
   path : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
+#derive(ToJson, Eq, Debug)
 pub struct ReadVideoInfoReply {
   path : String
   /// Duration in milliseconds.
@@ -352,21 +383,23 @@ pub struct ReadVideoInfoReply {
   codec : String
   /// True when ffprobe finished cleanly and a video stream was found.
   ok : Bool
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Request a single frame as a base64-encoded JPEG. Internally invokes
 /// `ffmpeg -ss <sec> -i <path> -frames:v 1 -q:v 3 -y <tmp>`. The reply
 /// is intentionally narrow: the same shape as `read_image` so the
 /// frontend can re-use the data: URL fallback path.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ReadVideoFrameRequest {
   path : String
   frame : Int32
   /// Optional override JPEG quality (1-31, lower is better). Defaults to 3.
   quality : Int32?
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
+#derive(ToJson, Eq, Debug)
 pub struct ReadVideoFrameReply {
   path : String
   frame : Int32
@@ -375,17 +408,18 @@ pub struct ReadVideoFrameReply {
   width : Int32
   height : Int32
   ok : Bool
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// One annotation with a normalised `(shape, type, points)` triple.
 /// Coordinates are image pixels (XY order). Used by the VOC/YOLO
 /// exporters.
+#derive(ToJson, Eq, Debug)
 pub struct ExportAnn {
   shape : String
   type_ : String
   points : Array[(Double, Double)]
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Result of `export_voc_folder` / `export_yolo_folder`. The
@@ -393,12 +427,13 @@ pub struct ExportAnn {
 /// were written into `classes.txt` (YOLO) or into `<name>` elements
 /// (VOC). The order matches `load_classes` so it stays stable across
 /// export calls.
+#derive(ToJson, Eq, Debug)
 pub struct ExportReply {
   dest_folder : String
   exported_count : Int32
   skipped_count : Int32
   classes : Array[String]
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Make sure the directory exists; falls back to PowerShell if the
@@ -432,6 +467,27 @@ async fn ensure_dir(path : String) -> Unit {
   // in the directory name) under moon 0.4.43, so the PowerShell
   // `New-Item -Force` round-trip is no longer needed here.
   @fs.mkdir(path, recursive=true)
+}
+
+///|
+/// Decode one line of the `--stdio` JSON-RPC wire format.
+///
+/// The headless bridge reads raw bytes off stdin, and the conversion
+/// back to text has exactly one correct answer: `@utf8.decode`.
+/// `Bytes::to_string()` must NOT be used — it renders the *debug*
+/// literal (`b"{\x22id\x22:1}"`), so every request would fail to parse
+/// with a misleading "Invalid character 'b' at line 1, column 0".
+///
+/// Returns `None` for input that is not valid UTF-8, which the bridge
+/// treats as an unusable line.
+///
+/// This lives in the backend rather than in `app/` because the `app`
+/// package is an executable: it links the Proton/CEF runtime, so it is
+/// excluded from the CI test scope (the ubuntu job has no CEF SDK).
+/// A helper here is covered by the `extensions/labeler` suite instead.
+pub fn decode_stdio_line(bytes : Bytes) -> String? {
+  let text = @utf8.decode(bytes) catch { _ => return None }
+  Some(text)
 }
 
 ///| --- string helpers ---
@@ -635,10 +691,10 @@ async fn op_list_images(req : ListImagesRequest) -> ListImagesReply {
 ///|
 #warnings("-unused_value")
 async fn op_read_image(req : ReadImageRequest) -> ReadImageReply {
-  let data = @fs.read_file(req.path) catch {
+  let data = @fs.read_binary(req.path) catch {
     err => fail("read_image failed: " + err.to_string())
   }
-  let bytes = data.binary()
+  let bytes = data
   { path: req.path, base64: base64_encode(bytes), mime: mime_for(req.path), }
 }
 
@@ -660,7 +716,7 @@ async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply {
     _ => 128
   }
   // Read the source as bytes; let buildliming auto-detect the format.
-  let data = @fs.read_file(req.path) catch {
+  let data = @fs.read_binary(req.path) catch {
     err => {
       // Surface as empty reply so the frontend's loadThumbFallback
       // can fall back to read_image (full-res file:// URL).
@@ -668,7 +724,7 @@ async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply {
       return { path: req.path, base64: "", mime: "image/bmp", }
     }
   }
-  let raw = data.binary()
+  let raw = data
   let img = decode_for(req.path, raw) catch {
     _ => return { path: req.path, base64: "", mime: "image/bmp", }
   }
@@ -733,17 +789,18 @@ async fn op_read_thumb(req : ReadThumbRequest) -> ReadImageReply {
 /// reply. The returned `base64` is a BMP re-encoded from the RGBA
 /// buffer (buildliming/image doesn't ship a PNG encoder, so we go
 /// BMP — 24-bit when fully opaque, 32-bit otherwise).
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct DecodeImageRequest {
   path : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 #warnings("-unused_value")
 async fn op_decode_image(req : DecodeImageRequest) -> ReadImageReply {
-  let data = @fs.read_file(req.path) catch {
+  let data = @fs.read_binary(req.path) catch {
     err => fail("decode_image read failed: " + err.to_string())
   }
-  let raw = data.binary()
+  let raw = data
   let img = decode_for(req.path, raw) catch {
     err => fail("decode_image decode failed: " + err.to_string())
   }
@@ -762,6 +819,7 @@ async fn op_decode_image(req : DecodeImageRequest) -> ReadImageReply {
 /// `data:` URL. Internally uses buildliming/image's resize with
 /// bilinear interpolation by default, which is cheap (no ffmpeg
 /// subprocess) and gives visually fine output at thumbnail sizes.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ResizeImageRequest {
   path : String
   max_edge : Int32?
@@ -769,7 +827,7 @@ pub struct ResizeImageRequest {
   /// (Bicubic falls back to bilinear — buildliming has no bicubic
   /// kernel, and the visual difference is invisible at our sizes.)
   resize_method : String?
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 #warnings("-unused_value")
@@ -778,10 +836,10 @@ async fn op_resize_image(req : ResizeImageRequest) -> ReadImageReply {
     Some(v) if v >= 16 && v <= 4096 => v
     _ => 256
   }
-  let raw = @fs.read_file(req.path) catch {
+  let raw = @fs.read_binary(req.path) catch {
     err => fail("resize_image read failed: " + err.to_string())
   }
-  let bytes = raw.binary()
+  let bytes = raw
   let img = decode_for(req.path, bytes) catch {
     err => fail("resize_image decode failed: " + err.to_string())
   }
@@ -828,14 +886,14 @@ async fn op_read_text(req : ReadTextRequest) -> ReadTextReply {
   if !@fs.exists(req.path) {
     return { path: req.path, content: "", found: false, }
   }
-  let data = @fs.read_file(req.path) catch {
+  let data = @fs.read_binary(req.path) catch {
     _ => return { path: req.path, content: "", found: false, }
   }
-  let text = data.text() catch {
+  let text = @utf8.decode(data) catch {
     err =>
       return {
         path: req.path,
-        content: "decode error: " + err.to_string(),
+        content: "decode error: " + @debug.to_string(err),
         found: true,
       }
   }
@@ -850,7 +908,7 @@ async fn op_write_text(req : WriteTextRequest) -> WriteTextReply {
   // and a long-since-fixed async-fs path bug; the current async fs
   // handles UTF-8 String writes correctly even for paths containing
   // `@`, so the indirection is no longer needed.)
-  @fs.write_file(req.path, req.content, create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_text(req.path, req.content, create_mode=@fs.CreateOrTruncate) catch {
     err => fail("write_text failed: " + err.to_string())
   }
   { path: req.path, bytes: req.content.length(), }
@@ -1083,7 +1141,7 @@ async fn op_read_label(req : ReadLabelRequest) -> ReadLabelReply {
       found: false,
     }
   }
-  let data = @fs.read_file(label_path) catch {
+  let data = @fs.read_binary(label_path) catch {
     _ =>
       return {
         image_path: req.image_path,
@@ -1092,12 +1150,12 @@ async fn op_read_label(req : ReadLabelRequest) -> ReadLabelReply {
         found: false,
       }
   }
-  let content = data.text() catch {
+  let content = @utf8.decode(data) catch {
     err =>
       return {
         image_path: req.image_path,
         label_path,
-        content: "decode error: " + err.to_string(),
+        content: "decode error: " + @debug.to_string(err),
         found: true,
       }
   }
@@ -1137,7 +1195,7 @@ async fn op_write_label(req : WriteLabelRequest) -> WriteLabelReply {
   // moon 0.4.43+ handles paths with `@` correctly, and the String ->
   // UTF-8 -> Bytes conversion preserves `"` and `\` without escape
   // round-trips.
-  @fs.write_file(label_path, req.content, create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_text(label_path, req.content, create_mode=@fs.CreateOrTruncate) catch {
     err => fail("write_label failed: " + err.to_string())
   }
   { image_path: req.image_path, label_path, bytes: req.content.length(), }
@@ -1160,11 +1218,11 @@ async fn op_scan_classes(req : ScanClassesRequest) -> ScanClassesReply {
   let dbg = "C:\\Windows\\Temp\\moonbit-labeler-scan-classes.log"
   // Initialize log file. TruncateExisting is the default but we want to make
   // sure the file exists for subsequent appends.
-  @fs.write_file(dbg, "", create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_text(dbg, "", create_mode=@fs.CreateOrTruncate) catch {
     _ => ()
   }
   async fn log(s : String) {
-    @fs.write_file(dbg, s + "\n", append=true, create_mode=@fs.OpenOrCreate) catch {
+    @fs.write_text(dbg, s + "\n", append=true, create_mode=@fs.OpenOrCreate) catch {
       _ => ()
     }
   }
@@ -1198,15 +1256,15 @@ async fn op_scan_classes(req : ScanClassesRequest) -> ScanClassesReply {
       continue
     }
     let full = join_path(label_dir, name)
-    let data = @fs.read_file(full) catch {
+    let data = @fs.read_binary(full) catch {
       err => {
         log("read_file failed for " + name + ": " + err.to_string())
         continue
       }
     }
-    let text = data.text() catch {
+    let text = @utf8.decode(data) catch {
       err => {
-        log("decode failed for " + name + ": " + err.to_string())
+        log("decode failed for " + name + ": " + @debug.to_string(err))
         continue
       }
     }
@@ -1284,7 +1342,7 @@ async fn op_save_classes(req : SaveClassesRequest) -> SaveClassesReply {
   // PowerShell + base64 path was a workaround for a long-fixed
   // async-fs path bug (paths containing `@`) and a PS 5.1 quoting
   // bug. The current async fs handles both correctly.
-  @fs.write_file(dest, buf.to_string(), create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_text(dest, buf.to_string(), create_mode=@fs.CreateOrTruncate) catch {
     err => fail("save_classes write failed: " + err.to_string())
   }
   { path: dest, written: req.classes.length(), }
@@ -1304,11 +1362,11 @@ async fn op_load_classes(req : LoadClassesRequest) -> LoadClassesReply {
   // (1) curated file
   let curated = join_path(image_dir, "classes.json")
   if @fs.exists(curated) {
-    let raw = @fs.read_file(curated) catch {
+    let raw = @fs.read_binary(curated) catch {
       err =>
         fail("load_classes: read " + curated + " failed: " + err.to_string())
     }
-    let text = raw.text() catch { _ => "" }
+    let text = @utf8.decode(raw) catch { _ => "" }
     let parsed = parse_curated_classes(text)
     let entries : Array[ClassInfo] = []
     for p in parsed {
@@ -1329,8 +1387,8 @@ async fn op_load_classes(req : LoadClassesRequest) -> LoadClassesReply {
         continue
       }
       let full = join_path(label_dir, name)
-      let data = @fs.read_file(full) catch { _ => continue }
-      let text = data.text() catch { _ => continue }
+      let data = @fs.read_binary(full) catch { _ => continue }
+      let text = @utf8.decode(data) catch { _ => continue }
       items.push((full, text))
     }
     let entries = aggregate_label_entries(items)
@@ -1361,13 +1419,13 @@ async fn op_load_classes_from_file(
   if !@fs.exists(path) {
     fail("load_classes_from_file: file not found: " + path)
   }
-  let raw = @fs.read_file(path) catch {
+  let raw = @fs.read_binary(path) catch {
     err =>
       fail(
         "load_classes_from_file: read " + path + " failed: " + err.to_string(),
       )
   }
-  let text = raw.text() catch { _ => "" }
+  let text = @utf8.decode(raw) catch { _ => "" }
   let parsed = parse_curated_classes(text)
   let entries : Array[ClassInfo] = []
   for p in parsed {
@@ -1660,8 +1718,8 @@ async fn op_list_videos(req : ListVideosRequest) -> ListVideosReply {
     }
     let full = join_path(req.path, name)
     // size is best-effort; missing files just report 0.
-    let data = @fs.read_file(full) catch { _ => continue }
-    let bytes = data.binary()
+    let data = @fs.read_binary(full) catch { _ => continue }
+    let bytes = data
     videos.push({
       name,
       path: full,
@@ -1680,25 +1738,29 @@ async fn op_list_videos(req : ListVideosRequest) -> ListVideosReply {
 #warnings("-unused_value")
 async fn op_read_video_info(req : ReadVideoInfoRequest) -> ReadVideoInfoReply {
   let dbg = "C:\\Windows\\Temp\\moonbit-labeler-video-info.log"
-  @fs.write_file(dbg, "", create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_text(dbg, "", create_mode=@fs.CreateOrTruncate) catch {
     _ => ()
   }
   async fn log(s : String) {
-    @fs.write_file(dbg, s + "\n", append=true, create_mode=@fs.OpenOrCreate) catch {
+    @fs.write_text(dbg, s + "\n", append=true, create_mode=@fs.OpenOrCreate) catch {
       _ => ()
     }
   }
   log("=== read_video_info start ===")
   log("path=" + req.path)
-  let (exit_code, stdout_data) = @process.collect_stdout("ffprobe.exe", [
-    "-v",
-    "error",
-    "-print_format",
-    "json",
-    "-show_streams",
-    "-show_format",
-    req.path,
-  ]) catch {
+  let ffprobe = @process.run(
+    "ffprobe.exe",
+    [
+      "-v",
+      "error",
+      "-print_format",
+      "json",
+      "-show_streams",
+      "-show_format",
+      req.path,
+    ],
+    stdout=@process.Collect,
+  ) catch {
     err => {
       log("ffprobe spawn failed: " + err.to_string())
       return {
@@ -1713,9 +1775,11 @@ async fn op_read_video_info(req : ReadVideoInfoRequest) -> ReadVideoInfoReply {
       }
     }
   }
-  let stdout = stdout_data.text() catch {
+  let exit_code = ffprobe.exit_code
+  let stdout_data = ffprobe.stdout_binary()
+  let stdout = @utf8.decode(stdout_data) catch {
     err => {
-      log("ffprobe stdout decode failed: " + err.to_string())
+      log("ffprobe stdout decode failed: " + @debug.to_string(err))
       return {
         path: req.path,
         duration_ms: 0,
@@ -2145,22 +2209,27 @@ async fn op_read_video_frame(
     Some(v) if v >= 1 && v <= 31 => v
     _ => 3
   }
-  let (code, _out) = @process.collect_stdout("ffmpeg.exe", [
-    "-loglevel",
-    "error",
-    "-ss",
-    format_double(sec),
-    "-i",
-    req.path,
-    "-frames:v",
-    "1",
-    "-q:v",
-    q.to_string(),
-    "-y",
-    tmp,
-  ]) catch {
+  let ffmpeg = @process.run(
+    "ffmpeg.exe",
+    [
+      "-loglevel",
+      "error",
+      "-ss",
+      format_double(sec),
+      "-i",
+      req.path,
+      "-frames:v",
+      "1",
+      "-q:v",
+      q.to_string(),
+      "-y",
+      tmp,
+    ],
+    stdout=@process.Collect,
+  ) catch {
     err => fail("ffmpeg spawn failed: " + err.to_string())
   }
+  let code = ffmpeg.exit_code
   if code != 0 {
     // Best-effort cleanup.
     @fs.remove(tmp) catch {
@@ -2176,7 +2245,7 @@ async fn op_read_video_frame(
       ok: false,
     }
   }
-  let data = @fs.read_file(tmp) catch {
+  let data = @fs.read_binary(tmp) catch {
     err => {
       @fs.remove(tmp) catch {
         _ => ()
@@ -2184,7 +2253,7 @@ async fn op_read_video_frame(
       fail("read_video_frame read failed: " + err.to_string())
     }
   }
-  let bytes = data.binary()
+  let bytes = data
   let base64 = base64_encode(bytes)
   @fs.remove(tmp) catch {
     _ => ()
@@ -2238,8 +2307,8 @@ pub async fn read_image_dims(path : String) -> (Int32, Int32) {
   if path == "" {
     return (0, 0)
   }
-  let data = @fs.read_file(path) catch { _ => return (0, 0) }
-  let bytes = data.binary()
+  let data = @fs.read_binary(path) catch { _ => return (0, 0) }
+  let bytes = data
   if bytes.length() < 24 {
     return (0, 0)
   }
@@ -3340,7 +3409,7 @@ fn dedup_push(classes_ordered : Array[String], value : String) -> Unit {
 /// Write a string to `path` via direct MoonBit `@fs.write_file` (UTF-8
 /// encoded). Returns `true` on success, `false` on any fs error.
 async fn write_text_or_log(path : String, content : String) -> Bool {
-  @fs.write_file(path, content, create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_text(path, content, create_mode=@fs.CreateOrTruncate) catch {
     _ => return false
   }
   true
@@ -3392,13 +3461,13 @@ async fn export_voc_internal(
       skipped = skipped + 1
       continue
     }
-    let data = @fs.read_file(label_path) catch {
+    let data = @fs.read_binary(label_path) catch {
       _ => {
         skipped = skipped + 1
         continue
       }
     }
-    let text = data.text() catch {
+    let text = @utf8.decode(data) catch {
       _ => {
         skipped = skipped + 1
         continue
@@ -3477,8 +3546,10 @@ async fn export_yolo_internal(
     if img == "" {
       continue
     }
-    let data = @fs.read_file(join_path(label_dir, name)) catch { _ => continue }
-    let text = data.text() catch { _ => continue }
+    let data = @fs.read_binary(join_path(label_dir, name)) catch {
+      _ => continue
+    }
+    let text = @utf8.decode(data) catch { _ => continue }
     let anns = parse_export_anns(text)
     if anns.length() == 0 {
       continue
@@ -3559,10 +3630,11 @@ fn last_path_component(p : String) -> String {
 /// only used to resolve the image/label folder pair via the standard
 /// convention). `dest_folder` is the destination directory which is
 /// created if missing.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ExportVocRequest {
   image_path : String
   dest_folder : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 #warnings("-unused_value")
@@ -3588,10 +3660,11 @@ async fn op_export_voc_folder(req : ExportVocRequest) -> ExportReply {
 ///|
 /// Request to export a folder of labels as YOLO `.txt` files plus a
 /// global `classes.txt`. Same input conventions as `export_voc_folder`.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ExportYoloRequest {
   image_path : String
   dest_folder : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 #warnings("-unused_value")
@@ -3627,6 +3700,7 @@ async fn op_export_yolo_folder(req : ExportYoloRequest) -> ExportReply {
 ///
 /// `initial_dir` is optional; when set, the dialog opens at that
 /// directory. Pass `""` to start at the framework default.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct PickFolderRequest {
   initial_dir : String
   /// Dialog title (`$f.Description` on Windows). Empty string falls
@@ -3635,13 +3709,14 @@ pub struct PickFolderRequest {
   /// path used to open a "Select image folder" dialog when it
   /// actually wanted an output folder, which confused callers.
   description : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
+#derive(ToJson, Eq, Debug)
 pub struct PickFolderReply {
   path : String
   cancelled : Bool
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Open a native folder picker dialog and resolve to the absolute path
@@ -3725,15 +3800,16 @@ async fn op_pick_folder(
   // to log this to C:\Windows\Temp but that path was hard-coded for
   // a different machine, so the write would silently no-op on every
   // other host; the cancel-on-failure behaviour is what matters.)
-  let (code, out) = @process.collect_stdout("powershell.exe", args) catch {
+  let ps = @process.run("powershell.exe", args, stdout=@process.Collect) catch {
     _ => return { path: "", cancelled: true, }
   }
+  let code = ps.exit_code
   // PowerShell exits 0 on OK/Cancel, non-zero on hard error. Empty
   // stdout = user clicked Cancel; non-empty = picked path.
   if code != 0 {
     return { path: "", cancelled: true, }
   }
-  let raw = out.text() catch { _ => "" }
+  let raw = ps.stdout_text() catch { _ => "" }
   let chosen = raw.trim().to_owned()
   if chosen == "" {
     { path: "", cancelled: true, }
@@ -3757,10 +3833,11 @@ async fn op_pick_folder(
 /// `<stem>.xml` files). `dest_label_dir` is the destination directory
 /// (typically `Label@<dataset>`); created if missing. Each XML's
 /// `` element names the destination `<file_name>.json`.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ImportVocRequest {
   src_dir : String
   dest_label_dir : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to import a folder of YOLO `.txt` label files. `src_dir`
@@ -3768,11 +3845,12 @@ pub struct ImportVocRequest {
 /// image. `image_dir` is the directory holding the actual image
 /// files (needed to read width/height for denormalising the 0..1
 /// bounding boxes). `dest_label_dir` is the destination.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ImportYoloRequest {
   src_dir : String
   image_dir : String
   dest_label_dir : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// Request to import a COCO instances JSON file. `src_json` is the
@@ -3781,11 +3859,12 @@ pub struct ImportYoloRequest {
 /// the image files referenced by the JSON's `file_name` field
 /// (commonly `train2017/` or `val2017/`). `dest_label_dir` is the
 /// destination.
+#derive(FromJson, ToJson, Eq, Debug)
 pub struct ImportCocoRequest {
   src_json : String
   image_root : String
   dest_label_dir : String
-} derive(FromJson, ToJson, Eq, Debug)
+}
 
 ///|
 /// Result of any of the import ops. `imported_count` is the number
@@ -3793,13 +3872,14 @@ pub struct ImportCocoRequest {
 /// could not parse or that yielded no annotations; `error_count` is
 /// hard failures (read error, write failure). `errors` is capped at
 /// 32 entries so a pathological input cannot blow up the wire reply.
+#derive(ToJson, Eq, Debug)
 pub struct ImportReply {
   imported_count : Int32
   skipped_count : Int32
   error_count : Int32
   classes : Array[String]
   errors : Array[String]
-} derive(ToJson, Eq, Debug)
+}
 
 ///|
 /// Split a string on `\n` (trimming a trailing `\r`). Empty trailing
@@ -3997,8 +4077,8 @@ pub fn parse_voc_xml(text : String) -> Array[ExportAnn] {
 async fn read_yolo_classes(dir : String) -> Array[String] {
   let path = join_path(dir, "classes.txt")
   let out : Array[String] = []
-  let data = @fs.read_file(path) catch { _ => return out }
-  let text = data.text() catch { _ => return out }
+  let data = @fs.read_binary(path) catch { _ => return out }
+  let text = @utf8.decode(data) catch { _ => return out }
   for line in import_split_lines(text) {
     let t = line.trim().to_string()
     if t == "" || t.has_prefix("#") {
@@ -4206,7 +4286,7 @@ async fn import_voc_internal(
       continue
     }
     let src_path = join_path(src_dir, name)
-    let data = @fs.read_file(src_path) catch {
+    let data = @fs.read_binary(src_path) catch {
       e => {
         skipped = skipped + 1
         push_import_error(
@@ -4216,7 +4296,7 @@ async fn import_voc_internal(
         continue
       }
     }
-    let text = data.text() catch {
+    let text = @utf8.decode(data) catch {
       _ => {
         skipped = skipped + 1
         push_import_error(errors, "decode failed for " + src_path)
@@ -4359,7 +4439,7 @@ async fn import_yolo_internal(
       continue
     }
     let src_path = join_path(src_dir, name)
-    let data = @fs.read_file(src_path) catch {
+    let data = @fs.read_binary(src_path) catch {
       e => {
         skipped = skipped + 1
         push_import_error(
@@ -4369,7 +4449,7 @@ async fn import_yolo_internal(
         continue
       }
     }
-    let text = data.text() catch {
+    let text = @utf8.decode(data) catch {
       _ => {
         skipped = skipped + 1
         push_import_error(errors, "decode failed for " + src_path)
@@ -4460,7 +4540,7 @@ async fn import_coco_internal(
         ],
       }
   }
-  let data = @fs.read_file(src_json) catch {
+  let data = @fs.read_binary(src_json) catch {
     e =>
       return {
         imported_count: 0,
@@ -4475,7 +4555,7 @@ async fn import_coco_internal(
         ],
       }
   }
-  let text = strip_bom(data.text() catch { _ => "" })
+  let text = strip_bom(@utf8.decode(data) catch { _ => "" })
   let raw = @json.parse(text) catch {
     e =>
       return {

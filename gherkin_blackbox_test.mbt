@@ -5,9 +5,9 @@
 // body. Running `moon test --target native` covers this file alongside
 // the lib_test.mbt and labeler_blackbox_test.mbt suites.
 //
-// `try?` is still required here — moon 0.1.20260824 doesn't parse
-// `try ... catch ... noraise { ... }` yet, so we keep the deprecated
-// form locally and silence the warning per-test below.
+// `try?` was removed from the language — moon 0.1.20261104 now
+// requires the explicit `try Ok(expr) catch { e => Err(e) }` form,
+// which is what the steps below use.
 
 ///|
 /// Shared fixture state for the most-recently-given step within a
@@ -122,7 +122,8 @@ test "Scenario: image_dimensions rejects truncated PNG" {
   // A 12-byte stream is too small to even read IHDR; the function
   // should raise Failure rather than guess dimensions.
   let tiny = b"\x89PNG\r\n\x1a\n\x00\x00"
-  let raised = (try? @moonbit_image.image_dimensions(tiny)) is Err(_)
+  let raised = (Ok(@moonbit_image.image_dimensions(tiny)) catch { e => Err(e) })
+    is Err(_)
   assert_true(raised)
 }
 

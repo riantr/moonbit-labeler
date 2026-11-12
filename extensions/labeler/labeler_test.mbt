@@ -193,3 +193,22 @@ test "import_split_whitespace trims leading/trailing whitespace" {
   let parts = import_split_whitespace("  a b c  ")
   assert_eq(parts.length(), 3)
 }
+
+///|
+test "decode_stdio_line returns the original text" {
+  // Regression guard: the bridge used to decode stdin bytes with
+  // `Bytes::to_string()`, which yields the DEBUG literal
+  // (`b"{\x22id\x22:1}"`) rather than the text. Every request then
+  // failed with "Invalid character 'b' at line 1, column 0" — a
+  // failure that no type checker catches, because both conversions
+  // are `String -> String`.
+  let text = decode_stdio_line(@utf8.encode("{\"id\":1,\"op\":\"read_text\"}"))
+  assert_eq(text, Some("{\"id\":1,\"op\":\"read_text\"}"))
+}
+
+///|
+test "decode_stdio_line rejects invalid UTF-8" {
+  // 0xFF is never a valid UTF-8 lead byte.
+  let bad : Bytes = b"\xff\xfe"
+  assert_eq(decode_stdio_line(bad), None)
+}

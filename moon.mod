@@ -3,10 +3,9 @@ name = "riantr/moonbit_labeler"
 version = "0.2.14"
 
 import {
-  "moonbitlang/async@0.22.5",
-  "moonbit-community/proton@0.4.0",
-  "moonbit-community/proton_contract@0.4.0",
-  "riantr/moonbit_image@0.3.7",
+  "moonbit-community/proton@0.9.0",
+  "moonbit-community/proton_contract@0.9.0",
+  "riantr/moonbit_image@0.3.9",
 }
 
 readme = "README.mbt.md"

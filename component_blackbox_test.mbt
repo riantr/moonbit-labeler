@@ -484,6 +484,10 @@ async fn rm_rf(path : String) -> Unit {
     // async fs normalises the separator internally.
     rm_rf(path + "/" + n)
   }
+  // `@fs.rmdir` is the directory remover in both `moonbitlang/async/fs`
+  // and `moonbitlang/core/async/fs`; `@fs.remove` only handles files.
+  // Using `remove` here silently fails and leaves the directory behind,
+  // which then makes the next run's `mkdir` fail with "already exists".
   @fs.rmdir(path) catch {
     _ => ()
   }
@@ -555,7 +559,7 @@ async test "component: dispatch_op write_label raises 'cannot create label direc
     e => fail("test setup: mkdir root failed: " + e.to_string())
   }
   let blocker = root + "/Label@BLOCKED"
-  @fs.write_file(blocker, b"not a dir", create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_binary(blocker, b"not a dir", create_mode=@fs.CreateOrTruncate) catch {
     e => fail("test setup: write_file blocker failed: " + e.to_string())
   }
   // image_path_to_label_path(".../Image@BLOCKED/...") → ".../Label@BLOCKED/..."
@@ -736,7 +740,7 @@ async test "component: e2e — list_images + read_image + write_label + read_lab
   // Drop the real BMP on disk.
   let bmp_path = image_dir + "/sample.bmp"
   let bmp_bytes = sample_bmp_bytes()
-  @fs.write_file(bmp_path, bmp_bytes, create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_binary(bmp_path, bmp_bytes, create_mode=@fs.CreateOrTruncate) catch {
     e => fail("test setup: write_file bmp failed: " + e.to_string())
   }
   // --- 1. list_images discovers the file ---
@@ -827,10 +831,10 @@ async test "component: e2e — list_images + read_image + write_label + read_lab
   assert_eq(got_label_path, label_path)
   assert_eq(got_content, label_content)
   // --- 5. The label file must actually exist on disk and match. ---
-  let on_disk = @fs.read_file(label_path) catch {
+  let on_disk = @fs.read_binary(label_path) catch {
     e => fail("read_file label on disk failed: " + e.to_string())
   }
-  assert_eq(on_disk.text(), label_content)
+  assert_eq(@utf8.decode(on_disk), label_content)
   // --- 6. Auto-save semantics: a second write_label with new content
   //         must overwrite the first write in place (CreateOrTruncate
   //         semantics) — no orphan files, no appended bytes. ---
@@ -841,10 +845,10 @@ async test "component: e2e — list_images + read_image + write_label + read_lab
   }) catch {
     e => fail("second write_label raised: " + e.to_string())
   }
-  let on_disk_v2 = @fs.read_file(label_path) catch {
+  let on_disk_v2 = @fs.read_binary(label_path) catch {
     e => fail("read_file label on disk v2 failed: " + e.to_string())
   }
-  let on_disk_v2_text = on_disk_v2.text()
+  let on_disk_v2_text = @utf8.decode(on_disk_v2)
   assert_eq(on_disk_v2_text, label_v2)
   assert_eq(on_disk_v2_text.length(), label_v2.length())
   let dir_entries = @fs.readdir(root + "/Label@e2e") catch {
@@ -874,7 +878,11 @@ async test "component: read_image_dims parses BMP, PNG, and JPEG headers" {
   }
   // BMP: 2x2 from the existing sample_bmp_bytes helper.
   let bmp_path = root + "/sample.bmp"
-  @fs.write_file(bmp_path, sample_bmp_bytes(), create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_binary(
+    bmp_path,
+    sample_bmp_bytes(),
+    create_mode=@fs.CreateOrTruncate,
+  ) catch {
     e => fail("test setup: write bmp failed: " + e.to_string())
   }
   let (bw, bh) = @labeler.read_image_dims(bmp_path)
@@ -890,7 +898,7 @@ async test "component: read_image_dims parses BMP, PNG, and JPEG headers" {
      0x08, 0x06, 0x00, 0x00, 0x00, // 8-bit RGBA, no interlace
   ]
   let png_path = root + "/pixel.png"
-  @fs.write_file(
+  @fs.write_binary(
     png_path,
     bytes_from(png_bytes),
     create_mode=@fs.CreateOrTruncate,

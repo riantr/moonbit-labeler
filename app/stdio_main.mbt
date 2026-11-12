@@ -16,12 +16,13 @@
 /// `Object` / `Null` / `String` / `True` / `False` are read-only outside
 /// `core/json`). One of `result` / `error` is always null on the wire;
 /// the parent ignores the null sibling after it sees `ok`.
+#derive(ToJson)
 struct Response {
   id : Json
   ok : Bool
   result : Json?
   error : String?
-} derive(ToJson)
+}
 
 ///|
 fn make_response(id : Json, ok : Bool, result : Json, err : String) -> Response {
@@ -103,6 +104,19 @@ async fn handle_request(req : Json) -> Response {
 }
 
 ///|
+/// Write one line to stdout.
+///
+/// `moonbitlang/core/async/stdio` writes **bytes**, not strings (the
+/// old `moonbitlang/async/stdio` took a `String`), and the write can
+/// raise `WriterError`. Both conversions live here so the call sites
+/// below stay one-liners.
+async fn emit(line : String) -> Unit {
+  @stdio.stdout.write(@utf8.encode(line)) catch {
+    _ => ()
+  }
+}
+
+///|
 /// Main loop. Reads one JSON request per line from stdin, writes one
 /// JSON response per line to stdout. Exits cleanly on EOF (parent
 /// closed stdin, or the Python side tore down the pipe).
@@ -111,15 +125,31 @@ pub async fn run_stdio() -> Unit {
   // child is actually ready to accept requests.
   let banner : Json = {
     "type": "ready",
-    "ops": @labeler.dispatch_op_list().to_json(),
+    "ops": ToJson::to_json(@labeler.dispatch_op_list()),
   }
-  @stdio.stdout.write(banner.stringify())
-  @stdio.stdout.write("\n")
+  emit(banner.stringify())
+  emit("\n")
   while true {
-    let line_opt : String? = @stdio.stdin.read_until("\n")
+    // `read_until` now takes a byte delimiter and answers with bytes;
+    // EOF arrives either as `None` or as a reader error (the parent
+    // closed the pipe mid-line), and both mean "stop".
+    //
+    // The bytes are decoded by `@labeler.decode_stdio_line`, NOT by
+    // `Bytes::to_string()`: the latter renders the *debug* literal
+    // (`b"{\x22id\x22:1}"`), which would make every request fail to
+    // parse. The helper lives in the backend because the `app` package
+    // is excluded from the CI test scope (it links the CEF runtime);
+    // the decoder itself is unit-tested there.
+    let line_opt : Bytes? = @stdio.stdin.read_until(@utf8.encode("\n")) catch {
+      _ => None
+    }
     let line = match line_opt {
       None => break
-      Some(s) => s
+      Some(b) =>
+        match @labeler.decode_stdio_line(b) {
+          None => break
+          Some(s) => s
+        }
     }
     let trimmed = line.trim()
     if trimmed.length() == 0 {
@@ -132,11 +162,11 @@ pub async fn run_stdio() -> Unit {
       e =>
         make_response(null, false, null, "json parse error: " + e.to_string())
     }
-    @stdio.stdout.write(ToJson::to_json(resp).stringify())
-    @stdio.stdout.write("\n")
+    emit(ToJson::to_json(resp).stringify())
+    emit("\n")
   }
   // EOF — emit a clean shutdown marker.
   let bye : Json = { "type": "bye" }
-  @stdio.stdout.write(bye.stringify())
-  @stdio.stdout.write("\n")
+  emit(bye.stringify())
+  emit("\n")
 }

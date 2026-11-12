@@ -23,19 +23,18 @@ pub fn image_package_anchor() -> Bool {
 }
 
 ///|
-/// Anchor for `moonbitlang/async`. The `async fn` keyword alone is
-/// not counted as a use by the compiler (per moon 0.1.x), so we
-/// construct an `Error` via `fail()` and pass it to
-/// `is_cancellation_error`. The returned `Bool` is discarded; only
-/// the package reference matters.
-pub fn async_package_anchor() -> Bool raise {
-  let e = fail("anchor")
-  let _ = @async.is_cancellation_error(e)
+/// Anchor for `moonbitlang/core/async`. The `async fn` keyword alone is
+/// not counted as a use by the compiler (per moon 0.1.x), so we call
+/// `is_being_cancelled()` — the cheapest non-allocating entry point in
+/// the package. The returned `Bool` is discarded; only the package
+/// reference matters.
+pub fn async_package_anchor() -> Bool {
+  let _ = @async.is_being_cancelled()
   true
 }
 
 ///|
-/// Anchor for `moonbitlang/async/fs`. `kind` is an async function
+/// Anchor for `moonbitlang/core/async/fs`. `kind` is an async function
 /// returning `FileKind`; we probe a path that almost certainly does
 /// not exist and swallow any IO error — the goal is just to touch
 /// the `@fs.*` namespace.

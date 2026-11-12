@@ -37,8 +37,8 @@ fn is_debug_mode(args : Array[String]) -> Bool {
 
 ///|
 async fn main {
-  // Proton/CEF IPC shell entry. Loads the 0.2.5 `frontend/dist/index.html`
-  // and registers the 21 labeler ops as `ext:labeler/<op>` IPC commands.
+  // Proton/CEF IPC shell entry. Loads the `frontend/dist/index.html`
+  // and registers the 24 labeler ops as `ext:labeler/<op>` IPC commands.
   //
   // When launched with `--stdio`, skip the Proton/Chromium stack and
   // run the headless JSON-RPC bridge in `stdio_main.mbt` instead. The
@@ -49,15 +49,20 @@ async fn main {
   if is_stdio_mode(args) {
     run_stdio()
   } else {
-    @proton.file(
+    // Proton 0.9.0 turned the `App` builder from a chainable style
+    // (every setter returned `Self`) into a statement style (every
+    // setter returns `Unit` and mutates the app in place). Chaining
+    // `.identifier(..).capability(..)` no longer type-checks, so the
+    // builder is held in a local and configured step by step.
+    let app = @proton.file(
       "MoonBit Labeler",
       "frontend/dist/index.html",
       width=1280,
       height=800,
       debug=is_debug_mode(args),
     )
-    .identifier("io.mooncakes.riantr.moonbit-labeler")
-    .capability(@proton_extension.capability(@labeler.extension()))
-    .run_or_abort()
+    app.identifier("io.mooncakes.riantr.moonbit-labeler")
+    app.capability(@proton_extension.capability(@labeler.extension()))
+    app.run_or_abort()
   }
 }

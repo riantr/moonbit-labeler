@@ -1,6 +1,7 @@
 import {
-  "moonbitlang/async",
-  "moonbitlang/async/stdio",
+  "moonbitlang/core/async",
+  "moonbitlang/core/async/stdio",
+  "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
@@ -15,5 +16,9 @@ pkgtype(kind: "executable")
 
 options(
   "native-stub": [ "native_stub.c" ],
+  "allow-experimental-packages": [
+    "moonbitlang/core/async",
+    "moonbitlang/core/async/stdio",
+  ],
   targets: { "main.mbt": [ "native" ] },
 )
