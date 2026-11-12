@@ -42,7 +42,7 @@ follows from that problem rather than from derivation.
 ```powershell
 # proton_cli is a mooncakes binary package, not part of the moon installer.
 # Pin it to the version in moon.mod (Proton modules are lockstep-versioned).
-moon install moonbit-community/proton_cli@0.4.0
+moon install moonbit-community/proton_cli@0.9.0
 
 # One-time CEF runtime download (~850 MB) into ~/.proton/store/
 proton_cli cef setup
@@ -102,9 +102,9 @@ directory is produced either way, so zip it yourself afterwards — see
 
 | Layer | Choice | Why |
 |---|---|---|
-| Backend | MoonBit 0.1.20261012 + async runtime | Native AOT compile, no GC pauses in the hot path |
-| UI shell | Proton 0.4.0 + CEF 150.0.19 | Self-contained portable exe, no Electron |
-| Image codec | shared [`riantr/moonbit_image@0.3.7`](https://mooncakes.io/riantr/moonbit_image) (MIT) | Faster than `mizchi/image` for our workload; includes JPEG IDCT fix |
+| Backend | MoonBit 0.1.20261104 + `moonbitlang/core/async` runtime | Native AOT compile, no GC pauses in the hot path |
+| UI shell | Proton 0.9.0 + CEF 150.0.19 | Self-contained portable exe, no Electron |
+| Image codec | shared [`riantr/moonbit_image@0.3.9`](https://mooncakes.io/riantr/moonbit_image) (MIT) | Faster than `mizchi/image` for our workload; includes JPEG IDCT fix |
 | Frontend | Vanilla JS + Vite | No framework lock-in, fast cold reload |
 | IPC | MoonBit `@proton_contract.Command` + `@proton_extension.typed` | Type-safe Request/Reply structs, bound via `CommandRegistrar` |
 
@@ -120,14 +120,14 @@ don't match the documented target.
 ```
 .
 ├── app/
-│   └── main.mbt                       # 0.4.0 entry: @proton.file(...).identifier(...).capability(@proton_extension.capability(ext)).run_or_abort()
+│   └── main.mbt                       # 0.9.0 entry: @proton.file(...) then app.identifier(...) / app.capability(...) / app.run_or_abort()
 ├── extensions/
 │   ├── labeler/                       # 24 IPC ops + the image/label/VOC/YOLO/COCO pipeline
 │   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
-│   │   ├── extension.mbt               # 0.4.0 extension registration (returns @proton_contract.Extension; 24 commands registered via @proton_extension.typed)
+│   │   ├── extension.mbt               # 0.9.0 extension registration (returns @proton_contract.Extension; 24 commands registered via @proton_extension.typed)
 │   │   ├── dispatch.mbt                # pure-MoonBit dispatch_op(op, payload) -> Json raise entry point (used by the stdio bridge)
 │   │   └── moon.pkg
-│   # Image codec lives in the shared riantr/moonbit_image@0.3.7 mooncake
+│   # Image codec lives in the shared riantr/moonbit_image@0.3.9 mooncake
 │   # (see moon.mod), not in this tree. Prior `extensions/image/` vendored
 │   # copy was removed in 20fbdf2.
 ├── frontend/
@@ -145,8 +145,8 @@ don't match the documented target.
 │       └── style.css                  # all CSS in one place
 ├── data/                              # local sample dataset (Image@CARS.Part.01)
 ├── doc/VIDEO_LABELING.md
-├── proton.project.json                # 0.4.0 canonical app config (identifier, backend, frontend, package)
-├── moon.mod                           # deps: proton@0.4.0 + proton_contract@0.4.0 + moonbit_image@0.3.7 + async@0.22.5
+├── proton.project.json                # 0.9.0 canonical app config (identifier, backend, frontend, package)
+├── moon.mod                           # deps: proton@0.9.0 + proton_contract@0.9.0 + moonbit_image@0.3.9 (async comes from the builtin moonbitlang/core)
 └── README.mbt.md                      # generated Proton README (do not edit)
 ```
 
@@ -241,7 +241,7 @@ in `extensions/labeler/extension.mbt` and bound to `op_*` handlers in
 |---|---|---|
 | `list_images` | frontend → backend | List image files in a folder |
 | `read_image` / `read_thumb` | frontend → backend | Read image bytes (base64), with optional resize for thumbs |
-| `decode_image` / `resize_image` | frontend → backend | Backend-side image decode / resize (shared `riantr/moonbit_image@0.3.7`) |
+| `decode_image` / `resize_image` | frontend → backend | Backend-side image decode / resize (shared `riantr/moonbit_image@0.3.9`) |
 | `read_text` / `write_text` | frontend → backend | Read / write a UTF-8 text file |
 | `read_label` / `write_label` | frontend → backend | Read / write the on-disk label JSON for a given image path |
 | `scan_classes` / `save_classes` / `load_classes` / `load_classes_from_file` | frontend → backend | Manage the curated class list (TXT or JSON, by file path or by Image/Label dir scan) |
@@ -256,7 +256,7 @@ declarations in `extensions/labeler/extension.mbt`.
 
 ## Vendored dependencies
 
-- **`riantr/moonbit_image@0.3.7`** — shared mooncake, MIT,
+- **`riantr/moonbit_image@0.3.9`** — shared mooncake, MIT,
   original copyright 2025 lws. Pulled in via `moon.mod` (see the
   `import` block). Used for the backend decode + resize + BMP encode
   paths. A prior vendored copy under `extensions/image/` was removed

@@ -19,7 +19,7 @@ Video-mode details: see [doc/VIDEO_LABELING.md](doc/VIDEO_LABELING.md).
 
 - One-time CEF download into `~/.proton/store/` (measured ~850 MB per platform on Windows
   0.3.4): `proton_cli cef setup`. The CLI itself is a mooncakes binary package —
-  `moon install moonbit-community/proton_cli@0.4.0`, pinned to the proton version in
+  `moon install moonbit-community/proton_cli@0.9.0`, pinned to the proton version in
   `moon.mod` (Proton modules are lockstep-versioned).
 - Update MoonBit deps: `moon update`
 - Frontend deps: `cd frontend && npm install`
@@ -31,13 +31,19 @@ Video-mode details: see [doc/VIDEO_LABELING.md](doc/VIDEO_LABELING.md).
 > only formats this module's own packages and silently does nothing for a
 > dependency.
 >
-> The root module no longer hits this — `wzzc-dev/moui` was an **unused**
-> import here (every `@moui.` reference lives in `app_moui/`, a separate
-> module) and removing it drops the whole `Milky2018/*` chain that carried
-> `moon_accesskit@0.3.0`. Do not re-add moui to the root `moon.mod` without
-> checking that chain, or `moon publish` breaks: it extracts the package into
-> a temp directory with its own fresh cache, so no CI step can pre-empt it.
-> `app_moui/` is still blocked either way — see its status note below.
+> **As of the 0.9.0 dependency bump, neither module hits this any more.**
+> The root module dropped the unused `wzzc-dev/moui` import back in `c64fc33`
+> (every `@moui.` reference lives in `app_moui/`, a separate module), and the
+> `app_moui` upgrade to `moui@0.6.1` moved the chain to
+> `Milky2018/moon_accesskit@0.4.2` + `Milky2018/svg@0.6.0` + `Milky2018/css@0.6.0`,
+> all of which ship a proper `moon.mod`. Verified by scanning both `.mooncakes/`
+> trees after a clean resolve: zero `moon.mod.json` files. The migration step in
+> the two `app-moui` CI jobs is kept as belt-and-braces, but it now finds
+> nothing to migrate.
+>
+> Do not re-add moui to the root `moon.mod` without checking the chain it drags
+> in, or `moon publish` breaks: it extracts the package into a temp directory
+> with its own fresh cache, so no CI step can pre-empt it.
 
 ## Commands
 
@@ -123,16 +129,113 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - `tests/`, `qa/`          — black-box tests. `*_blackbox_test.mbt` at the repo root + Gherkin
   feature `image_codecs.feature`; frontend QA in `frontend/qa/webkit_picker_blackbox.test.mjs`.
 - `target/proton-dist/`    — packaged exe + zip (gitignored).
-- `proton.project.json`    — 0.4.0 canonical app config: identifier, backend package path,
+- `proton.project.json`    — 0.9.0 canonical app config: identifier, backend package path,
   frontend dev/build commands, product name + version + output dir + formats.
   (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration; the 0.2.5 → 0.3.3
-  migration kept the same `proton.project.json` schema, as did 0.4.0.)
-- `moon.mod`               — `riantr/moonbit_labeler` v0.2.14, depends on `moonbit-community/proton@0.4.0`,
-  `proton_contract@0.4.0`, `moonbitlang/async@0.22.5`, and `riantr/moonbit_image@0.3.7`.
+  migration kept the same `proton.project.json` schema, as did 0.4.0 and 0.9.0.)
+- `moon.mod`               — `riantr/moonbit_labeler` v0.2.14, depends on `moonbit-community/proton@0.9.0`,
+  `proton_contract@0.9.0`, and `riantr/moonbit_image@0.3.9`.
+  The async runtime is **not** a declared dependency any more: it comes from the
+  toolchain's builtin `moonbitlang/core` module, so `moonbitlang/core/async` is
+  imported without any `moon.mod` entry (same as `moonbitlang/core/json`).
   MoUI is **not** a root dependency: it is only used by `app_moui/`, which is its own
   module with its own `moon.mod`. A prior vendored copy under
   `extensions/image/` was removed in commit b6dd1b1; do not reintroduce it without first
   re-reading the deletion rationale in that commit's message.
+
+## Dependency / toolchain notes (2026-11-12)
+
+The `moonbitlang/async` → `moonbitlang/core/async` swap, the Proton
+0.4.0 → 0.9.0 bump and the `moonbit_image` 0.3.7 → 0.3.9 bump landed
+together with a moon toolchain move (0.1.20261012 → 0.1.20261104). The
+following are the non-obvious facts; each one cost a compile cycle to
+learn.
+
+- **`moonbitlang/core/async` is a package inside the builtin
+  `moonbitlang/core` module, not a module of its own.** `moonbitlang/core/async`
+  404s on mooncakes.io — the registry has `moonbitlang/core` (versioned
+  `0.1.20261105+...`, one per moon release), and the async packages live
+  inside it. So the import path is `moonbitlang/core/async` while the
+  *module* is `moonbitlang/core`, and like `moonbitlang/core/json` it
+  needs **no `moon.mod` entry at all** — the toolchain bundles it. Adding
+  `"moonbitlang/core@<ver>"` to `moon.mod` is wrong.
+- **`moonbitlang/core/async` is still flagged experimental upstream**, so
+  every package that imports it must acknowledge it in its `moon.pkg`:
+  `options("allow-experimental-packages": ["moonbitlang/core/async", ...])`.
+  Without it the build stops with "Package ... depends on experimental
+  package `moonbitlang/core/async`". List the subpackages you import
+  (`moonbitlang/core/async/fs`, `/stdio`, `/process`, `/io`) — listing
+  extra ones is harmless.
+- **The `fs` API was renamed and re-typed.** `read_file` → `read_binary`
+  (returns owned `Bytes`, was a borrowed `&@io.Data`), `write_file` →
+  `write_text` (for `String` content) or `write_binary` (for `Bytes`).
+  The optional-argument order is unchanged, so named-argument call sites
+  need no edit.
+- **`remove` and `rmdir` are NOT interchangeable — in either the old
+  `moonbitlang/async/fs` or the new `moonbitlang/core/async/fs`.**
+  `remove` handles **files only**; `rmdir` is the directory remover
+  (`rmdir(path, recursive?, allow_missing?)`). Swapping them looks
+  harmless — both return `Unit` and both take a path — but `remove` on a
+  directory fails silently, the directory survives, and the next run's
+  `mkdir` then dies with "Cannot create a file when that file already
+  exists". This bit `component_blackbox_test.mbt`'s `rm_rf` helper during
+  this migration; the test suite is supposed to be re-runnable, so a
+  leftover directory is a real bug, not cosmetic.
+- **`mkdir` gained an `allow_exist` parameter, defaulting to `false`.**
+  The old `mkdir(path, permission?, recursive?)` had no such knob, and
+  `recursive=true` on an existing path raised `AlreadyExists` in both
+  versions. Code that creates a directory it may already have must guard
+  with `@fs.exists` first (as `ensure_dir` in `extensions/labeler` does)
+  or pass `allow_exist=true`.
+- **To keep the old "read error" vs "decode error" distinction, use
+  `read_binary` + `@utf8.decode(bytes)`, not `read_text`.** `read_text`
+  merges the IO failure and the UTF-8 failure into one error, which
+  would flip `op_read_text` / `op_read_label`'s `found` flag from `true`
+  to `false` on a malformed label file. `utf8.Malformed` has no
+  `to_string()`, so render it with `@debug.to_string(err)`.
+- **`@process.collect_stdout` is gone.** The replacement is
+  `@process.run(cmd, args, stdout=@process.Collect)`, which returns a
+  `ProcessResult` with a public `exit_code` field and
+  `stdout_binary()` / `stdout_text()`. `stdout_binary()` **aborts** if
+  stdout was not redirected with `Collect` — it is not a no-op.
+- **`@stdio` writes bytes now.** `stdout.write(String)` became
+  `stdout.write(BytesView)` and `stdin.read_until(StringView) -> String?`
+  became `read_until(BytesView) -> Bytes?`. Encode with
+  `@utf8.encode(s)`; `String::to_bytes()` works but is deprecated in
+  favour of `@utf8.encode`.
+- **`@async.is_cancellation_error(e)` is gone**; the replacement is the
+  argument-less `@async.is_being_cancelled()`. `app_entry.mbt`'s anchor
+  function uses it.
+- **Proton 0.9.0 turned the `App` builder from chainable to
+  statement-style.** Every setter changed from `-> Self` to `-> Unit`, so
+  `@proton.file(...).identifier(...).capability(...).run_or_abort()` no
+  longer type-checks. Hold the app in a local and call the setters
+  statement by statement. `proton/extension`, `proton/command`,
+  `proton/core` and `proton_contract` are otherwise source-compatible
+  (`Json` → `@json.Json`, `TaskGroup[Unit]` → `TaskGroup`).
+- **`Bytes::to_string()` is a DEBUG renderer, not a text conversion.**
+  `b"{\"id\":1}".to_string()` returns `b"{\x22id\x22:1}"` — the literal
+  form with escaped bytes — while `@utf8.decode(bytes)` returns the
+  original text. Both are `String -> String`, so the type checker is
+  happy with either and the bug only shows up at runtime: the stdio
+  bridge answered every request with `json parse error: Invalid
+  character 'b' at line 1, column 0` because the leading `b` of the
+  debug literal was being fed to the JSON parser. Use `@utf8.decode`
+  for every `Bytes` → text conversion. The bridge's decoder lives in
+  `extensions/labeler` as `decode_stdio_line` (unit-tested there,
+  because the `app` package is an executable that links the CEF
+  runtime and is therefore outside the CI test scope).
+- **Two moon-0.1.20261104 language changes hit this repo** and are worth
+  remembering because they are not dependency-related: `try?` was
+  **removed** (use `try expr catch { ... }`, or
+  `try Ok(expr) catch { e => Err(e) }`), and the implicit promotion of
+  `to_json` / `from_json` / `Eq` / `Debug` methods to plain methods was
+  removed too — `array.to_json()` must become `ToJson::to_json(array)`.
+  The *derived* impls still promote, but only with a deprecation warning;
+  the ones on core types (`Double`, `Int`, `Bool`, `String`, `Array`)
+  are hard errors.
+- **`moonbit_image` 0.3.7 → 0.3.9 is API-identical** apart from the
+  `Int` → `Int32` rename, which is a no-op (they are the same type).
 
 ## Code style
 
@@ -151,7 +254,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   `moon fmt --check` **repo-wide as a hard gate** — the repo is fmt-clean as of
   `cf55c57` (`style: apply moon fmt to clear the pre-existing drift`, 7 files,
   315/184), so any new drift fails the build.
-- **moon 0.1.20261012's formatter rewrites `Int` to `Int32`.** Running a bare
+- **moon 0.1.20261104's formatter rewrites `Int` to `Int32`.** Running a bare
   `moon fmt` on it changes 3 files (~79/75 lines, all in
   `labeler.mbt` and the two blackbox drivers) purely by rewriting that type
   annotation. That is the formatter's canonical form, **not** a compile
@@ -238,38 +341,63 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > parallel spike demonstrating an alternative native view tree that could
 > replace the CEF/JS frontend. It is **not** on the production path; the
 > production frontend is `frontend/` (Vite + vanilla JS + CEF 150.0.19).
-> The 361 tests in `app_moui/` are reference + smoke tests, not the gating
+> The 365 tests in `app_moui/` are reference + smoke tests, not the gating
 > regression suite — the gating suite is `extensions/labeler/labeler_test.mbt`.
 > `app_moui/` should eventually either be promoted to production scope (when
 > MoUI upstream fixes the `@views.button` rendering bug) or be deleted
 > entirely. It builds and passes on the current toolchain again; see below.
 
-> **Solved 2026-10-16 — `app_moui/` builds and its full suite passes on
-> moon 0.1.20261012.** Two lines in `app_moui/moon.mod`:
+> **Updated 2026-11-12 — `app_moui/` builds and its full suite passes on
+> moon 0.1.20261104 with `moui@0.6.1`.** `app_moui/moon.mod` is now:
 >
->     "wzzc-dev/moui@0.2.2",
->     "Milky2018/css@0.6.0",
+>     "wzzc-dev/moui@0.6.1",
+>     "riantr/moonbit_image@0.3.9",
+>     "moonbitlang/x@0.5.6",
 >
-> **Why the second line is there, since `moon.mod` takes no comments.** The
-> chain was: moui 0.2.2 pins `Milky2018/svg@0.5.3`, which pins
-> `css@0.5.3`, which declares `pub(all) enum Float` — a reserved type name
-> as of moon 0.1.20261012. `css@0.6.0` removed that enum. There is no
-> dependency-override mechanism in MoonBit (`moon check --patch-file`
-> patches a selected package's *source*; it does not change which version
-> of a transitive dependency resolves, and build/update/install expose no
-> such flag). But a **direct declaration outranks a transitive pin**:
-> moon's resolver unifies to the highest version requested, so naming
-> `Milky2018/css@0.6.0` here wins over `svg`'s pin on `0.5.3`.
+> **The `Milky2018/css@0.6.0` override is gone, and no replacement is
+> needed.** The old chain was: moui 0.2.2 pins `Milky2018/svg@0.5.3`, which
+> pins `css@0.5.3`, which declares `pub(all) enum Float` — a reserved type
+> name as of moon 0.1.20261012. moui 0.6.1 pins `svg@0.6.0`, which pins
+> `css@0.6.0` directly, so the problem package is simply no longer in the
+> graph. The direct-declaration-overrides-a-transitive-pin trick (moon has
+> no `override`/`patch`/`replace` flag, but the resolver unifies to the
+> highest version requested) is what fixed it back then; it is no longer
+> needed now that upstream moved.
 >
-> That is worth stating plainly because it was missed twice. `moon.mod`
-> has no `override`/`patch`/`replace` flag, and "the mechanism does not
-> exist" looked like a conclusion — but the mechanism is the resolver's
-> precedence rule, and only a real compile answers that. Search for the
-> capability, then *test the behaviour*.
+> **Why the bump was forced.** The moon toolchain moved from 0.1.20261012 to
+> 0.1.20261104, and that alone broke `app_moui` — *not* this repo's own
+> code. Measured against a clean `git worktree` at the pre-bump commit
+> `6ca4151`: `moon check` in `app_moui` reported **52 errors**, all of them
+> inside `.mooncakes/` (third-party sources), including 32 of the form
+> `Type Double has no method to_json`. The new moon removed the implicit
+> method promotion that `x.to_json()` relied on, so `Milky2018/moon_accesskit@0.3.0`
+> and `wzzc-dev/moui@0.2.2` no longer compile. `moon_accesskit@0.4.2` and
+> `moui@0.6.1` do.
 >
-> Verified: `moon check` 0 errors, `moon test` **361/361**, in a **cold
-> clone** with a fresh `.mooncakes/` — not just against a warm cache.
-> The earlier "217 tests" figure in this file was stale from Phase 18.E.
+> **The four API changes that bump required in our own code** (each is a
+> one-liner, and the whole suite still passes):
+>
+>   1. `wzzc-dev/moui/apphost` is a new package and `run_app` moved there
+>      from `wzzc-dev/moui/runtime` — `main_native.mbt` now calls
+>      `@apphost.run_app(...)` and `moon.pkg` imports the new package.
+>   2. `core::ImageRun` grew an optional `src_rect : Rect?` field. MoonBit
+>      requires **every** field of a record literal to be spelled out —
+>      an `Option`-typed field is NOT auto-filled — so the ten
+>      `ImageRun { ... }` literals across `canvas_view.mbt`,
+>      `phase14_image_test.mbt`, `phase5_7_blit_test.mbt` and
+>      `rasterizer_test.mbt` all need an explicit `src_rect: None`.
+>      The error text is the tell: "Record fields src_rect are undefined
+>      for type ...ImageRun" means *missing from the literal*, not
+>      *unknown to the type*.
+>   3. MoUI exports its own `OpResult` constructors, so in `app_moui` the
+>      bare names `Ok` / `Err` resolve to **MoUI's**, not the builtin
+>      `Result`. `image_header.mbt` therefore avoids them entirely and
+>      uses `try ... catch { _ => return None }` with an early return.
+>   4. `moonbitlang/core/json` is no longer reachable implicitly —
+>      `label_io.mbt` uses `@json.parse`, so `moon.pkg` now imports it.
+>
+> Verified: `moon check` 0 errors, `moon test` **365/365**, in the main
+> tree on moon 0.1.20261104 with `moui@0.6.1`.
 
 > **The `app-moui` (ubuntu) job gates on `moon check`; the 365 tests run
 > in `app-moui-windows`.** Neither job installs MoUI's Linux build
@@ -316,23 +444,24 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 > native-link breakage needs `moon build`, and that is Proton's job in
 > `test-windows`.
 
-> **One catch on a cold fetch.** `Milky2018/moon_accesskit@0.3.0` still
-> ships a deprecated `moon.mod.json`, which moon 0.1.20261012 rejects
-> outright:
+> **The cold-fetch `moon.mod.json` catch is no longer live.** It used to be
+> `Milky2018/moon_accesskit@0.3.0`, which shipped a deprecated
+> `moon.mod.json` that moon rejects outright:
 >
 >     `moon.mod.json` at '.mooncakes/<pkg>' is no longer supported.
 >     Run `moon fmt` to migrate to `moon.mod`.
 >
-> `.mooncakes/` is gitignored and re-fetched, so this comes back on every
-> clean checkout. Fix it per package — at the project root `moon fmt`
-> only formats this module's own packages and silently does nothing:
+> `moui@0.6.1` pulls `moon_accesskit@0.4.2`, which ships a proper
+> `moon.mod`, so a clean resolve now leaves **zero** `moon.mod.json` files
+> in `app_moui/.mooncakes/`. The migration step in the two `app-moui` CI
+> jobs is kept as belt-and-braces and now reports "no deprecated
+> manifests found" — but if a future dependency reintroduces one, the fix
+> is still per package, because at the project root `moon fmt` only
+> formats this module's own packages and silently does nothing:
 >
 >     cd app_moui/.mooncakes/Milky2018/moon_accesskit && moon fmt
 >
 > A loop over `find .mooncakes -name moon.mod.json` handles all of them.
-> (`mizchi/svg`, the 0.1.12-era blocker, cannot be migrated this way —
-> its `component` sub-module has a *local* dependency, which `moon.mod`
-> cannot express. Upgrading past 0.1.12 is what removes it.)
 
 > **The tests no longer need `data/` — they generate their own.** As of
 > 5.26 the 16 tests that read `data/Image@skin` / `data/Label@skin` build

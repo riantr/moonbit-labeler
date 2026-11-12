@@ -236,7 +236,7 @@ jobs:
       # the next time proton itself is bumped. Keeping the pin here
       # means the two have to be updated together, visibly.
       - name: Install proton_cli
-        run: moon install moonbit-community/proton_cli@0.4.0
+        run: moon install moonbit-community/proton_cli@0.9.0
 
       # Populates the CEF runtime store that proton/build.mjs points the
       # linker at: ~/.proton/store/win32-x64/cef-<sha>-layout-<n>/sdk.
@@ -276,8 +276,8 @@ jobs:
       # that reaches proton/internal/native/ffi -- so unlike check and
       # test above they genuinely require the CEF SDK, which is why this
       # is the only job that installs proton_cli and runs `cef setup`.
-      # Verified locally against Proton 0.3.4: `moon build --target
-      # native` exits 0 (141 tasks, 0 errors).
+      # Verified locally against Proton 0.9.0: `moon build --target
+      # native` exits 0.
       - name: moon build
         run: moon build --target native
 
@@ -301,21 +301,15 @@ jobs:
   # reserved type name) without any job turning red. This job exists to
   # make that class of failure visible again.
   #
-  # `moon check` is the gate, not `moon test`, and the reason is worth
-  # stating rather than leaving as an unexplained gap. 16 tests in
-  # disk_io_test.mbt / image_decode_test.mbt / image_header_test.mbt read
-  # the real shipped dataset (data/Image@skin, data/Label@skin), which is
-  # gitignored per-deployment data -- only data/.gitkeep is tracked. In a
-  # clean checkout those 16 fail with `0 != 6`; copying the dataset in
-  # gives 361/361. Running `moon test` here would therefore be red for a
-  # reason that has nothing to do with the code, and committing ~800 KB
-  # of user images to satisfy it contradicts the ignore rule's stated
-  # intent. The other 345 tests are exercised locally by anyone who has
-  # the dataset.
-  #
-  # To close that properly the dataset-dependent tests need to skip when
-  # the fixture is absent rather than fail; that is a change to
-  # app_moui's own suite and was not made unilaterally.
+  # `moon check` is the gate, not `moon test`, and the reason is specific
+  # rather than general: `moon test` invokes the MoUI module prebuilds,
+  # which on Linux need node + pkg-config + libglib2.0-dev +
+  # wayland-protocols. The 365 tests themselves DO run in the
+  # app-moui-windows job below, and they need nothing from the shipped
+  # dataset -- the 16 tests that used to read data/Image@skin now
+  # generate their own files under _build/ (see
+  # app_moui/p526_fixture_test.mbt), because data/ is gitignored
+  # per-deployment data and could not gate CI.
   app-moui:
     name: check (app_moui, ubuntu, native)
     runs-on: ubuntu-latest
@@ -370,10 +364,13 @@ jobs:
       # Windows wants none of it, so the 365 tests run in the
       # app-moui-windows job below and this one stays check-only.
 
-      # Milky2018/moon_accesskit@0.3.0 still ships a moon.mod.json,
-      # which moon 0.1.20261012 rejects outright. .mooncakes/ is
-      # gitignored and re-fetched, so this returns on every clean
-      # checkout and has to be migrated per package -- `moon fmt` at the
+      # Belt-and-braces. `moui@0.6.1` pulls `moon_accesskit@0.4.2`, which
+      # ships a proper `moon.mod`, so a clean resolve leaves zero
+      # `moon.mod.json` files and this loop finds nothing to migrate. It
+      # stays because a future dependency could reintroduce one: moon
+      # 0.1.20261012+ rejects a deprecated `moon.mod.json` outright, and
+      # `.mooncakes/` is gitignored and re-fetched, so it would come back
+      # on every clean checkout. Fix it per package -- `moon fmt` at the
       # module root only formats this module's own packages and silently
       # does nothing for a dependency.
       #
@@ -445,11 +442,12 @@ jobs:
         run: moon update
 
       # Same moon.mod.json migration as the ubuntu app-moui job, for the
-      # same two reasons: Milky2018/moon_accesskit@0.3.0 still ships the
-      # deprecated manifest, and `moon update` refreshes only the index --
-      # package sources are fetched during a build, so without the check
-      # in front the loop would scan an empty .mooncakes/ and the next
-      # step would die on the manifest it just claimed was absent.
+      # same reasons: `moon update` refreshes only the index -- package
+      # sources are fetched during a build, so without the check in front
+      # the loop would scan an empty .mooncakes/ and the next step would
+      # die on the manifest it just claimed was absent. With moui@0.6.1
+      # the chain resolves to moon_accesskit@0.4.2, which ships a proper
+      # moon.mod, so this currently finds nothing to migrate.
       - name: Migrate deprecated moon.mod.json in cached dependencies
         run: |
           moon check --target native *> $null
