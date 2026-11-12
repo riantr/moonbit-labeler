@@ -56,6 +56,15 @@ html, body, #app {
 }
 
 .title { display: flex; align-items: center; gap: 12px; min-width: 0; flex-shrink: 1; }
+/* The app logo in the title bar. The asset is small enough that the build
+   inlines it into the page, so it never costs a file fetch. */
+.app-logo {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  border-radius: 6px;
+}
 .title .badge {
   font-weight: 600;
   font-size: 14px;
@@ -345,6 +354,40 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-size: 10px;
   font-family: "Cascadia Mono", "Consolas", monospace;
 }
+
+/* ============================================================
+   Context menu of a class item (right-click in the sidebar)
+   ============================================================ */
+
+.ctx-menu {
+  position: fixed;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  min-width: 180px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  z-index: 2000;
+}
+.ctx-menu[hidden] { display: none; }
+.ctx-menu li[role="menuitem"] {
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.ctx-menu li[role="menuitem"]:hover { background: var(--hover); }
+/* Disabled: greyed out and not selectable. `pointer-events: none` takes
+   the hover and the click away, so the item cannot be triggered at all. */
+.ctx-menu li[role="menuitem"].disabled {
+  color: var(--muted);
+  cursor: default;
+  pointer-events: none;
+}
+
 .file-list li {
   padding: 6px 10px;
   font-size: 13px;
@@ -579,6 +622,34 @@ button.small { font-size: 12px; padding: 5px 12px; }
   color: #6b7a74;
   font-size: 14px;
   text-align: center;
+}
+/* The empty state of the canvas: the app logo with the hint under it.
+   The logo is the first thing on screen, so the app looks like the app
+   before a folder is picked. It is hidden as soon as a media is shown
+   (hideEmptyHint). */
+.stage-empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  pointer-events: none;
+  z-index: 0;
+}
+.stage-empty[hidden] { display: none; }
+.stage-empty .stage-logo {
+  /* Undo `.canvas-stage img { position: absolute }` — the logo is laid
+     out by the flex column above. */
+  position: static;
+  width: 220px;
+  height: 220px;
+  object-fit: contain;
+  border-radius: 18px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+  opacity: 0.95;
 }
 .file-list li .labeled-dot {
   width: 8px; height: 8px; border-radius: 50%;

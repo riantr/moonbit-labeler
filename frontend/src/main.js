@@ -25,6 +25,10 @@ import {
 } from "./image-loader.js";
 import * as LazyImages from "./lazy-images.js";
 import * as Log from "./log.js";
+// The app logo. It is small enough (< 64 KB) that Vite inlines it as a
+// data URL, so it costs no file fetch at runtime — the page is loaded
+// under an opaque origin where cross-origin loads are blocked.
+import logoUrl from "./logo.png";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -174,10 +178,14 @@ const els = {
   imageCount: $("#image-count"),
   classList: $("#class-list"),
   classCount: $("#class-count"),
+  classCtxMenu: $("#class-ctx-menu"),
   image: $("#image"),
   imageBox: $("#image-box"),
   imageFrame: $("#image-frame"),
   emptyHint: $("#empty-hint"),
+  stageEmpty: $("#stage-empty"),
+  appLogo: $("#app-logo"),
+  stageLogo: $("#stage-logo"),
   statusPath: $("#status-path"),
   statusIndex: $("#status-index"),
   statusCursor: $("#status-cursor"),
@@ -211,6 +219,12 @@ const els = {
 
 // Expose a few commonly-needed els to modules that don't import main.js.
 state.els = els;
+
+// Hand the logo to the two places that show it: the title bar and the
+// canvas' empty state. The build inlines it as a data URL, so this is
+// the only reference to it — no file is fetched.
+if (els.appLogo) els.appLogo.src = logoUrl;
+if (els.stageLogo) els.stageLogo.src = logoUrl;
 
 // ============================================================
 // Persisted recent folders (localStorage with safe fallback)
@@ -482,6 +496,9 @@ function queueCursorReadout(imgPt) {
 function showEmptyHint(text) {
   els.emptyHint.hidden = false;
   els.emptyHint.textContent = text;
+  // The logo and the hint travel together: the logo is the backdrop of
+  // the empty state, and both go away as soon as a media is shown.
+  if (els.stageEmpty) els.stageEmpty.hidden = false;
   els.image.hidden = true;
 }
 
@@ -500,6 +517,8 @@ function showEmptyHint(text) {
 // reintroduced as the real implementation rather than a no-op.
 function hideEmptyHint() {
   els.emptyHint.hidden = true;
+  // The logo belongs to the empty state only — a media is on screen now.
+  if (els.stageEmpty) els.stageEmpty.hidden = true;
 }
 
 function showImage(item, opts = {}) {
@@ -1445,6 +1464,7 @@ function renderClassList() {
 
     if (idx === state.classIndex) li.classList.add("active");
     li.addEventListener("click", () => selectClass(idx));
+    li.addEventListener("contextmenu", (ev) => openClassContextMenu(ev, idx));
     frag.appendChild(li);
   });
   els.classList.appendChild(frag);
@@ -1464,6 +1484,120 @@ function selectClass(idx) {
   for (const li of els.classList.children) {
     li.classList.toggle("active", Number(li.dataset.index) === idx);
   }
+}
+
+// ============================================================
+// Class-item context menu ("替换至当前目标")
+// ============================================================
+
+// The class the context menu was opened on. It is captured when the menu
+// opens: the sidebar is re-rendered whenever the class list is refreshed,
+// so the menu item must act on the class that was right-clicked and not
+// on whatever the list looks like by the time the item is clicked.
+let ctxMenuClassName = "";
+
+/**
+ * The annotation the user has selected on the canvas, if there is one.
+ *
+ * `state.selectedId` is not cleared when the canvas moves to another frame
+ * or another image, so it can name an object that the label now on screen
+ * does not carry. The target therefore has to exist in the current label,
+ * not merely be remembered.
+ */
+function currentTarget() {
+  if (!state.selectedId || !state.label) return null;
+  const infos = state.label.infos || [];
+  return infos.find((a) => a.id === state.selectedId) || null;
+}
+
+/**
+ * Show the class-item context menu at the mouse.
+ *
+ * "替换至当前目标" is greyed out and unselectable when nothing is
+ * selected: there is no target whose class could be replaced, and an item
+ * that says so is better than one that silently does nothing.
+ *
+ * Right-clicking a class does NOT change the class that new annotations
+ * are drawn with — only the explicit action replaces a class, so a
+ * mis-click cannot silently change the drawing class.
+ */
+function openClassContextMenu(ev, idx) {
+  if (!els.classCtxMenu) return;
+  ev.preventDefault();
+  const cls = state.classes[idx];
+  if (!cls) return;
+
+  ctxMenuClassName = cls.name;
+  const item = els.classCtxMenu.querySelector('[data-action="replace-class-on-target"]');
+  if (item) {
+    const hasTarget = !!currentTarget();
+    item.classList.toggle("disabled", !hasTarget);
+    item.setAttribute("aria-disabled", hasTarget ? "false" : "true");
+    item.title = hasTarget ? "" : "未选中目标";
+  }
+
+  els.classCtxMenu.hidden = false;
+  const rect = els.classCtxMenu.getBoundingClientRect();
+  const x = Math.min(ev.clientX, window.innerWidth - rect.width - 8);
+  const y = Math.min(ev.clientY, window.innerHeight - rect.height - 8);
+  els.classCtxMenu.style.left = `${Math.max(4, x)}px`;
+  els.classCtxMenu.style.top = `${Math.max(4, y)}px`;
+}
+
+function closeClassContextMenu() {
+  if (!els.classCtxMenu) return;
+  els.classCtxMenu.hidden = true;
+  ctxMenuClassName = "";
+}
+
+/**
+ * Give the selected annotation the class `name`.
+ *
+ * The class of an annotation is its `type` field; the geometry is left
+ * alone. The change goes through the usual history + autosave path, so
+ * Ctrl+Z takes it back and the file on disk catches up on the next
+ * autosave — in video mode the autosave writes the current frame.
+ */
+function replaceClassOnTarget(name) {
+  const target = currentTarget();
+  if (!target) {
+    flashHint("未选中目标", "info");
+    return;
+  }
+  if (!name) return;
+  if (target.type === name) {
+    flashHint(`目标已经是类别「${name}」`, "info");
+    return;
+  }
+  pushHistory();
+  target.type = name;
+  markDirty();
+  flashHint(`已将目标类别替换为「${name}」`, "ok");
+}
+
+function setupClassContextMenu() {
+  if (!els.classCtxMenu) return;
+  // The menu replaces the browser's own menu, so the browser's must not
+  // come up when the menu itself is right-clicked.
+  els.classCtxMenu.addEventListener("contextmenu", (ev) => ev.preventDefault());
+  els.classCtxMenu.addEventListener("click", (ev) => {
+    const item = ev.target.closest('[data-action="replace-class-on-target"]');
+    if (!item || item.classList.contains("disabled")) return;
+    const name = ctxMenuClassName;
+    closeClassContextMenu();
+    replaceClassOnTarget(name);
+  });
+  // A click anywhere else closes the menu.
+  document.addEventListener("mousedown", (ev) => {
+    if (!els.classCtxMenu.contains(ev.target)) closeClassContextMenu();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closeClassContextMenu();
+  });
+  // The menu sits where the mouse was, so a scroll or a resize would
+  // leave it behind.
+  window.addEventListener("scroll", () => closeClassContextMenu(), true);
+  window.addEventListener("resize", () => closeClassContextMenu());
 }
 
 function pickInitialFolder() {
@@ -2574,6 +2708,7 @@ function waitForBridge(attempt = 0) {
     });
     bindEvents();
     setupMenubar();
+    setupClassContextMenu();
     setupViewSync();
     initVideoController();
     const initial = pickInitialFolder();

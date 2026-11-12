@@ -10,6 +10,7 @@
     <div id="app">
       <header class="titlebar">
         <div class="title">
+          <img class="app-logo" id="app-logo" alt="" />
           <span class="badge">MoonBit Labeler</span>
           <div class="path-stack">
             <span class="muted" id="folder-path">未指定文件夹</span>
@@ -170,8 +171,11 @@
             <button id="save-btn" class="primary small" title="立即保存">保存</button>
           </div>
           <div class="canvas-stage" id="stage">
-            <div class="empty-hint" id="empty-hint">
-              在上方输入图片文件夹路径，然后按「载入」
+            <div class="stage-empty" id="stage-empty">
+              <img class="stage-logo" id="stage-logo" alt="MoonBit Labeler" />
+              <div class="empty-hint" id="empty-hint">
+                在上方输入图片文件夹路径，然后按「载入」
+              </div>
             </div>
             <div class="image-box" id="image-box">
               <div class="image-frame" id="image-frame">
@@ -211,6 +215,13 @@
         <span id="status-index" class="muted">0 / 0</span>
       </footer>
     </div>
+
+    <!-- Right-click menu of a class item in the sidebar. The single item
+         acts on the annotation selected on the canvas, so it is disabled
+         while there is no target. -->
+    <ul id="class-ctx-menu" class="ctx-menu" role="menu" hidden>
+      <li role="menuitem" data-action="replace-class-on-target">替换至当前目标</li>
+    </ul>
 
     <script type="module" src="/src/main.js"></script>
   </body>
