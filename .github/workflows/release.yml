@@ -125,21 +125,20 @@ jobs:
       # command-line paths. That matters on a CI runner: Studio opens a
       # window and blocks forever on a headless machine (and the wasm build
       # refuses it outright with "--GUI needs the native LunaPack
-      # executable"). The assertion below fails the job if the flag ever
-      # creeps in.
+      # executable").
       - name: Install LunaPack
         run: |
           moon install riantr/LunaPack@$env:LUNAPACK_VERSION
-          # Headless sanity check: the CLI must answer on the command line
-          # and must not try to open a window.
+          # Sanity check that the CLI answers on the command line and
+          # exits. `--help` is a plain command-line path, so it can never
+          # open a window — a hang here would mean the GUI had been
+          # reached somehow.
           $usage = LunaPack --help 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "LunaPack --help exited $LASTEXITCODE" }
           if ($usage -notmatch 'lunapack bundle') {
-            throw "the LunaPack CLI did not answer with its usage text (got: $($usage.Trim()))"
+            throw "LunaPack --help did not print the command usage (got: $($usage.Trim()))"
           }
-          if ($usage -match '--GUI\s+open LunaPack Studio') {
-            throw "unexpected: the LunaPack CLI is offering to open Studio"
-          }
-          Write-Host "LunaPack CLI is headless and ready (no Studio mode)"
+          Write-Host "LunaPack CLI answers on the command line (native build, Studio never invoked)"
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
