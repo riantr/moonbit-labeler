@@ -145,16 +145,25 @@ jobs:
         with:
           node-version: "22"
 
+      # The portable zip is assembled by scripts/make_zip.py (Python
+      # stdlib). The windows-latest image ships a Python, but the version
+      # is pinned here so the archive is produced by a known interpreter
+      # rather than by whatever the image happens to carry.
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       # proton_cli package runs `npm run build` itself (the `before_build`
       # hook in proton.project.json), but it needs the dependencies present.
       - name: Frontend deps
         working-directory: frontend
         run: npm ci
 
-      # --format app skips the upstream zip-step bug in proton_cli
-      # (create_windows_zip hands Compress-Archive a ".staging" suffix,
-      # which it rejects because the extension picks the archive format).
-      # The portable zip is assembled below instead.
+      # --format app stages the application without a zip. The portable
+      # zip is assembled below, by scripts/make_zip.py, so that it carries
+      # the version-stamped release name and is a real ZIP (see the
+      # comment on that step for the two traps this avoids).
       #
       # --release matters: without it proton_cli packages the DEBUG build
       # of the app, which is a different (and slower, and larger) binary
@@ -174,18 +183,29 @@ jobs:
           if (-not (Test-Path $exe)) { throw "packaged app missing: $exe" }
           Get-Item $exe | ForEach-Object { "app exe: $($_.Length) bytes" }
 
-      # The built-in `tar` with -a produces a zip, and it needs no extra
-      # tool. The write goes to a `.new` file that is copied over the
-      # final name, because Defender/Search Indexer can hold a just-written
-      # archive open for a moment and the direct write then fails with a
-      # sharing violation.
+      # The portable zip is built by scripts/make_zip.py, NOT by `tar -a`.
+      #
+      # `tar -a -cf out.zip dir` on Windows' bsdtar does not write a zip:
+      # it ignores the extension hint and writes a tar. The 0.2.17 release
+      # therefore shipped a file named `moonbit-labeler-0.2.17.zip` whose
+      # first bytes are a tar header name ("moonbit-labeler/") rather than
+      # the "PK" signature, so no unzip tool could open it. Proton's own zip
+      # step does compress, but Compress-Archive writes entry names with
+      # backslashes, which breaks every extractor that is not Windows
+      # Explorer. The script writes a spec-compliant archive instead:
+      # forward-slash entry names, the PK signature, deflated.
+      #
+      # The write goes to a `.new` file that is copied over the final name,
+      # because Defender/Search Indexer can hold a just-written archive open
+      # for a moment and the direct write then fails with a sharing
+      # violation.
       - name: Assemble the portable zip
         run: |
           $version = (Select-String -Path moon.mod -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
           $out = "target/proton-dist"
           $zip = "$out/moonbit-labeler-$version.zip"
-          tar -a -cf "$zip.new" -C $out "moonbit-labeler"
-          if ($LASTEXITCODE -ne 0) { throw "tar failed with exit code $LASTEXITCODE" }
+          python scripts/make_zip.py "$out/moonbit-labeler" "$zip.new"
+          if ($LASTEXITCODE -ne 0) { throw "make_zip.py failed with exit code $LASTEXITCODE" }
           $ok = $false
           for ($i = 1; $i -le 10; $i++) {
             try {

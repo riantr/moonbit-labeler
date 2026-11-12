@@ -20,17 +20,17 @@ schema variant, not a domain requirement.
 
 **This module is the backend, not the application.** What mooncakes.io
 serves here is the MoonBit *source* package: the "Download zip" link in
-the sidebar is that source, and `moon add riantr/moonbit_labeler@0.2.17`
+the sidebar is that source, and `moon add riantr/moonbit_labeler@0.2.18`
 compiles it into your own project. The runnable desktop app is a separate
 download, produced by the release CI job and attached to the GitHub
 release:
 
 | Asset | Size | What it is |
 |---|---:|---|
-| [`moonbit-labeler-0.2.17-bundle.exe`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.17/moonbit-labeler-0.2.17-bundle.exe) | 247 MiB | One file. A self-extracting [LunaPack](https://github.com/riantr/LunaPack) bundle: run it and it unpacks itself into a `.lunapack/` cache directory next to the executable. |
-| [`moonbit-labeler-0.2.17.zip`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.17/moonbit-labeler-0.2.17.zip) | 419 MiB | The staged application directory: `moonbit-labeler.exe` plus the CEF runtime beside it. |
+| [`moonbit-labeler-0.2.18-bundle.exe`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.18/moonbit-labeler-0.2.18-bundle.exe) | 247 MiB | One file. A self-extracting [LunaPack](https://github.com/riantr/LunaPack) bundle: run it and it unpacks itself into a `.lunapack/` cache directory next to the executable. |
+| [`moonbit-labeler-0.2.18.zip`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.18/moonbit-labeler-0.2.18.zip) | 187 MiB | The staged application directory: `moonbit-labeler.exe` plus the CEF runtime beside it. |
 
-Release page: <https://github.com/riantr/moonbit-labeler/releases/tag/v0.2.17>
+Release page: <https://github.com/riantr/moonbit-labeler/releases/tag/v0.2.18>
 
 Both are **Windows x86-64** and need nothing installed: unzip (or just run
 the bundle) on any Windows 10+ machine and double-click
@@ -39,10 +39,10 @@ directory (`<exe dir>/Resources`), so it starts from any working
 directory.
 
 If you only want the backend, take the module from this page instead — no
-CEF runtime, no 400 MB download:
+CEF runtime, no 187 MiB download:
 
 ```sh
-moon add riantr/moonbit_labeler@0.2.17
+moon add riantr/moonbit_labeler@0.2.18
 ```
 
 ## Build from source
@@ -88,10 +88,15 @@ VOC/YOLO/COCO exporters — is plain MoonBit over `@fs` and `@json`.
 ```sh
 # From the project root:
 moon install moonbit-community/proton_cli@0.9.0  # the CLI itself
-moon update                                     # sync moon.mod deps
+moon update                                     # refresh the registry index
 proton_cli setup                                 # download the CEF runtime
 cd frontend && npm install && cd ..             # Vite + frontend deps
 ```
+
+`moon update` refreshes the local registry index only — it does not
+change the versions pinned in `moon.mod`. To move a dependency, use
+`moon add --upgrade <pkg>@<version>` and confirm with
+`git diff -- moon.mod`.
 
 `setup` populates `~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk`,
 which is shared by every project on the machine. Set `PROTON_RUNTIME_STORE`
@@ -106,32 +111,45 @@ Run the `npm install` line above to recover.
 
 ```sh
 proton_cli build -- --release
-# output: target/proton-dist/moonbit-labeler/moonbit-labeler.exe
+# output: the MoonBit build artifact, e.g.
+#         _build/native/release/build/app/app.exe
 ```
 
 `--release` is forwarded to the underlying `moon build app` invocation
 and turns on MoonBit's release-mode optimisations. Without it you get a
-debug build (roughly an order of magnitude slower).
+debug build (roughly an order of magnitude slower). This step alone
+produces the executable and nothing else — no CEF runtime beside it, no
+frontend staged.
 
-For a single-shot artifact too:
+For the staged application, use `proton_cli package`:
 
 ```sh
-proton_cli package --format app
+proton_cli package --release --format app
 # output: target/proton-dist/moonbit-labeler/moonbit-labeler.exe
 #         plus the CEF runtime beside it (libcef.dll, *.pak, ...)
 ```
 
-Pass `--format app` rather than the default. The default also runs the
-zip step, which is upstream-broken on Windows: `create_windows_zip` in
-`proton_package/lib/windows.mbt` passes a `.staging` suffix to
-`Compress-Archive -DestinationPath`, and `Compress-Archive` only accepts
-`.zip`. The staged `app/` directory is produced either way, so zip it
-yourself with the built-in `tar`:
+`--format app` skips the zip step. The default format list in
+`proton.project.json` is `app` + `zip`, and Proton's own zip step does
+run on Windows — but it is not the archive you want to ship: it writes
+entry names with **backslash** separators (`moonbit-labeler\app.exe`),
+which breaks every extractor that is not Windows Explorer.
+
+Zip the staged directory with the bundled script instead:
 
 ```sh
-cd target/proton-dist
-tar -a -cf moonbit-labeler-0.2.17.zip moonbit-labeler
+python scripts/make_zip.py target/proton-dist/moonbit-labeler \
+    target/proton-dist/moonbit-labeler-0.2.18.zip
 ```
+
+It writes a spec-compliant archive — forward-slash entry names, the
+`PK` signature, deflated — and it is **187 MiB** for the same 419 MiB
+staged tree.
+
+Do not use `tar -a -cf out.zip dir` for this: Windows' bsdtar ignores
+the extension hint and writes a **tar**, so the file starts with a tar
+header instead of the `PK` signature and no unzip tool can open it. That
+is what the 0.2.17 release shipped.
 
 The app finds its frontend through the resource directory
 (`<exe dir>/Resources`), so it starts from any working directory.
@@ -139,7 +157,7 @@ The app finds its frontend through the resource directory
 ### Verify a build
 
 ```sh
-moon test --target native           # 85 tests (blackbox + unit)
+moon test --target native           # 87 tests (blackbox + unit)
 node frontend/qa/webkit_picker_blackbox.test.mjs   # frontend blackbox
 
 # The async half of the IPC (the class rename and the video path) is
@@ -154,9 +172,9 @@ node tests/stdio/video_stdio_blackbox.test.mjs \
 ### Run
 
 ```sh
-# launch the packaged exe (it picks CEF mode if libcef.dll is present,
-# --stdio mode if not — see _build/run.bat for the full wrapper):
-_build/run.bat
+# launch the packaged app (a CEF window):
+target/proton-dist/moonbit-labeler/moonbit-labeler.exe
+target/proton-dist/moonbit-labeler/moonbit-labeler.exe --debug   # + DevTools
 
 # OR drive the labeler backend over JSON-RPC without launching CEF:
 target/proton-dist/moonbit-labeler/moonbit-labeler.exe --stdio
@@ -176,6 +194,7 @@ in the system directory.
 ├── app/                            # runnable entry (CEF + stdio)
 ├── extensions/labeler/             # 27 IPC ops + label/VOC/YOLO/COCO pipeline
 ├── frontend/                       # Vite + vanilla-JS UI (built into the exe at pack time)
+├── scripts/make_zip.py             # builds the portable zip (a real, deflated ZIP)
 ├── moon.mod                        # deps: proton@0.9.0, proton_contract@0.9.0, moonbit_image@0.3.9 (async comes from the builtin moonbitlang/core)
 ├── proton.project.json             # identifier, frontend, package (output dir, formats, version)
 └── AGENTS.md                       # setup + commands + smoke-test recipe (read first)
@@ -202,14 +221,14 @@ The backend is published to mooncakes.io, so another MoonBit project can
 depend on it without the CEF runtime and without the source tree:
 
 ```sh
-moon add riantr/moonbit_labeler@0.2.17
+moon add riantr/moonbit_labeler@0.2.18
 ```
 
 which pins the dependency in `moon.mod`:
 
 ```
 import {
-  "riantr/moonbit_labeler@0.2.17",
+  "riantr/moonbit_labeler@0.2.18",
 }
 ```
 

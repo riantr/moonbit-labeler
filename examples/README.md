@@ -29,7 +29,7 @@ runs them:
 ```console
 $ examples/consumer/run.sh
 ...
-PASS: the published package is consumable (version 0.2.17)
+PASS: the published package is consumable (version 0.2.18)
 ```
 
 That script is what the `consumer (published package, ubuntu, native)` CI

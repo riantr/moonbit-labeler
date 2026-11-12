@@ -43,16 +43,16 @@ runnable binaries are attached to the release.
 
 | Asset | Size | What it is |
 |---|---:|---|
-| [`moonbit-labeler-0.2.17-bundle.exe`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.17/moonbit-labeler-0.2.17-bundle.exe) | 247 MiB | One file — a self-extracting [LunaPack](https://github.com/riantr/LunaPack) bundle. Run it and it unpacks itself into a `.lunapack/` cache directory next to the executable. |
-| [`moonbit-labeler-0.2.17.zip`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.17/moonbit-labeler-0.2.17.zip) | 419 MiB | The staged application directory: `moonbit-labeler.exe` plus the CEF runtime beside it. |
+| [`moonbit-labeler-0.2.18-bundle.exe`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.18/moonbit-labeler-0.2.18-bundle.exe) | 247 MiB | One file — a self-extracting [LunaPack](https://github.com/riantr/LunaPack) bundle. Run it and it unpacks itself into a `.lunapack/` cache directory next to the executable. |
+| [`moonbit-labeler-0.2.18.zip`](https://github.com/riantr/moonbit-labeler/releases/download/v0.2.18/moonbit-labeler-0.2.18.zip) | 187 MiB | The staged application directory: `moonbit-labeler.exe` plus the CEF runtime beside it. |
 
-Release page: <https://github.com/riantr/moonbit-labeler/releases/tag/v0.2.17>
+Release page: <https://github.com/riantr/moonbit-labeler/releases/tag/v0.2.18>
 
 Both are **Windows x86-64** and self-contained: unzip (or just run the
 bundle) on any Windows 10+ machine and double-click `moonbit-labeler.exe`.
 
-For the backend only, skip the 400 MB and depend on the published module
-instead — see [Use the backend as a library](#use-the-backend-as-a-library).
+For the backend only, skip the 187 MiB download and depend on the
+published module instead — see [Use the backend as a library](#use-the-backend-as-a-library).
 
 ## Quick Start
 
@@ -64,7 +64,7 @@ moon install moonbit-community/proton_cli@0.9.0
 # One-time CEF runtime download (~850 MB) into ~/.proton/store/
 proton_cli setup
 
-# Sync MoonBit deps + frontend deps
+# Refresh the registry index + install the frontend deps
 moon update
 cd frontend ; npm install ; cd ..
 
@@ -77,15 +77,21 @@ moon test --target native
 proton_cli package --format app
 # Output: target\proton-dist\moonbit-labeler\moonbit-labeler.exe
 
-# Ship it: zip the staged directory with the built-in tar
-cd target\proton-dist
-tar -a -cf moonbit-labeler-0.2.17.zip moonbit-labeler
+# Ship it: zip the staged directory (see "Build & run" for why not `tar -a`)
+python scripts\make_zip.py target\proton-dist\moonbit-labeler target\proton-dist\moonbit-labeler-0.2.18.zip
 ```
 
-Use `--format app` rather than the bare `proton_cli package`: the default
-also runs a zip step that is upstream-broken on Windows. The staged
-`app/` directory is produced either way, so zip it yourself afterwards —
-the `tar` line above does it, and [Build & run](#build--run) explains why.
+`moon update` refreshes the local registry index. It does **not** change the
+versions pinned in `moon.mod` — to move a dependency, use
+`moon add --upgrade <pkg>@<version>` and check `git diff -- moon.mod`.
+
+`proton_cli package` uses the `formats` list in `proton.project.json`
+(`app` + `zip`), so by default it stages the application **and** writes a
+zip of it. `--format app` skips the zip step; the `tar` line above
+then does it by hand.
+
+Both zip routes have their own trap, so the release pipeline uses the
+bundled script instead — see [Build & run](#build--run).
 
 ## Features
 
@@ -158,35 +164,44 @@ anything older. Newer toolchains are expected to work but are not what CI
 runs.
 
 The Stack table is the target configuration. To install the matching runtime locally, run
-`proton_cli setup` and verify against `.proton/runtime.json` (`proton_version` /
-`cef_version`). Older local installs (e.g. Proton 0.1.12) keep the project working but
-don't match the documented target.
+`proton_cli setup` and verify the result with `proton_cli doctor --verbose`, which prints
+the CEF archive it resolved (e.g. `cef_binary_150.0.19+gcf60f42+...`) together with the
+store path it came from. Older local installs (e.g. Proton 0.1.12) keep the project working
+but don't match the documented target.
 
 ## Project layout
 
 ```
 .
 ├── app/
-│   └── main.mbt                       # 0.9.0 entry: @proton.asset(...) then app.identifier(...) / app.capability(...) / app.run_or_abort()
+│   ├── main.mbt                       # 0.9.0 entry: @proton.asset(...) then app.identifier(...) / app.capability(...) / app.run_or_abort()
+│   └── stdio_main.mbt                 # the headless --stdio JSON-RPC bridge (same 27 ops, no CEF)
 ├── extensions/
 │   ├── labeler/                       # 27 IPC ops + the image/label/VOC/YOLO/COCO pipeline
-│   │   ├── labeler.mbt                # ~3,400 lines (Request/Reply structs + op_* handlers)
+│   │   ├── labeler.mbt                # ~4,700 lines (Request/Reply structs + op_* handlers)
 │   │   ├── extension.mbt               # 0.9.0 extension registration (returns @proton_contract.Extension; 27 commands registered via @proton_extension.typed)
 │   │   ├── dispatch.mbt                # pure-MoonBit entry point: pub async fn dispatch_op(op : String, payload : Json) -> Json (used by the stdio bridge)
+│   │   ├── video_label.mbt             # the per-frame annotation model (frame_labels)
+│   │   ├── media_tool.mbt              # ffmpeg / ffprobe discovery for the video ops
+│   │   ├── class_revision.mbt          # the class rename (rewrite of the type field across label files)
 │   │   └── moon.pkg
 │   # Image codec lives in the shared riantr/moonbit_image@0.3.9 mooncake
 │   # (see moon.mod), not in this tree. Prior `extensions/image/` vendored
 │   # copy was removed in 20fbdf2.
 ├── examples/
-│   └── consumer/                      # a consumer of the PUBLIC API only; the CI job copies
-│       ├── moon.pkg                   # these two files into a scratch module and resolves
-│       ├── main.mbt                   # the package from mooncakes.io (see run.sh)
-│       └── run.sh
+│   ├── README.md                      # what each example does
+│   ├── consumer/                      # a consumer of the PUBLIC API only; the CI job copies
+│   │   ├── moon.pkg                   # these two files into a scratch module and resolves
+│   │   ├── main.mbt                   # the package from mooncakes.io (see run.sh)
+│   │   └── run.sh
+│   └── read_label/                    # reads one image's label through the read_label op
+│       ├── moon.pkg
+│       └── main.mbt
 ├── frontend/
 │   ├── dist/                          # Vite build output (inlined into the exe)
 │   ├── index.html
 │   └── src/
-│       ├── main.js                    # state + IPC + UI orchestration (~1,800 lines)
+│       ├── main.js                    # state + IPC + UI orchestration (~2,600 lines)
 │       ├── canvas.js                  # Canvas 2D rendering + hit testing
 │       ├── image-loader.js            # file:// / IPC fallback / lazy thumbs
 │       ├── label.js                   # shared IPC wrappers for parse/serialize
@@ -196,12 +211,14 @@ don't match the documented target.
 │       ├── log.js                     # per-stage timing instrumentation
 │       ├── logo.png                   # app logo (small enough that the build inlines it)
 │       └── style.css                  # all CSS in one place
+├── scripts/
+│   └── make_zip.py                    # builds the portable zip (a real, deflated ZIP)
 ├── data/                              # local sample dataset (Image@skin / Label@skin)
 ├── docs/logo.png                      # the logo, at README size
 ├── doc/VIDEO_LABELING.md
 ├── proton.project.json                # 0.9.0 canonical app config (identifier, backend, frontend, package)
 ├── moon.mod                           # deps: proton@0.9.0 + proton_contract@0.9.0 + moonbit_image@0.3.9 (async comes from the builtin moonbitlang/core)
-└── README.mbt.md                      # generated Proton README (do not edit)
+└── README.mbt.md                      # the README published on the mooncakes.io docs page (hand-maintained)
 ```
 
 ## Data layout
@@ -280,31 +297,44 @@ moonbit-community/proton_cli@<version>` — pinned to the version in
 version.
 
 The packaged binary is at
-`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`. To ship it, zip
-the staged directory yourself — Proton's built-in zip step is
-upstream-broken on Windows (`create_windows_zip` in
-`proton_package/lib/windows.mbt` hands `Compress-Archive` a `.staging`
-suffix, and `Compress-Archive` only accepts `.zip`, so the step exits 1
-and nothing is zipped). Use the built-in `tar`, which needs no extra
-tool:
+`target/proton-dist/moonbit-labeler/moonbit-labeler.exe`. The staged
+directory is self-contained — the CEF runtime sits beside the exe, and
+the app finds its frontend through the resource directory
+(`<exe dir>/Resources`) — so it starts from **any** working directory,
+with no "run it from this folder" caveat.
+
+To ship it as one archive, zip the staged directory with the bundled
+script:
 
 ```powershell
-proton_cli package --format app          # stage the app; skip the broken zip step
-cd target\proton-dist
-tar -a -cf moonbit-labeler-0.2.17.zip moonbit-labeler
+proton_cli package --format app          # stage the app only
+python scripts\make_zip.py target\proton-dist\moonbit-labeler target\proton-dist\moonbit-labeler-0.2.18.zip
 ```
 
-The result is self-contained: drop it on any Windows 10+ machine, unzip,
-and double-click `moonbit-labeler.exe`. The app finds its frontend
-through the resource directory (`<exe dir>/Resources`), so it starts
-from **any** working directory — no "run it from this folder" caveat.
+`scripts/make_zip.py` is used rather than the obvious one-liners,
+because both of those produce a broken archive:
 
-See [AGENTS.md](AGENTS.md) for the upstream bug report and the
-`package-app.bat` wrapper that automates the same two steps.
+- **`tar -a -cf out.zip dir` does not write a zip.** Windows' bsdtar
+  ignores the extension hint and writes a *tar*, so the file starts
+  with a tar header instead of the `PK` signature and no unzip tool
+  can open it. That is what the 0.2.17 release shipped.
+- **Proton's own zip step compresses but writes backslash entry names**
+  (`moonbit-labeler\app.exe`), which breaks every extractor that is
+  not Windows Explorer.
+
+The script writes a spec-compliant archive instead — forward-slash entry
+names, the `PK` signature, deflated — which is **187 MiB** for the same
+419 MiB tree, where the archive `tar -a` produced was 419 MiB.
+
+Drop the staged directory on any Windows 10+ machine, unzip, and
+double-click `moonbit-labeler.exe`.
+
+See [AGENTS.md](AGENTS.md) for the `package-app.bat` wrapper that
+automates the same steps.
 
 ## The single-file bundle (riantr/LunaPack)
 
-The staged application is ~419 MB, almost all of it the CEF runtime. To
+The staged application is ~419 MiB, almost all of it the CEF runtime. To
 offer it as one download, [riantr/LunaPack](https://github.com/riantr/LunaPack)
 packs the staged directory into a self-extracting executable that embeds
 itself as the launcher: the user downloads one file, runs it, and it
@@ -316,11 +346,11 @@ moon install riantr/LunaPack@0.1.20     # native build -> ~/.moon/bin/LunaPack.e
 proton_cli package --format app         # stage the app first
 LunaPack bundle `
   -i target/proton-dist/moonbit-labeler/moonbit-labeler.exe `
-  -o target/proton-dist/moonbit-labeler-0.2.17-bundle.exe `
+  -o target/proton-dist/moonbit-labeler-0.2.18-bundle.exe `
   --Files target/proton-dist/moonbit-labeler `
   --compression-method lz4 `
-  --name moonbit-labeler --version 0.2.17
-LunaPack verify target/proton-dist/moonbit-labeler-0.2.17-bundle.exe
+  --name moonbit-labeler --version 0.2.18
+LunaPack verify target/proton-dist/moonbit-labeler-0.2.18-bundle.exe
 ```
 
 Two things matter here. The `bundle` **subcommand** is used, never the
@@ -333,12 +363,12 @@ produces carries the payload but does not start on its own.
 Any bundle can be inspected without unpacking it:
 
 ```powershell
-LunaPack info target/proton-dist/moonbit-labeler-0.2.17-bundle.exe
+LunaPack info target/proton-dist/moonbit-labeler-0.2.18-bundle.exe
 ```
 
 ### What is inside the bundle
 
-244 entries, 438,888,654 bytes uncompressed; lz4 stores them in 257 MB.
+244 entries, 438,888,641 bytes uncompressed; lz4 stores them in 247 MiB.
 Our own code is 0.8% of that.
 
 **Root (19 entries, 358,960,964 B)** — the application and the CEF runtime:
@@ -365,12 +395,12 @@ Our own code is 0.8% of that.
 | `chrome_200_percent.pak` | 1,197,075 | Chromium resources at 200% scaling |
 | `v8_context_snapshot.bin` | 740,048 | V8 startup snapshot |
 
-**`Resources/` (225 files, 79,927,690 B)** — the resource directory the
+**`Resources/` (225 files, 79,927,677 B)** — the resource directory the
 app entry resolves against, plus the CEF locale packs:
 
 | File | Size | What it is |
 |---|---:|---|
-| `Resources/frontend/dist/index.html` | 146,456 | the whole frontend — Vite inlines the JS and CSS into one file |
+| `Resources/frontend/dist/index.html` | 146,443 | the whole frontend — Vite inlines the JS and CSS into one file |
 | `Resources/locales/*.pak` | 50,881,875 | 220 files: 55 locales × {plain, feminine, masculine, neuter} |
 | `Resources/resources.pak` | 16,130,228 | the CEF resource bundle again |
 | `Resources/icudtl.dat` | 10,876,560 | the ICU data again |
@@ -379,16 +409,18 @@ app entry resolves against, plus the CEF locale packs:
 
 Two things are worth knowing about that list. The four `.pak`/`.dat`
 files are staged **twice** — once at the root and once under `Resources/`
-— so 27.6 MB of the payload is a duplicate copy. That duplication is
+— so 27.6 MiB of the payload is a duplicate copy. That duplication is
 **not** removable: deleting either set from a staged tree and launching
 makes the app fail to start, with a control run (both sets present)
 passing in between, so Proton needs the exe directory and the resource
 directory populated separately. The locale packs, on the other hand, are
 trimmable: keeping only `en-US`, `zh-CN` and `zh-TW` — 12 of the 220
-files — drops 46.8 MB from the payload (389,782,898 B for 36 files) and
+files — drops 46.8 MiB from the payload (389,782,885 B for 36 files) and
 the app still renders pixel-identically, because CEF falls back to
 `en-US.pak` for any locale that is not shipped. That trim is not applied
-yet; it would take the release zip from 419 MB to about 372 MB.
+yet; it would take the release zip from 187 MiB to about 176 MiB, since
+the `.pak` files are already compressed and deflating them saves only
+11.5 MiB of the 46.8 MiB.
 
 ## Keyboard shortcuts
 
@@ -400,11 +432,21 @@ yet; it would take the release zip from 419 MB to about 372 MB.
 | `P` | Polygon mode |
 | `K` | Keypoint mode |
 | `B` | Binding mode |
-| `Ctrl` /`Z` / `Y` | Undo / Redo |
-| `Delete` | Delete selected annotation |
+| `Ctrl` /`Z` | Undo |
+| `Ctrl` /`Y` or `Ctrl` /`Shift`/`Z` | Redo |
+| `Delete` or `Backspace` | Delete selected annotation |
+| `Esc` | Cancel the polygon draft or the binding in progress |
 | `Ctrl` /`S` | Save current label |
 | `Ctrl` /`+` / `Ctrl` /`-` / `Ctrl` /`0` | Zoom in / out / actual size |
-| `←` / `→` / `W` / `S` | Previous / next image (or video frame in video mode) |
+| `↑` | Previous image — in video mode, previous frame |
+| `↓` (or `j`) | Next image — in video mode, next frame |
+| `←` / `→` | Previous / next video frame (video mode only) |
+
+The mode keys are case-insensitive, and the shortcuts are ignored while a
+text field has the focus.
+
+`Esc` only cancels: it drops a polygon that is still being drawn or a
+binding that is waiting for its target. It is not an undo.
 
 ## IPC surface
 
@@ -485,14 +527,14 @@ The backend is published to mooncakes.io, so another MoonBit project can
 depend on it without the CEF runtime and without this source tree:
 
 ```sh
-moon add riantr/moonbit_labeler@0.2.17
+moon add riantr/moonbit_labeler@0.2.18
 ```
 
 which pins the dependency in `moon.mod`:
 
 ```
 import {
-  "riantr/moonbit_labeler@0.2.17",
+  "riantr/moonbit_labeler@0.2.18",
 }
 ```
 
@@ -593,7 +635,7 @@ checks, builds and runs them:
 
 ```sh
 examples/consumer/run.sh          # the version in moon.mod, or the latest published one
-examples/consumer/run.sh 0.2.17   # a specific version
+examples/consumer/run.sh 0.2.18   # a specific version
 ```
 
 The `consumer (published package, ubuntu, native)` CI job runs exactly
@@ -621,7 +663,7 @@ and `pub fn parse_label_text(text : String, fallback_img_name : String)
   paths. A prior vendored copy under `extensions/image/` was removed
   in commit `20fbdf2`; see the commit message for the deletion
   rationale (the vendored buildliming fork was missing the JPEG
-  IDCT fix that the upstream 0.3.5 release ships).
+  IDCT fix, which upstream first shipped in 0.3.4).
 - **CEF / Proton runtime** — assembled into `target/proton-dist/...` at
   build time by `proton_cli package`. The runtime itself is downloaded
   by `proton_cli setup` into `~/.proton/store/<platform>/cef-<sha>-layout-<n>/sdk`

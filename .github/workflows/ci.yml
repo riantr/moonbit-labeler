@@ -364,10 +364,11 @@ jobs:
       - name: moon build
         run: moon build --target native
 
-      # --format app skips the upstream zip-step bug documented in
-      # AGENTS.md (`create_windows_zip` passes a `.staging` suffix to
-      # Compress-Archive, which only accepts `.zip`). The sibling .zip
-      # is produced locally by `_build/package-app.bat`.
+      # --format app stages the application without a zip. This job only
+      # proves that the exe and the CEF runtime stage correctly; the
+      # portable zip is assembled by release.yml, with scripts/make_zip.py
+      # rather than `tar -a` (which writes a tar with a .zip name on
+      # Windows' bsdtar).
       #
       # Note this does NOT gate the mooncakes release: publish.yml
       # ships the pure-MoonBit package and never invokes proton_cli.

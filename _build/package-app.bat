@@ -19,8 +19,10 @@ set CXX=clang++
 echo cwd=%PROJ%
 echo === proton_cli package --release --format app ===
 echo.
-echo [note] passing --format app to skip the upstream-broken zip step.
-echo        See AGENTS.md "Build" section for the full story.
+echo [note] --format app stages the app only; the zip is assembled below with
+echo        tar so it can carry the version-stamped release name.
+echo        (Proton's own zip step works as of 0.9.0 too, but it deflates and
+echo        names the archive after the product, not the version.)
 proton_cli package --release --output "%OUT%" --format app
 if errorlevel 1 goto :err_package
 goto :after_package
@@ -39,7 +41,7 @@ exit /b 1
 :after_no_app
 
 echo.
-echo === tar (Windows built-in zip, lock-safe) ===
+echo === zip (scripts/make_zip.py, lock-safe) ===
 rem Pure-cmd flow — PowerShell 5.1 has a known native
 rem runtime bug that emits a spurious "Access is denied"
 rem to the console on process exit (the .NET ZipFile /
@@ -77,14 +79,24 @@ rem      (CopyFileEx with COPY_FILE_FAIL_IF_EXISTS off,
 rem      TRUNCATE_EXISTING_ON); the source (.new) is
 rem      deleted after the copy succeeds.
 del /q "%ZIP%.new" >nul 2>&1
-pushd "%OUT%"
-tar -a -cf "%ZIP%.new" -C "%OUT%" "moonbit-labeler" >nul 2>&1
-set "TAR_RC=%errorlevel%"
-popd
-rem Note: %errorlevel% is captured immediately after tar —
-rem `popd` would reset it to 0 if we set TAR_RC after.
-if not %TAR_RC% == 0 (
-  echo [error] tar failed exit=%TAR_RC%
+rem The zip is built by scripts/make_zip.py, NOT by `tar -a`:
+rem `tar -a -cf out.zip dir` on Windows' bsdtar ignores the extension and
+rem writes a TAR, so the 0.2.17 release shipped a file named .zip that no
+rem unzip tool could open. The script writes a real, deflated zip with
+rem forward-slash entry names (187 MiB instead of 419 MiB for the same
+rem tree).
+where python >nul 2>&1
+if errorlevel 1 (
+  echo [error] python not found on PATH; it is needed by scripts\make_zip.py
+  popd
+  exit /b 1
+)
+python "%PROJ%\scripts\make_zip.py" "%APP%" "%ZIP%.new"
+set "ZIP_RC=%errorlevel%"
+rem Note: %errorlevel% is captured immediately after the call — `popd`
+rem would reset it to 0 if we set ZIP_RC after.
+if not %ZIP_RC% == 0 (
+  echo [error] make_zip.py failed exit=%ZIP_RC%
   goto :err_zip
 )
 if exist "%ZIP%" (

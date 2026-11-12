@@ -2,7 +2,7 @@
 
 Image & video annotation desktop app on a MoonBit + Proton native stack. One JSON file per
 image/video, 4 annotation primitives (rect / polygon / keypoint / binding), Pascal VOC + YOLO +
-COCO export, CEF shell via Proton 0.4.0, plus an optional headless `--stdio` JSON-RPC bridge for
+COCO export, CEF shell via Proton 0.9.0, plus an optional headless `--stdio` JSON-RPC bridge for
 non-CEF GUIs.
 
 **Domain-independent.** The primitives, class system, on-disk format, and exporters assume nothing
@@ -59,27 +59,46 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   (reads `proton.project.json` for the frontend dev server config)
 - Build release:                 `proton_cli build`
 - Inspect package plan:          `proton_cli package --dry-run`
-- Produce portable exe + zip:    `proton_cli package`
-  → output: `target/proton-dist/moonbit-labeler/moonbit-labeler.exe` + `.zip`
-  (formats + output dir come from the `package` block in `proton.project.json`)
+- Produce portable exe + zip:    `proton_cli package --format app` + `scripts/make_zip.py`
+  → output: `target/proton-dist/moonbit-labeler/moonbit-labeler.exe`, zipped by
+  `python scripts/make_zip.py target/proton-dist/moonbit-labeler <out>.zip`
+  (formats + output dir come from the `package` block in `proton.project.json`;
+  see the zip note below for why neither Proton's zip step nor `tar -a` is used)
 
-> **Upstream bug in `proton_cli` zip step (Windows).** Reported on 0.2.5 and
-> **not yet verified on 0.3.3 or 0.3.4** (deferred — verifying requires running the
-> full `proton_cli package` without `--format app` and observing the broken-staging
-> zip, which is the workaround this paragraph exists to bypass). The internal
-> `create_windows_zip` in `proton_package/lib/windows.mbt` passes
-> `destination + ".staging"` to `Compress-Archive -DestinationPath`, but
-> `Compress-Archive` only accepts paths ending in `.zip` (it uses the extension
-> to pick the archive format). Result: PowerShell exits 1 with a non-UTF-8
-> error message; the Moon side sees the UTF-8 decode fail and prints
-> `error: create Windows zip failed: exit code 1: non-UTF-8 output`. The `app/`
-> directory is fully staged before the zip step, so the artifact is not lost.
-> **Workaround:** pass `--format app` to skip the broken zip step, then zip
-> manually with PowerShell `Compress-Archive -LiteralPath <app> -DestinationPath
-> <app>.zip -Force`. The wrapper `_build/package-app.bat` (gitignored) does
-> exactly this; run it instead of raw `proton_cli package` for releases.
-> Track upstream fix: replace `let staging = destination + ".staging"` with
-> `let staging = destination + ".staging.zip"` in `proton_package/lib/windows.mbt`.
+> **The `proton_cli` zip step (Windows) — the old upstream bug is FIXED.**
+> It was reported on 0.2.5: the internal `create_windows_zip` in
+> `proton_package/lib/windows.mbt` passed `destination + ".staging"` to
+> `Compress-Archive -DestinationPath`, but `Compress-Archive` only accepts
+> paths ending in `.zip` (it uses the extension to pick the archive
+> format), so PowerShell exited 1 with a non-UTF-8 message and the Moon
+> side printed `error: create Windows zip failed: exit code 1: non-UTF-8
+> output`. **Measured 2026-11-12: `proton_package` 0.3.4, 0.5.1, 0.7.0 and
+> the pinned 0.9.0 all use `destination + ".staging.zip"`** — the fix landed
+> upstream between 0.2.5 and 0.3.4. Verified end to end: `proton_cli
+> package --release` with this project's default `formats: ["app","zip"]`
+> exits 0 and produces both `moonbit-labeler/` and `moonbit-labeler.zip`
+> (245 entries, 197,046,121 B, deflated).
+> **The release pipeline still passes `--format app` and zips with
+> `scripts/make_zip.py`, not with Proton's zip step and not with `tar -a`.**
+> Two separate traps, both measured 2026-11-13:
+> 1. `Compress-Archive` (what Proton's own zip step uses) writes entry
+>    names with **backslash** separators — all 245 entries come out as
+>    `moonbit-labeler\app.exe`, not `moonbit-labeler/app.exe`. That is
+>    not what the ZIP spec says, and it breaks python's `zipfile`,
+>    macOS Archive Utility and `unzip` on Linux.
+> 2. `tar -a -cf out.zip dir` on Windows' bsdtar **does not write a
+>    zip** — it ignores the extension hint and writes a *tar*. The
+>    0.2.17 release shipped `moonbit-labeler-0.2.17.zip` whose first
+>    bytes are the tar header's name field (`moonbit-labeler/`), not
+>    the `PK` signature, so no unzip tool could open it. It was also
+>    419 MiB, because a tar stores its entries.
+>
+> `scripts/make_zip.py` (Python stdlib, tracked) writes a spec-compliant
+> archive instead: forward-slash entry names, the `PK` signature,
+> deflated. Measured on the same staged tree: 196,222,238 B (187.1 MiB)
+> against 438,888,641 B uncompressed — 2.24x smaller than the tar — and
+> `zipfile.testzip()` reports no CRC errors.
+> `_build/package-app.bat` (gitignored) does the same two steps.
 
 > **Upstream bug in `proton_app` entry path resolution (Windows).** Reported on 0.2.5
 > and **confirmed still present on 0.9.0** (re-verified 2026-11-12 in
@@ -107,7 +126,9 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
 - Headless JSON-RPC bridge:      `moonbit-labeler.exe --stdio` (CEF-free; same 27 ops over stdin/stdout)
   See "Stdio JSON-RPC bridge" below for the wire protocol.
 - Launch packaged exe:           `_build/run.bat [--cef|--stdio]`
-  (auto mode: CEF if `target/proton-dist/moonbit-labeler/libcef.dll` is present,
+  (local-only: `_build/` is gitignored, so a fresh clone does not have it — run
+  `target/proton-dist/moonbit-labeler/moonbit-labeler.exe` directly instead.
+  Auto mode: CEF if `target/proton-dist/moonbit-labeler/libcef.dll` is present,
   otherwise attempts `--stdio`; see "Launch wrapper" below for caveats)
 
 ## Project layout
@@ -169,7 +190,7 @@ Run all from the project root (`D:\src\MiniMax\Projects\MoonBit\moonbit-labeler`
   frontend dev/build commands, product name + version + output dir + formats.
   (The 0.1.12 `moon.proton` was removed in the 0.2.5 migration; the 0.2.5 → 0.3.3
   migration kept the same `proton.project.json` schema, as did 0.4.0 and 0.9.0.)
-- `moon.mod`               — `riantr/moonbit_labeler` v0.2.17, depends on `moonbit-community/proton@0.9.0`,
+- `moon.mod`               — `riantr/moonbit_labeler` v0.2.18, depends on `moonbit-community/proton@0.9.0`,
   `proton_contract@0.9.0`, and `riantr/moonbit_image@0.3.9`.
   The async runtime is **not** a declared dependency any more: it comes from the
   toolchain's builtin `moonbitlang/core` module, so `moonbitlang/core/async` is
@@ -383,7 +404,7 @@ learn.
   After any change under `frontend/src/`, re-run `npm run build` (or let `proton_cli dev`
   rebuild) before the change is visible in the packaged binary.
 - CEF runtime, Proton native prebuilts, `target/`, and `_build/` are all gitignored. The
-  documented target is **Proton 0.4.0 + CEF 150.0.19**.
+  documented target is **Proton 0.9.0 + CEF 150.0.19**.
 - **Proton 0.3.3 moved the CEF install out of the repo.** The old
   `.proton/runtimes/` layout (Proton 0.1.12 / 0.2.5) is gone. 0.3.3's
   `proton/build.mjs` resolves the SDK to
@@ -392,10 +413,12 @@ learn.
   via `-I<sdk>`, and the native stubs `#include "include/capi/cef_*_capi.h"`
   relative to that. Each platform entry measures **~850 MB** on Windows 0.3.4, so budget
   roughly 1 GB per platform rather than the ~150 MB the pre-0.3.3 `.proton/runtimes/`
-  layout needed. Populate it with `proton_cli setup`. A stale `.proton/runtime.json`
-  still reading `proton_version: 0.2.5` means the repo-local 0.2.5-era layout is what is
-  on disk and the 0.3.3+ store may be missing entirely — check `~/.proton/store`, not
-  `.proton/runtimes`.
+  layout needed. Populate it with `proton_cli setup`. Note that Proton 0.9.0
+  no longer writes a repo-local `.proton/runtime.json` — `proton_version` /
+  `cef_version` were fields of that 0.2.5-era file. Verify the installed
+  runtime with `proton_cli doctor --verbose` instead: it prints the CEF
+  archive it resolved (e.g. `cef_binary_150.0.19+gcf60f42+...`) and the
+  store path it came from.
 - **`proton_cli` is not part of the moon installer.** `install/unix.sh` puts
   moon/moonc/moonfmt/moonrun in `~/.moon/bin` and nothing else, so a CI step that calls
   `proton_cli` without installing it dies with `command not found` (exit 127). It is an
