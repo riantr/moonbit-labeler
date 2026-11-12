@@ -20,7 +20,11 @@ schema variant, not a domain requirement.
 
 ### Prerequisites
 
-- **MoonBit** ≥ 0.1.20260803 (the build host has `moon 0.1.20261012`)
+- **MoonBit** — `moon 0.1.20261104` is the toolchain this release is built
+  and tested with, and it is the minimum. `try?` was removed in that
+  toolchain, so the pinned `riantr/moonbit_image@0.3.9` (the release that
+  replaced `try?` with an explicit `match`) does not compile on anything
+  older. Newer toolchains are expected to work but are not what CI runs.
 - **Node.js** ≥ 18 with `npm` on PATH (for the Vite frontend)
 - **Proton CLI** — `proton_cli` is the wrapper that drives the native
   AOT compile, downloads the CEF runtime, and assembles the exe. It is a
