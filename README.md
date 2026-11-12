@@ -342,11 +342,16 @@ app entry resolves against, plus the CEF locale packs:
 
 Two things are worth knowing about that list. The four `.pak`/`.dat`
 files are staged **twice** — once at the root and once under `Resources/`
-— so 27.6 MB of the payload is a duplicate copy. And the locale packs
-carry 55 languages while the UI ships Chinese and English, so ~47 MB of
-them is dead weight for almost every user. Both are trimmable; neither
-is trimmed yet, because which copy CEF actually reads at runtime has not
-been established by measurement.
+— so 27.6 MB of the payload is a duplicate copy. That duplication is
+**not** removable: deleting either set from a staged tree and launching
+makes the app fail to start, with a control run (both sets present)
+passing in between, so Proton needs the exe directory and the resource
+directory populated separately. The locale packs, on the other hand, are
+trimmable: keeping only `en-US`, `zh-CN` and `zh-TW` — 12 of the 220
+files — drops 46.8 MB from the payload (389,782,898 B for 36 files) and
+the app still renders pixel-identically, because CEF falls back to
+`en-US.pak` for any locale that is not shipped. That trim is not applied
+yet; it would take the release zip from 419 MB to about 372 MB.
 
 ## Keyboard shortcuts
 
